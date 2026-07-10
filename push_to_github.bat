@@ -41,9 +41,20 @@ if errorlevel 1 (
     git remote set-url origin %REMOTE_URL%
 )
 
+rem --- make sure the handoff-generating hook is wired up ---
+git config core.hooksPath .githooks
+
 echo.
 echo Staging files...
 git add -A
+
+rem --- regenerate docs\HANDOFF.md from what's staged (same thing the
+rem --- pre-commit hook does; run it explicitly so it's guaranteed even
+rem --- if hook execution misbehaves on this machine) ---
+echo Updating docs\HANDOFF.md...
+python tools\update_handoff.py --staged 2>nul
+if errorlevel 1 py tools\update_handoff.py --staged
+git add docs\HANDOFF.md
 
 git diff --cached --quiet
 if errorlevel 1 (

@@ -54,23 +54,28 @@
     100% { transform:translate(calc(var(--drift,12px) * 2), -108vh) scale(.6); opacity:0; }
   }
 
-  #app { position:relative; z-index:2; display:flex; flex-direction:column; height:100vh; }
-  header { display:flex; align-items:baseline; gap:12px; padding:17px 22px 11px; }
+  #app { position:relative; z-index:2; display:grid; grid-template-columns:176px minmax(0,1fr);
+    grid-template-rows:auto 1fr; height:100vh; }
+  header { grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:flex-start;
+    gap:4px; padding:22px 14px 8px; }
   header .logo { font-size:19px; font-weight:600; color:var(--green);
     text-shadow:0 0 14px rgba(47,227,160,.42); letter-spacing:.3px; }
-  header .sub { font-size:12px; color:var(--muted); }
-  header .header-refresh { margin-left:auto; width:34px; height:34px; padding:0; border-radius:999px;
+  header .sub { display:none; }
+  header .header-refresh { position:fixed; left:14px; bottom:18px; z-index:35; margin-left:0;
+    width:34px; height:34px; padding:0; border-radius:999px;
     display:grid; place-items:center; font-size:16px; line-height:1; }
   header .header-refresh.spinning { animation:header-refresh-spin .6s linear; }
   @keyframes header-refresh-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-  header .settings-cog { width:34px; height:34px; padding:0; border-radius:999px;
+  header .settings-cog { position:fixed; left:58px; bottom:18px; z-index:35;
+    width:34px; height:34px; padding:0; border-radius:999px;
     display:grid; place-items:center; font-size:17px; line-height:1; }
   header .backend { display:none; }
 
-  nav { display:flex; gap:8px; padding:0 22px 12px; align-items:center; flex-wrap:wrap; }
+  nav { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:8px;
+    padding:8px 14px 74px; align-items:stretch; flex-wrap:nowrap; }
   nav .tab { font-size:13px; letter-spacing:.4px; padding:7px 20px; border-radius:20px;
     cursor:pointer; color:#d9e9df; background:rgba(7,21,14,.52); border:1px solid var(--line);
-    transition:all .18s ease; user-select:none; }
+    transition:all .18s ease; user-select:none; text-align:center; }
   nav .tab:hover { background:rgba(15,39,25,.68); border-color:rgba(112,214,158,.46); }
   nav .tab.active { color:#032118; font-weight:700; background:linear-gradient(90deg,#2fe3a0,#53e7c0);
     border-color:transparent; box-shadow:0 0 16px rgba(47,227,160,.3); }
@@ -84,16 +89,17 @@
   .nav-group[open] .group-label,.nav-group.active .group-label {
     border-color:rgba(112,214,158,.58); background:rgba(15,39,25,.74); color:var(--cyan);
   }
-  .nav-menu { position:absolute; top:calc(100% + 6px); left:0; min-width:190px; padding:8px;
+  .nav-menu { position:absolute; top:0; left:calc(100% + 8px); min-width:190px; padding:8px;
     border:1px solid var(--line); border-radius:14px; background:rgba(4,15,10,.96);
     box-shadow:0 14px 38px rgba(0,0,0,.45); z-index:30; display:grid; gap:6px; }
   .nav-menu .tab { display:block; border-radius:10px; padding:8px 12px; white-space:nowrap; }
   .nav-menu .tab.active { color:#032118; }
 
-  .view { flex:1; overflow-y:auto; padding:4px 22px 22px; display:none; }
+  .view { grid-column:2; grid-row:1 / span 2; min-height:0; overflow-y:auto;
+    padding:22px 22px 22px 0; display:none; }
   .view.active { display:block; }
-  .view > * { max-width:1480px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
-  .view > .hint { margin-left:auto; margin-right:auto; }
+  .view > * { max-width:none; margin-left:0; margin-right:0; box-sizing:border-box; }
+  .view > .hint { max-width:none; margin-left:0; margin-right:0; }
 
   .toolbar { display:flex; align-items:center; gap:10px; margin:6px 0 12px; flex-wrap:wrap; }
   button { font-family:inherit; cursor:pointer; border-radius:12px; font-size:13px;
@@ -129,6 +135,10 @@
   .self-panel { background:linear-gradient(135deg,rgba(8,24,16,.62),rgba(4,13,10,.48));
     border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow:0 8px 24px var(--shadow);
     -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+  .self-identity-card { padding:12px; }
+  .self-identity-summary { padding:2px 0 0; }
+  .self-identity-summary h3 { margin:0 0 8px; font-size:13px; color:var(--green);
+    letter-spacing:1.6px; text-transform:uppercase; }
   .self-rank { display:flex; justify-content:space-between; align-items:center; color:var(--green);
     font-size:12px; letter-spacing:1px; text-transform:uppercase; font-weight:700; }
   .self-portrait { height:420px; margin:10px 0 12px; border-radius:4px; overflow:hidden;
@@ -245,18 +255,18 @@
   .self-pursuit-body { padding:12px; background:linear-gradient(180deg,rgba(5,15,11,.1),rgba(5,15,11,.92)); }
   .self-pursuit-title { font-weight:700; margin-bottom:7px; }
   .self-pursuit-meta { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+  .command-tools { display:none; }
   .command-center-shell { display:grid;
     grid-template-columns:minmax(260px,320px) minmax(460px,1fr) minmax(270px,330px);
-    gap:18px; align-items:start; max-height:calc(100vh - 150px); overflow:hidden; }
-  .command-center-shell.no-sidebar { grid-template-columns:minmax(260px,320px) minmax(460px,1fr); }
-  .command-portrait-col { max-height:calc(100vh - 170px); overflow-y:auto; overflow-x:hidden;
+    gap:18px; align-items:start; overflow:visible; padding-bottom:36px; }
+  .command-center-shell.no-sidebar { grid-template-columns:minmax(260px,320px) minmax(0,1fr); }
+  .command-portrait-col { overflow:visible;
     display:flex; flex-direction:column; gap:16px; padding-right:8px; box-sizing:border-box; }
   .command-chat-col { display:flex; flex-direction:column; gap:16px;
-    max-height:calc(100vh - 170px); overflow-y:auto; overflow-x:hidden;
-    padding-right:8px; box-sizing:border-box; }
+    overflow:visible; padding-right:0; box-sizing:border-box; }
   .command-chat-panel,.command-side { background:linear-gradient(135deg,rgba(8,24,16,.68),rgba(4,13,10,.54));
     border:1px solid var(--line); border-radius:18px; box-shadow:0 16px 44px rgba(0,0,0,.32); }
-  .command-chat-panel { flex:0 0 auto; height:min(720px,calc(100vh - 260px)); min-height:460px;
+  .command-chat-panel { flex:0 0 auto; height:max(860px,calc(100vh - 44px)); min-height:760px;
     display:grid; grid-template-columns:200px minmax(0,1fr); overflow:hidden; }
   .cc-chat-list { min-width:0; border-right:1px solid var(--line2); padding:14px; overflow:auto; }
   .cc-chat-list-head { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:12px; }
@@ -333,7 +343,7 @@
     color:#032118; box-shadow:0 0 10px rgba(47,227,160,.28); }
   .cc-send-btn:hover { box-shadow:0 0 16px rgba(47,227,160,.46); }
   .cc-send-btn:disabled { opacity:.5; }
-  .command-side { padding:16px; max-height:calc(100vh - 170px); overflow:auto; }
+  .command-side { padding:16px; }
   .command-widget { border:1px solid var(--line2); border-radius:14px; padding:12px;
     background:rgba(255,255,255,.035); margin-bottom:12px; }
   .command-widget h3 { margin:0 0 8px; font-size:13px; color:var(--green); letter-spacing:1.6px; text-transform:uppercase; }
@@ -367,6 +377,15 @@
   body.profile-launch #goal-backfill-origin, body.profile-launch #goal-view-list,
   body.profile-launch #goal-open-map { display:none !important; }
   @media(max-width:1080px){
+    #app{display:flex;flex-direction:column}
+    header{display:flex;flex-direction:row;align-items:baseline;padding:17px 22px 11px}
+    header .sub{display:none}
+    header .header-refresh{position:static;margin-left:auto}
+    header .settings-cog{position:static}
+    nav{display:flex;flex-direction:row;gap:8px;padding:0 22px 12px;align-items:center;flex-wrap:wrap}
+    nav .tab{text-align:left}
+    .nav-menu{top:calc(100% + 6px);left:0}
+    .view{flex:1;padding:4px 22px 22px}
     .command-center-shell{grid-template-columns:1fr;max-height:none}
     .command-chat-panel{grid-template-columns:1fr;min-height:620px;height:auto}
     .cc-chat-list{border-right:none;border-bottom:1px solid var(--line2);max-height:150px}
@@ -381,8 +400,6 @@
     letter-spacing:1.4px; text-transform:uppercase; margin-bottom:5px; }
   .soul-calibration-field textarea { width:100%; min-height:86px; }
   .soul-calibration-prompt { font-size:16px; font-weight:600; line-height:1.4; margin-bottom:10px; }
-  .soul-calibration-example { font-size:12.5px; font-style:italic; color:var(--muted);
-    line-height:1.5; margin:-4px 0 12px; }
   .soul-facts { margin-top:12px; padding-top:10px; border-top:1px solid var(--line2); }
   .soul-fact { padding:7px 0; border-bottom:1px solid rgba(112,214,158,.08);
     font-size:12px; line-height:1.45; }
@@ -510,14 +527,6 @@
   /* curiosity */
   .cur-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
   .cur-label { font-size:15.5px; font-weight:700; }
-  .cur-journal-box { border:1px solid var(--line); border-radius:14px; padding:14px;
-    background:rgba(5,18,11,.42); margin:10px 0 14px; }
-  .cur-journal-box textarea { width:100%; min-height:170px; background:var(--card2);
-    border:1px solid var(--line); border-radius:12px; color:var(--fg); padding:12px;
-    font:inherit; resize:vertical; line-height:1.55; }
-  .cur-journal-tools { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
-  .cur-journal-tools input { background:var(--card2); border:1px solid var(--line);
-    border-radius:9px; color:var(--fg); padding:8px 10px; font:inherit; }
   .cur-directive { font-size:12.5px; color:var(--muted); line-height:1.5; margin:2px 0 14px; }
   .cur-attachments { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px; }
   .cur-attach-chip { border:1px solid rgba(83,231,192,.28); border-radius:20px;
@@ -554,7 +563,15 @@
   .cur-sub { font-size:10px; letter-spacing:1.6px; text-transform:uppercase;
     color:var(--cyan); margin:14px 0 8px; }
   .cur-switcher { border:1px solid var(--line); border-radius:14px; padding:10px 12px;
-    margin:10px 0 14px; background:rgba(5,18,11,.38); }
+    margin:14px 0 0; background:rgba(5,18,11,.38); }
+  .cur-board-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .cur-board-search { flex:1; min-width:220px; max-width:420px; }
+  .cur-board-filters { display:flex; gap:6px; flex-wrap:wrap; }
+  .cur-filter { padding:6px 10px; border-radius:999px; font-size:12px; }
+  .cur-filter.active { color:#032118; font-weight:700; background:linear-gradient(90deg,#2fe3a0,#53e7c0);
+    border-color:transparent; box-shadow:0 0 12px rgba(47,227,160,.22); }
+  .cur-board-count { color:var(--muted); font-size:11.5px; margin-left:auto; }
+  .cur-show-more { display:block; margin:10px auto 0; padding:6px 12px; border-radius:999px; font-size:12px; }
   .cur-switch-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
   .cur-switch-head select { min-width:220px; max-width:420px; background:var(--card2);
     border:1px solid var(--line); border-radius:9px; color:var(--fg); padding:7px 10px;
@@ -567,7 +584,8 @@
     gap:10px; }
   .cur-card-tile { cursor:pointer; text-align:left; background:linear-gradient(135deg,
     rgba(8,24,16,.5),rgba(4,13,10,.36)); border:1px solid var(--line); border-radius:14px;
-    padding:12px 14px; transition:border-color .15s ease,box-shadow .15s ease; }
+    padding:12px 14px; transition:border-color .15s ease,box-shadow .15s ease;
+    background-size:cover; background-position:center; overflow:hidden; }
   .cur-card-tile:hover { border-color:rgba(83,231,192,.4); }
   .cur-card-tile.active { border-color:rgba(83,231,192,.65); background:rgba(83,231,192,.08);
     box-shadow:0 0 0 1px rgba(83,231,192,.3) inset; }
@@ -620,16 +638,16 @@
   /* goals */
   #view-goals > .toolbar,#view-goals > .hint,#view-goals > .goal-ai-overview,
   #view-goals > .goal-layout,#view-goals > .growth-map-main,#view-goals > .goal-list-view {
-    width:100%; max-width:1480px; margin-left:auto; margin-right:auto; }
+    width:100%; max-width:none; margin-left:0; margin-right:0; }
   .goal-layout { display:grid; grid-template-columns:minmax(280px,360px) minmax(0,1fr);
-    gap:16px; min-height:500px; align-items:start; }
+    gap:16px; min-height:calc(100vh - 86px); align-items:start; }
   .goal-list-view[hidden],.growth-map-main[hidden] { display:none !important; }
   .growth-view-toggle { margin-left:auto; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .growth-view-toggle button.active { border-color:var(--green); background:rgba(47,227,160,.14);
     color:var(--cyan); box-shadow:0 0 14px rgba(47,227,160,.12); }
   .goal-pane { border:1px solid var(--line); border-radius:14px; background:rgba(5,18,11,.42);
     padding:12px; min-width:0; overflow:visible; }
-  #goal-tree { position:sticky; top:0; max-height:calc(100vh - 185px); overflow:auto; }
+  #goal-tree { position:sticky; top:0; max-height:calc(100vh - 86px); overflow:auto; }
   .goal-tree-row { display:flex; align-items:center; gap:6px; padding:7px 8px; border-radius:8px;
     cursor:pointer; font-size:13px; margin:2px 0; }
   .goal-tree-row:hover,.goal-tree-row.selected { background:rgba(83,231,192,.1); }
@@ -715,11 +733,11 @@
   .growth-map-summary-card span { color:var(--muted); line-height:1.5; }
   .growth-map-main .growth-map-summary { margin-top:2px; }
   .growth-map-workspace { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(320px,.7fr);
-    gap:14px; align-items:start; }
+    gap:14px; align-items:start; min-height:calc(100vh - 126px); }
   .growth-map-stage { min-width:0; }
-  .growth-map-main .growth-map-tree { min-height:700px; }
-  .growth-map-main .growth-constellation-svg { height:min(74vh,800px); min-height:700px; }
-  .goal-focus-panel { position:sticky; top:8px; max-height:calc(100vh - 180px); overflow:auto; }
+  .growth-map-main .growth-map-tree { min-height:max(720px,calc(100vh - 126px)); }
+  .growth-map-main .growth-constellation-svg { height:max(720px,calc(100vh - 126px)); min-height:720px; }
+  .goal-focus-panel { position:sticky; top:8px; max-height:calc(100vh - 52px); overflow:auto; }
   .goal-focus-panel .cur-head { align-items:flex-start; }
   .goal-focus-title { font-size:18px; line-height:1.25; font-weight:800; color:var(--fg); }
   .goal-focus-path { color:var(--muted); font-size:11px; line-height:1.45; margin:4px 0 8px; }
@@ -1018,7 +1036,6 @@
 <div id="app">
   <header>
     <span class="logo">✦ Faerie Fire</span>
-    <span class="sub">your second brain</span>
     <button class="header-refresh" id="header-refresh-self" title="Refresh dashboard">⟳</button>
     <button class="settings-cog" id="settings-cog" title="Settings and tools">⚙</button>
     <span class="backend" id="backend" hidden></span>
@@ -1062,7 +1079,7 @@
     </div>
     <p class="hint">13 quick questions, one at a time — these shape how Faerie thinks and
       talks with you, not just what it knows about you. Skip any time; skipped ones
-      resurface later (or type <code>/recalibrate</code> in chat to start over).</p>
+      stay hidden unless you type <code>/recalibrate</code> in chat to start over.</p>
     <p class="hint">Feeling overwhelmed? Just write whatever basic thing comes to mind first —
       as more thoughts surface, add them too. Faerie will sort it out.</p>
     <div id="soul-cal-body"><div class="hint">Loading…</div></div>
@@ -1075,8 +1092,8 @@
     </div>
     <div class="command-center-shell">
       <aside class="command-portrait-col">
-        <div id="self-level-widget" class="self-empty">Loading…</div>
-        <div class="self-panel">
+        <div class="self-panel self-identity-card">
+          <div id="self-level-widget" class="self-empty">Loading…</div>
           <div class="self-portrait anim-still" id="self-portrait">
             <div class="portrait-rays"></div>
             <div class="portrait-motes"></div>
@@ -1207,47 +1224,12 @@
   </div>
 
   <div class="view" id="view-curiosity">
-    <p class="hint">Investigations are persistent unresolved questions. They can be Soul-level, but
-      they work best when attached to the Root, Branch, or Leaf they should inform. GoalAI can
-      propose one during review; approving that proposal creates it here and attaches it to the
-      source node.</p>
-    <div class="cur-journal-box">
-      <div class="cur-sub" style="margin-top:0">Start from a current-state dump</div>
-      <p class="hint">Write the messy version first: what you think is happening, what no longer
-        applies, examples, contradictions, and what you want Faerie to understand. Submitting this
-        creates an Investigation tab and generates follow-up questions from your current framing.</p>
-      <textarea id="cur-journal" placeholder="Example: Why do I dread meeting new people/social interaction? Here is what currently feels true..."></textarea>
-      <div class="cur-journal-tools">
-        <input id="cur-label" type="text" placeholder="Short tab name (optional)">
-        <label class="toggle" id="cur-make-greatest"><div class="sw"></div><span>Make greatest</span></label>
-        <button class="accent" id="cur-create-btn">Create investigation from journal</button>
-      </div>
-      <span id="cur-create-status" class="hint" style="margin:0"></span>
-    </div>
-    <div class="toolbar">
-      <button id="cur-generate-all-btn">Generate more (all active)</button>
-      <button id="refresh-cur">Refresh</button>
-      <span id="cur-status"></span>
-    </div>
-    <div id="cur-switcher"></div>
     <div id="cur-list"></div>
-    <h2 class="section">Archived</h2>
-    <div id="cur-archived" class="card" style="padding:6px 14px"></div>
+    <div id="cur-switcher"></div>
   </div>
 
   <div class="view" id="view-goals">
-    <div class="toolbar">
-      <button class="accent" id="goal-add-overgoal">New Root</button>
-      <button id="refresh-goals">Refresh</button>
-      <button id="goal-backfill-origin" title="Create best-effort recaps for older nodes that were made before origin context was stored.">Backfill context</button>
-      <div class="growth-view-toggle" aria-label="Growth view mode">
-        <button id="goal-view-map" class="active">Map view</button>
-        <button id="goal-view-list">List view</button>
-        <button id="goal-open-map">Expand map</button>
-      </div>
-      <span id="goal-status" class="hint"></span>
-    </div>
-    <p class="hint">Growth opens as your living map: click a star to understand that node and act on it here. Use <b>List view</b> only for heavier editing.</p>
+    <span id="goal-status" class="hint" style="display:none"></span>
     <div class="growth-map-main" id="goal-map-main">
       <div id="goal-ai-strip" class="goal-ai-strip"></div>
       <div class="growth-map-workspace">
@@ -1620,8 +1602,8 @@ if($('settings-cog')) $('settings-cog').onclick=()=>{
 function refreshSettingsCalibrationLabel(state){
   const span=$('settings-cal-status'); if(!span) return;
   if(state){
-    const complete=(state.total||0)>0 && (state.done||0)>=(state.total||0);
-    span.textContent=complete?'Completed — click to review or adjust':(state.done||0)+'/'+(state.total||0)+' covered so far';
+    const complete=!!state.complete || ((state.total||0)>0 && calCovered(state)>=(state.total||0));
+    span.textContent=complete?'Completed — click to review or adjust':calCovered(state)+'/'+(state.total||0)+' covered so far';
     return;
   }
   if(!api()||!pywebview.api.command_calibration_status){ span.textContent=''; return; }
@@ -1672,16 +1654,18 @@ function soulCalActiveField(state){
 
 function soulCalChecklistHtml(state, activeKey){
   const sections=(state&&state.sections)||[];
-  return sections.map(sec=>
-    '<div class="calibration-section">'+esc(sec.section)+'</div>'+
-    (sec.attributes||[]).map(a=>{
+  return sections.map(sec=>{
+    const attrs=(sec.attributes||[]).filter(a=>a.state!=='skipped');
+    if(!attrs.length) return '';
+    return '<div class="calibration-section">'+esc(sec.section)+'</div>'+
+    attrs.map(a=>{
       const key=sec.section+'::'+a.attribute;
-      const mark=a.state==='done'?'✓':a.state==='skipped'?'—':'○';
+      const mark=a.state==='done'?'✓':'○';
       return '<div class="calibration-row '+a.state+(key===activeKey?' active':'')+
         '" data-cal-key="'+esc(key)+'" title="Click to review or edit"><span class="cal-mark">'+mark+
         '</span><span>'+esc(a.label)+'</span></div>';
     }).join('')
-  ).join('');
+  }).join('');
 }
 
 function bindSoulCalDrawer(){
@@ -1704,9 +1688,9 @@ function renderSoulCalDrawer(){
   const state=soulCalState;
   const body=$('soul-cal-body'); if(!body) return;
   if(!state){ body.innerHTML='<div class="hint">Loading…</div>'; return; }
-  const calIsComplete=(state.total||0)>0 && (state.done||0)>=(state.total||0);
+  const calIsComplete=!!state.complete || ((state.total||0)>0 && calCovered(state)>=(state.total||0));
   if($('soul-cal-progress')) $('soul-cal-progress').textContent=calIsComplete?'Completed':
-    (state.done||0)+'/'+(state.total||0)+' covered';
+    calCovered(state)+'/'+(state.total||0)+' covered';
   refreshSettingsCalibrationLabel(state);
   const naturalNext=soulCalNextField(state);
   const active=soulCalActiveField(state);
@@ -1723,7 +1707,6 @@ function renderSoulCalDrawer(){
     formHtml='<div class="soul-calibration-field">'+
       '<label>'+esc(active.section)+(jumped?' · reviewing':'')+'</label>'+
       '<div class="soul-calibration-prompt">'+esc(active.prompt)+'</div>'+
-      (active.example?'<div class="soul-calibration-example">'+esc(active.example)+'</div>':'')+
       '<textarea id="soul-cal-answer" placeholder="Type your answer…">'+esc(active.value||'')+'</textarea>'+
       '<div class="actions" style="margin-top:10px">'+buttons.join('')+'</div>'+
     '</div>';
@@ -1741,9 +1724,24 @@ function renderSoulCalDrawer(){
   if(backBtn) backBtn.onclick=()=>{ soulCalSelectedKey=null; renderSoulCalDrawer(); };
   if(!naturalNext && !soulCalSynthesisFired){
     soulCalSynthesisFired=true;
+    hideCalibrationSidebar();
     if(api()&&pywebview.api.command_calibration_synthesis){
       pywebview.api.command_calibration_synthesis().catch(()=>{});
     }
+  }
+}
+
+function calCovered(state){
+  return (state&&state.covered!=null)?state.covered:((state&&state.done)||0);
+}
+
+function hideCalibrationSidebar(){
+  const shell=document.querySelector('.command-center-shell');
+  const sidebar=$('self-dashboard');
+  if(shell) shell.classList.add('no-sidebar');
+  if(sidebar){
+    sidebar.style.display='none';
+    sidebar.innerHTML='';
   }
 }
 
@@ -1807,6 +1805,20 @@ document.addEventListener('click',e=>{
 
 function switchView(name){
   activateView(name);
+}
+
+function refreshActiveView(){
+  const active=document.querySelector('.view.active');
+  const name=active ? active.id.replace(/^view-/,'') : 'self';
+  if(name==='self') { loadCommandCenter(); return; }
+  if(name==='goals') { loadGoals(); return; }
+  if(name==='curiosity') { loadCuriosity(); return; }
+  if(name==='memory') { loadMemory(); return; }
+  if(name==='timeline') { loadTimeline(); return; }
+  if(name==='import') { loadStaged(); return; }
+  if(name==='clarify') { loadClarify(); return; }
+  if(name==='inferences') { loadState(); return; }
+  loadCommandCenter();
 }
 
 /* ---------- command center chat ---------- */
@@ -2155,6 +2167,52 @@ function selfCardBackgroundStyle(index, images){
   return ' style="'+style+'"';
 }
 
+function curiosityOpenCount(cur){
+  const counts=cur.item_counts||{};
+  return (counts.open_questions||0)+(counts.open_suggestions||0);
+}
+
+function curiosityTopicTokens(cur){
+  const stop=new Set(['investigation','investigations','curiosity','curiosities','journal',
+    'current','framing','about','around','from','into','with','that','this','does',
+    'what','why','when','where','really','thing','things','issue','issues']);
+  return new Set(String(((cur&&cur.label)||'')+' '+((cur&&cur.directive)||'')).toLowerCase()
+    .match(/[a-z][a-z'-]*/g)?.map(w=>w.endsWith("'s")?w.slice(0,-2):w)
+    .filter(w=>w.length>=3&&!stop.has(w)) || []);
+}
+
+function curiositySimilarTopic(a,b){
+  if(!a.size||!b.size) return false;
+  if(a.size===b.size && [...a].every(x=>b.has(x))) return true;
+  const smaller=Math.min(a.size,b.size);
+  if(smaller<2) return false;
+  let overlap=0; a.forEach(x=>{ if(b.has(x)) overlap++; });
+  const union=new Set([...a,...b]).size;
+  return overlap===smaller && overlap/union>=0.5;
+}
+
+function preferredCuriosityCard(a,b){
+  if(!!a.is_greatest!==!!b.is_greatest) return a.is_greatest?a:b;
+  const openA=curiosityOpenCount(a), openB=curiosityOpenCount(b);
+  if(openA!==openB) return openA>openB?a:b;
+  return (a.id||0)<=(b.id||0)?a:b;
+}
+
+function dedupeCuriositiesForDisplay(curiosities){
+  const visible=[];
+  (curiosities||[]).forEach(cur=>{
+    const tokens=curiosityTopicTokens(cur);
+    const idx=visible.findIndex(existing=>
+      curiositySimilarTopic(tokens, curiosityTopicTokens(existing)));
+    if(idx<0){
+      visible.push(cur);
+    } else {
+      visible[idx]=preferredCuriosityCard(visible[idx], cur);
+    }
+  });
+  return visible;
+}
+
 function selfInvestigationCardHtml(cur, index, images){
   const counts=cur.item_counts||{};
   const waiting=(counts.open_questions||0)+(counts.open_suggestions||0);
@@ -2170,7 +2228,8 @@ function selfInvestigationCardHtml(cur, index, images){
 }
 
 function selfInvestigationsHtml(curiosities, checkinHour, images){
-  const active=(curiosities||[]).filter(c=>c.status!=='archived'&&c.status!=='paused');
+  const active=dedupeCuriositiesForDisplay(
+    (curiosities||[]).filter(c=>c.status!=='archived'&&c.status!=='paused'));
   const timeLabel=checkinHour!=null?selfFormatHour(checkinHour):null;
   if(!active.length){
     return '<div class="self-empty">No active investigations yet. Start one from this chat or the Investigations tab.</div>';
@@ -2197,7 +2256,7 @@ function selfLevelWidgetHtml(data){
   const level=Math.max(1,Math.floor(totalXp/100)+1);
   const rank=level>=50?'S-Rank':level>=35?'A-Rank':level>=25?'B-Rank':level>=12?'C-Rank':'E-Rank';
   const nextXp=100-(totalXp%100||0);
-  return '<div class="command-widget"><h3>'+esc(rootTitle)+'</h3>'+
+  return '<div class="self-identity-summary"><h3>'+esc(rootTitle)+'</h3>'+
       '<div class="self-rank"><span>⌃ Level: '+level+'</span><span>'+rank+'</span></div>'+
       '<div class="self-quest-card"><b>'+totalXp+'</b><div class="hint" style="margin:2px 0 0">To reach Level '+(level+1)+' attain '+nextXp+' XP</div></div>'+
     '</div>';
@@ -2241,18 +2300,20 @@ function selfProfileWidgetsHtml(data){
 function selfSidebarHtml(data){
   const calibration=data.calibration&&data.calibration.ok?data.calibration:null;
   if(!calibration||calibration.complete) return '';
-  return '<div class="command-widget"><h3>Soul Calibration</h3>'+
-    '<div class="hint">'+(calibration.done||0)+'/'+(calibration.total||0)+' covered</div>'+
-    (calibration.sections||[]).map(sec=>
-      '<div class="calibration-section">'+esc(sec.section)+'</div>'+
-      (sec.attributes||[]).map(a=>{
-        const mark=a.state==='done'?'✓':a.state==='skipped'?'—':'○';
+  return '<div class="command-widget" id="self-soul-calibration"><h3>Soul Calibration</h3>'+
+    '<div class="hint">'+calCovered(calibration)+'/'+(calibration.total||0)+' covered</div>'+
+    (calibration.sections||[]).map(sec=>{
+      const attrs=(sec.attributes||[]).filter(a=>a.state!=='skipped');
+      if(!attrs.length) return '';
+      return '<div class="calibration-section">'+esc(sec.section)+'</div>'+
+      attrs.map(a=>{
+        const mark=a.state==='done'?'✓':'○';
         return '<div class="calibration-row '+a.state+'"><span class="cal-mark">'+mark+'</span><span>'+esc(a.label)+'</span></div>';
       }).join('')
-    ).join('')+
+    }).join('')+
     '<div class="actions" style="margin-top:10px">'+
       '<button type="button" id="self-open-calibration" class="accent">'+
-      ((calibration.done||0)?'Continue Soul Calibration':'Start Soul Calibration')+'</button></div>'+
+      (calCovered(calibration)?'Continue Soul Calibration':'Start Soul Calibration')+'</button></div>'+
   '</div>';
 }
 
@@ -2393,8 +2454,7 @@ function loadSelf(opts){
 if($('header-refresh-self')) $('header-refresh-self').onclick=()=>{
   const btn=$('header-refresh-self');
   btn.classList.remove('spinning'); void btn.offsetWidth; btn.classList.add('spinning');
-  loadSelf({forceFocus:true});
-  loadSelfPortrait();
+  refreshActiveView();
 };
 $('self-database-rescue').onclick=runDatabaseRescue;
 if($('cc-send')) $('cc-send').onclick=sendCommandMessage;
@@ -3534,7 +3594,6 @@ function renderGoalFocusPanel(){
     '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span><span class="goal-chip">'+
     esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>'+
     recap+
-    '<div class="goal-next-action"><b>TO DO</b><span>'+esc(goalNextActionText(node))+'</span></div>'+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Completion</span><span>'+
     esc(goalCompletionLabel(node))+'</span></div><div class="metric-progress"><i style="width:'+
     ((node.completion&&node.completion.percent)||0)+'%"></i></div></div>'+
@@ -3839,11 +3898,12 @@ function renderGoalConstellation(summaryId,treeId,opts){
     ')" filter="url(#starSoftGlow)">'+edges+nodes+'</g></svg>';
   const path=goalPathTitles(tree,selected.id,[])||[selected.title];
   if(summary){
+    const nextAction=goalNextActionText(selected);
     summary.innerHTML='<div class="growth-map-summary-card"><b>'+esc(selected.title)+'</b>'+
       '<span>'+esc(goalTypeLabel(selected.type))+' · '+esc(selected.status||'active')+
       ' · '+esc(goalCompletionLabel(selected))+'<br>'+esc(path.join(' › '))+'</span></div>'+
-      '<div class="growth-map-summary-card"><b>TO DO</b><span>'+
-      esc(goalNextActionText(selected))+'</span></div>';
+      (nextAction?'<div class="growth-map-summary-card"><b>TO DO</b><span>'+
+      esc(nextAction)+'</span></div>':'');
   }
   box.querySelectorAll('[data-map-goal-id]').forEach(row=>{
     const choose=()=>{
@@ -4022,7 +4082,7 @@ function goalNextActionText(node){
   if(node.status==='completed') return 'This node is complete. Add evidence if there is something worth preserving.';
   if(leaves.length) return leaves[0].title;
   if(node.type==='task') return node.title;
-  return 'Nothing urgent here — add a Leaf, attach evidence, or open the full Living Map.';
+  return '';
 }
 
 function masteryHtml(node){
@@ -4058,7 +4118,6 @@ function renderGoalDetail(){
       (x.id===node.parent_id?' selected':'')+'>'+esc(x.title)+' ('+esc(goalTypeLabel(x.type))+')</option>').join('');
   $('goal-detail').innerHTML='<div class="cur-head"><span class="cur-label">'+esc(node.title)+'</span>'+
     '<span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span><span class="goal-chip">'+esc(node.status)+'</span></div>'+
-    '<div class="goal-next-action"><b>TO DO</b><span>'+esc(goalNextActionText(node))+'</span></div>'+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Task completion</span><span>'+pctText+'</span></div>'+
     '<div class="metric-progress"><i style="width:'+(c.percent||0)+'%"></i></div></div>'+
     '<label class="goal-field">Title<input id="goal-title" value="'+esc(node.title)+'"></label>'+
@@ -4174,7 +4233,7 @@ function renderGoalAIStatusStrip(o){
   const next=o.schedule&&o.schedule.next_run_at
     ? new Date(o.schedule.next_run_at).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})
     : '8:00 PM';
-  strip.innerHTML='<div class="strip-copy"><b>Tonight’s review:</b> '+need+
+  strip.innerHTML='<div class="strip-copy"><b>To do:</b> '+need+
     ' need care · '+questions+' questions · '+proposals+' proposals · next '+esc(next)+'</div>'+
     '<button id="goal-strip-review">Review next</button>'+
     '<button id="goal-strip-questions">Answer questions</button>';
@@ -4466,7 +4525,7 @@ function loadGoals(){
   }).catch(e=>{ $('goal-status').textContent=''; toast('Could not load goals: '+e,true); });
 }
 
-$('refresh-goals').onclick=loadGoals;
+if($('refresh-goals')) $('refresh-goals').onclick=loadGoals;
 if($('goal-view-map')) $('goal-view-map').onclick=()=>setGrowthViewMode('map');
 if($('goal-view-list')) $('goal-view-list').onclick=()=>setGrowthViewMode('list');
 if($('goal-open-map')) $('goal-open-map').onclick=openGrowthMap;
@@ -4485,7 +4544,7 @@ if($('goal-backfill-origin')) $('goal-backfill-origin').onclick=()=>{
 if($('growth-map-close')) $('growth-map-close').onclick=closeGrowthMap;
 if($('growth-map-overlay')) $('growth-map-overlay').onclick=e=>{ if(e.target===$('growth-map-overlay')) closeGrowthMap(); };
 if($('goal-edit-close')) $('goal-edit-close').onclick=()=>$('goal-edit-drawer').classList.remove('open');
-$('goal-add-overgoal').onclick=()=>{
+if($('goal-add-overgoal')) $('goal-add-overgoal').onclick=()=>{
   const title=prompt('New Root:'); if(!title) return;
   const parent=goalState&&goalState.tree?goalState.tree.id:null;
   pywebview.api.goal_create('overgoal',title,parent).then(handleGoalMutation);
@@ -4546,6 +4605,10 @@ $('planner-abandon').onclick=()=>{
 let currentCuriosityState=null, activeCuriosityId=null;
 let pendingCuriosityLoopId=null;
 let pendingCuriosityClassifyId=null;
+const CUR_BOARD_LIMIT=12;
+let curBoardFilter='all';
+let curBoardQuery='';
+let curBoardExpanded=false;
 const classifyingCuriosityIds=new Set();
 const curLoopDismissed=new Set(JSON.parse(localStorage.getItem('curLoopDismissed')||'[]'));
 const curLoopOutcomes=new Map(Object.entries(JSON.parse(localStorage.getItem('curLoopOutcomes')||'{}'))
@@ -4570,14 +4633,76 @@ function selectedCuriosity(curiosities){
   return selected;
 }
 
-function curSwitcherCardHtml(cur, isSelected){
+function curOpenCount(cur){
+  const counts=cur.item_counts||{};
+  return (counts.open_questions||0)+(counts.open_suggestions||0);
+}
+
+function curPlacementText(cur){
+  const attach=(cur.attached_goals||[])[0];
+  return (attach&&attach.path&&attach.path.length) ? attach.path.join(' > ') : 'Unplaced';
+}
+
+function curReadyToClassify(cur){
+  return (cur.classification_proposals||[]).length>0 ||
+    (cur.status==='active' && curOpenCount(cur)===0);
+}
+
+function curMatchesBoardFilter(cur){
+  if(curBoardFilter==='waiting') return curOpenCount(cur)>0;
+  if(curBoardFilter==='classify') return curReadyToClassify(cur);
+  if(curBoardFilter==='active') return cur.status==='active';
+  return true;
+}
+
+function curMatchesBoardQuery(cur){
+  const q=curBoardQuery.trim().toLowerCase();
+  if(!q) return true;
+  return String([
+    cur.label||'',
+    cur.directive||'',
+    cur.status||'',
+    curPlacementText(cur)
+  ].join(' ')).toLowerCase().includes(q);
+}
+
+function curFilteredBoardCuriosities(curiosities){
+  return (curiosities||[]).filter(cur=>curMatchesBoardFilter(cur)&&curMatchesBoardQuery(cur));
+}
+
+function curBoardCounts(curiosities){
+  return {
+    all:curiosities.length,
+    waiting:curiosities.filter(c=>curOpenCount(c)>0).length,
+    classify:curiosities.filter(curReadyToClassify).length,
+    active:curiosities.filter(c=>c.status==='active').length,
+  };
+}
+
+function curBoardToolsHtml(curiosities, filtered){
+  const counts=curBoardCounts(curiosities);
+  const filters=[
+    ['all','All',counts.all],
+    ['waiting','Needs answer',counts.waiting],
+    ['classify','Ready to classify',counts.classify],
+    ['active','Active',counts.active],
+  ];
+  return '<div class="cur-board-tools">'+
+    '<input id="cur-board-search" class="cur-board-search" type="text" placeholder="Search investigations..." value="'+esc(curBoardQuery)+'">'+
+    '<div class="cur-board-filters">'+filters.map(([key,label,count])=>
+      '<button type="button" class="cur-filter '+(curBoardFilter===key?'active':'')+
+      '" data-cur-filter="'+key+'">'+esc(label)+' · '+count+'</button>').join('')+'</div>'+
+    '<span class="cur-board-count">'+filtered.length+' shown</span>'+
+  '</div>';
+}
+
+function curSwitcherCardHtml(cur, isSelected, index, images){
   const counts=cur.item_counts||{};
   const openCount=(counts.open_questions||0)+(counts.open_suggestions||0);
   const waiting=openCount ? openCount+' waiting on you' : 'Nothing waiting';
-  const attach=(cur.attached_goals||[])[0];
-  const placement=(attach&&attach.path&&attach.path.length) ? attach.path.join(' > ') : 'Unplaced';
+  const placement=curPlacementText(cur);
   return '<div class="cur-card-tile'+(isSelected?' active':'')+(cur.status==='paused'?' paused':'')+
-    '" data-id="'+cur.id+'">'+
+    '" data-id="'+cur.id+'"'+selfCardBackgroundStyle(index,images)+'>'+
     '<div class="cur-card-tile-head">'+
       (cur.is_greatest?'<span class="cur-card-star">★</span>':'')+
       '<span class="cur-card-label">'+esc(cur.label)+'</span>'+
@@ -4586,17 +4711,41 @@ function curSwitcherCardHtml(cur, isSelected){
     '<div class="cur-card-tile-meta">'+esc(waiting)+' · '+esc(placement)+'</div>'+
   '</div>';
 }
-function renderCuriositySwitcher(curiosities, selected){
+function renderCuriositySwitcher(curiosities, filtered, selected, images){
   const box=$('cur-switcher');
   if(!box) return;
   if(!curiosities.length){ box.innerHTML=''; return; }
-  box.innerHTML='<div class="cur-card-grid">'+
-    curiosities.map(c=>curSwitcherCardHtml(c, c.id===selected.id)).join('')+
-  '</div>';
+  const visible=curBoardExpanded?filtered:filtered.slice(0,CUR_BOARD_LIMIT);
+  const hidden=Math.max(0,filtered.length-visible.length);
+  box.innerHTML=curBoardToolsHtml(curiosities, filtered)+
+    (filtered.length?'<div class="cur-card-grid">'+
+      visible.map((c,i)=>curSwitcherCardHtml(c, selected&&c.id===selected.id, i, images)).join('')+
+    '</div>':'<div class="self-empty">No investigations match this view.</div>')+
+    (filtered.length>CUR_BOARD_LIMIT?'<button type="button" id="cur-board-more" class="cur-show-more">'+
+      (curBoardExpanded?'Show fewer':'Show '+hidden+' more')+'</button>':'');
+  const search=$('cur-board-search');
+  if(search){
+    search.oninput=()=>{
+      curBoardQuery=search.value;
+      curBoardExpanded=false;
+      renderCuriosity(currentCuriosityState||{curiosities}, backgroundImagesCache||[]);
+    };
+  }
+  box.querySelectorAll('.cur-filter').forEach(btn=>{
+    btn.onclick=()=>{
+      curBoardFilter=btn.dataset.curFilter||'all';
+      curBoardExpanded=false;
+      renderCuriosity(currentCuriosityState||{curiosities}, backgroundImagesCache||[]);
+    };
+  });
+  if($('cur-board-more')) $('cur-board-more').onclick=()=>{
+    curBoardExpanded=!curBoardExpanded;
+    renderCuriosity(currentCuriosityState||{curiosities}, backgroundImagesCache||[]);
+  };
   box.querySelectorAll('.cur-card-tile').forEach(tile=>{
     tile.onclick=()=>{
       activeCuriosityId=parseInt(tile.dataset.id,10);
-      renderCuriosity(currentCuriosityState||{curiosities});
+      renderCuriosity(currentCuriosityState||{curiosities}, backgroundImagesCache||[]);
     };
   });
 }
@@ -5248,21 +5397,27 @@ function renameCuriosity(id,current){
   }).catch(e=>toast('Could not rename curiosity: '+e,true));
 }
 
-function renderCuriosity(s){
+function renderCuriosity(s, images){
+  images=images||backgroundImagesCache||[];
   currentCuriosityState=s;
   const list=$('cur-list');
-  const curiosities=s.curiosities||[];
+  const curiosities=dedupeCuriositiesForDisplay(s.curiosities||[]);
   if(!curiosities.length){
-    renderCuriositySwitcher([], null);
-    list.innerHTML='<div class="card"><div class="empty">No investigations yet — dump your current thoughts above.<br>' +
-      'Faerie will create a tab and generate follow-up questions from that current framing.</div></div>';
+    renderCuriositySwitcher([], [], null, images);
+    list.innerHTML='<div class="card"><div class="empty">No open investigations.</div></div>';
   } else {
-    const selected=selectedCuriosity(curiosities);
-    renderCuriositySwitcher(curiosities, selected);
-    list.innerHTML = curCardHtml(selected);
-    bindCurCard(selected);
+    const filtered=curFilteredBoardCuriosities(curiosities);
+    const selected=selectedCuriosity(filtered);
+    renderCuriositySwitcher(curiosities, filtered, selected, images);
+    if(selected){
+      list.innerHTML = curCardHtml(selected);
+      bindCurCard(selected);
+    } else {
+      list.innerHTML='<div class="card"><div class="empty">No investigations match this view.</div></div>';
+    }
   }
   const arch=$('cur-archived');
+  if(!arch) return;
   arch.innerHTML = curArchivedHtml(s.archived||[]);
   arch.querySelectorAll('.cur-rename-archived').forEach(btn=>{
     btn.onclick=()=>renameCuriosity(parseInt(btn.dataset.id,10),btn.dataset.label);
@@ -5280,44 +5435,11 @@ function renderCuriosity(s){
 
 function loadCuriosity(){
   if(!api()) return;
-  pywebview.api.curiosity_state().then(renderCuriosity).catch(()=>{});
+  Promise.all([
+    pywebview.api.curiosity_state(),
+    loadBackgroundImages()
+  ]).then(([state,images])=>renderCuriosity(state,images)).catch(()=>{});
 }
-
-$('refresh-cur').onclick=loadCuriosity;
-$('cur-generate-all-btn').onclick=()=>{
-  if(!api()) return;
-  const btn=$('cur-generate-all-btn'); btn.disabled=true;
-  $('cur-status').innerHTML='<span class="spin"></span>Generating…';
-  pywebview.api.curiosity_generate_more().then(r=>{
-    btn.disabled=false; $('cur-status').textContent='';
-    if(!r || r.ok===false){ toast((r&&r.message)||'Could not generate.', true); return; }
-    toast(r.created ? r.created+' new item(s) across active curiosities.' : 'Nothing new right now.');
-    loadCuriosity();
-  }).catch(e=>{ btn.disabled=false; $('cur-status').textContent='';
-    toast('Could not generate: '+e, true); });
-};
-$('cur-make-greatest').onclick=()=>{ $('cur-make-greatest').classList.toggle('on'); };
-$('cur-create-btn').onclick=()=>{
-  if(!api()) return;
-  const journal=$('cur-journal').value.trim();
-  if(!journal){ toast('Dump your current thoughts first.', true); return; }
-  const label=$('cur-label').value.trim();
-  const makeGreatest=$('cur-make-greatest').classList.contains('on');
-  const btn=$('cur-create-btn'); btn.disabled=true;
-  $('cur-create-status').innerHTML='<span class="spin"></span>Creating from journal…';
-  autoDatabaseRescue('before curiosity journal start').then(()=>
-    pywebview.api.curiosity_journal_start(journal, label, makeGreatest)).then(r=>{
-    btn.disabled=false; $('cur-create-status').textContent='';
-    if(!r || r.ok===false){ toast((r&&r.message)||'Could not start.', true); return; }
-    activeCuriosityId=r.curiosity_id;
-    toast(r.created ? 'Investigation created — '+r.created+' follow-up(s) ready.' :
-      'Investigation created — journal saved, no follow-ups cleared the bar yet.');
-    $('cur-journal').value=''; $('cur-label').value='';
-    $('cur-make-greatest').classList.remove('on');
-    loadCuriosity();
-  }).catch(e=>{ btn.disabled=false; $('cur-create-status').textContent='';
-    toast('Could not start: '+e, true); });
-};
 
 /* ---------- memory ---------- */
 function loadMemory(){

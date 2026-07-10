@@ -182,17 +182,27 @@ class GuiApi:
     _BACKGROUND_IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
     def background_images(self) -> dict:
-        """List background art in ui/assets/backgrounds, in folder order, so
+        """List project background art, in folder order, so
         cards (pursuits, investigations) can each get a distinct image and
         naturally pick up anything dropped in later."""
         try:
             from livingpc.ui import UI_DIR
-            folder = os.path.join(UI_DIR, "assets", "backgrounds")
-            names = sorted(
-                name for name in os.listdir(folder)
-                if os.path.splitext(name)[1].lower() in self._BACKGROUND_IMAGE_TYPES
-            )
-            return {"ok": True, "images": ["assets/backgrounds/" + name for name in names]}
+            project_assets = os.path.abspath(os.path.join(UI_DIR, "..", "..", "assets"))
+            ui_backgrounds = os.path.join(UI_DIR, "assets", "backgrounds")
+            sources = [
+                (project_assets, "../../assets/"),
+                (ui_backgrounds, "assets/backgrounds/"),
+            ]
+            for folder, prefix in sources:
+                if not os.path.isdir(folder):
+                    continue
+                names = sorted(
+                    name for name in os.listdir(folder)
+                    if os.path.splitext(name)[1].lower() in self._BACKGROUND_IMAGE_TYPES
+                )
+                if names:
+                    return {"ok": True, "images": [prefix + name for name in names]}
+            return {"ok": True, "images": []}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}", "images": []}
 

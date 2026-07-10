@@ -958,6 +958,59 @@ def _journal_directive(journal_text: str) -> str:
     return (question or first_line).strip()[:240]
 
 
+_TOPIC_STOPWORDS = _LABEL_STOPWORDS | {
+    "investigation", "investigations", "curiosity", "curiosities", "journal",
+    "current", "framing", "about", "around", "from", "into", "with", "that",
+    "this", "does", "what", "why", "when", "where", "really", "thing",
+    "things", "issue", "issues",
+}
+
+
+def _topic_tokens(*texts: str) -> set[str]:
+    tokens = set()
+    for text in texts:
+        for raw in re.findall(r"[A-Za-z][A-Za-z'-]*", text or ""):
+            word = raw.lower().strip("'")
+            if word.endswith("'s"):
+                word = word[:-2]
+            if len(word) < 3 or word in _TOPIC_STOPWORDS:
+                continue
+            tokens.add(word)
+    return tokens
+
+
+def _similar_topic(a: set[str], b: set[str]) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    smaller = min(len(a), len(b))
+    if smaller < 2:
+        return False
+    overlap = len(a & b)
+    return overlap == smaller and overlap / len(a | b) >= 0.5
+
+
+def _find_similar_active_curiosity(store: CuriosityStore, *,
+                                   label: str, directive: str) -> dict | None:
+    wanted_label = _topic_tokens(label)
+    wanted = _topic_tokens(label, directive)
+    if not wanted:
+        return None
+    candidates = sorted(store.list_curiosities("active"),
+                        key=lambda c: (not c.get("is_greatest"), c["id"]))
+    for curiosity in candidates:
+        existing_label = _topic_tokens(curiosity.get("label", ""))
+        existing = _topic_tokens(curiosity.get("label", ""),
+                                 curiosity.get("directive", ""))
+        if (_similar_topic(wanted_label, existing_label) or
+                _similar_topic(wanted_label, existing) or
+                _similar_topic(wanted, existing_label) or
+                _similar_topic(wanted, existing)):
+            return curiosity
+    return None
+
+
 def _domain_memory_facts(memories: list[dict], directive: str) -> list[dict]:
     """Deterministic hard-context supplement for domains where missing one
     stable fact can make proposals incoherent. This is intentionally small and
@@ -1452,11 +1505,17 @@ def set_curiosity(mem, inf, store: CuriosityStore, directive: str, model, *,
     if not directive:
         raise ValueError("directive is empty")
     label = (label or "").strip() or _default_label(directive)
-    curiosity_id = store.add_curiosity(directive, label)
+    existing = _find_similar_active_curiosity(store, label=label, directive=directive)
+    if existing:
+        curiosity_id = int(existing["id"])
+        reused = True
+    else:
+        curiosity_id = store.add_curiosity(directive, label)
+        reused = False
     if make_greatest:
         store.set_greatest(curiosity_id)
     created = generate_items(mem, inf, store, curiosity_id, model, limit=limit)
-    return {"curiosity_id": curiosity_id, "created": created}
+    return {"curiosity_id": curiosity_id, "created": created, "reused": reused}
 
 
 def set_curiosity_from_journal(mem, inf, store: CuriosityStore, journal_text: str,
@@ -1474,7 +1533,13 @@ def set_curiosity_from_journal(mem, inf, store: CuriosityStore, journal_text: st
         raise ValueError("journal text is empty")
     directive = _journal_directive(journal_text)
     label = (label or "").strip() or _journal_label(journal_text)
-    curiosity_id = store.add_curiosity(directive, label)
+    existing = _find_similar_active_curiosity(store, label=label, directive=directive)
+    if existing:
+        curiosity_id = int(existing["id"])
+        reused = True
+    else:
+        curiosity_id = store.add_curiosity(directive, label)
+        reused = False
     seed_id = store.add_item(
         curiosity_id, "question", "Initial journal dump / current framing",
         confidence=1.0)
@@ -1493,7 +1558,7 @@ def set_curiosity_from_journal(mem, inf, store: CuriosityStore, journal_text: st
         created = seed_initial_clarifiers(
             store, curiosity_id, directive, limit=limit or 4)
     return {"curiosity_id": curiosity_id, "seed_item_id": seed_id,
-            "resulting_memory_id": new_id, "created": created}
+            "resulting_memory_id": new_id, "created": created, "reused": reused}
 
 
 def answer_item(mem, store: CuriosityStore, item_id: int, text: str, model, *,

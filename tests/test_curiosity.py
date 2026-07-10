@@ -331,6 +331,20 @@ class TestGeneration(unittest.TestCase):
         row = self.store.get_curiosity(result["curiosity_id"])
         self.assertEqual(row["label"], "social dread")
 
+    def test_set_curiosity_from_journal_reuses_similar_active_topic(self):
+        existing = self.store.add_curiosity(
+            "Energy sensitivity around food", "Energy Sensitivity & Food")
+        result = set_curiosity_from_journal(
+            self.mem, self.inf, self.store,
+            "Food seems to change my energy and I want to understand the pattern.",
+            StubCuriosityModel(), label="Energy & Food Investigation")
+        self.assertEqual(result["curiosity_id"], existing)
+        self.assertTrue(result["reused"])
+        self.assertEqual(len(self.store.list_curiosities("active")), 1)
+        resolved = self.store.resolved(existing, limit=5)
+        self.assertTrue(any("Food seems to change my energy" in item["answer"]
+                            for item in resolved))
+
     def test_journal_start_falls_back_to_initial_yes_no_clarifiers(self):
         class EmptyModel:
             def generate(self, directive, context):

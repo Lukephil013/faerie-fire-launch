@@ -25,6 +25,8 @@ from .personas import get_persona, list_personas
 import json
 import re
 
+CALIBRATION_SKIPPED_META_KEY = "soul_calibration_skipped_keys"
+
 
 # --------------------------------------------------------------- chat backends
 class ClaudeChat:
@@ -116,9 +118,7 @@ class Companion:
         # popout drawer walks the fixed 13-question FIELDS list deterministically
         # (no model involvement per-question) — see calibration_save/
         # calibration_status/calibration_reset/calibration_synthesis below.
-        # Skips are per-session only — a skipped topic resurfaces next
-        # session rather than needing its own persisted "skipped forever" state.
-        self._skipped_calibration_keys: set[str] = set()
+        self._skipped_calibration_keys: set[str] = self._load_skipped_calibration_keys()
         # Chat-driven tree placement/investigations: the last proposal the
         # model made that's awaiting the user's decision (see _extract_proposal).
         self._pending_proposal: dict | None = None
@@ -128,6 +128,32 @@ class Companion:
         if backend == "stub":
             return StubChat()
         return ClaudeChat(getattr(self.cfg, "companion_model", "claude-sonnet-4-6"))
+
+    def _load_skipped_calibration_keys(self) -> set[str]:
+        try:
+            mem = MemoryStore(self.cfg.memory_db_path)
+            try:
+                raw = mem.get_meta(CALIBRATION_SKIPPED_META_KEY, "[]")
+            finally:
+                mem.close()
+            data = json.loads(raw or "[]")
+            if isinstance(data, list):
+                valid = {soul_calibration.field_key(f) for f in soul_calibration.FIELDS}
+                return {str(key) for key in data if str(key) in valid}
+        except Exception:
+            pass
+        return set()
+
+    def _save_skipped_calibration_keys(self) -> None:
+        try:
+            mem = MemoryStore(self.cfg.memory_db_path)
+            try:
+                mem.set_meta(CALIBRATION_SKIPPED_META_KEY,
+                             json.dumps(sorted(self._skipped_calibration_keys)))
+            finally:
+                mem.close()
+        except Exception:
+            pass
 
     # --- persona ----------------------------------------------------------
     def set_persona(self, key: str) -> str:
@@ -622,9 +648,7 @@ class Companion:
     def calibration_status(self) -> dict:
         """Full snapshot for the popout: every section/attribute with its
         state (done/skipped-this-session/remaining), its exact prompt text,
-        and — for anything already answered — the saved value itself, so the
-        UI can let the user click back into any question (done, skipped, or
-        remaining) and edit it, not just march forward."""
+        and — for anything already answered — the saved value itself."""
         try:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
@@ -635,6 +659,7 @@ class Companion:
             answered = {}
         sections = []
         done_count = 0
+        skipped_count = 0
         for section in soul_calibration.sections_in_order():
             attrs = []
             for field in soul_calibration.FIELDS:
@@ -646,15 +671,18 @@ class Companion:
                     done_count += 1
                 elif key in self._skipped_calibration_keys:
                     state = "skipped"
+                    skipped_count += 1
                 else:
                     state = "remaining"
                 attrs.append({"attribute": field["attribute"], "label": field["label"],
-                              "prompt": field["prompt"], "example": field.get("example", ""),
-                              "state": state, "value": answered.get(key, "")})
+                              "prompt": field["prompt"], "state": state,
+                              "value": answered.get(key, "")})
             sections.append({"section": section, "attributes": attrs})
         total = len(soul_calibration.FIELDS)
-        return {"sections": sections, "done": done_count, "total": total,
-                "complete": done_count >= total}
+        covered_count = done_count + skipped_count
+        return {"sections": sections, "done": done_count, "covered": covered_count,
+                "skipped": skipped_count, "total": total,
+                "complete": covered_count >= total}
 
     def _apply_calibration_fact(self, payload: dict) -> None:
         section = str(payload.get("section") or "").strip()
@@ -665,7 +693,11 @@ class Companion:
         value = str(payload.get("value") or "").strip()
         if payload.get("skip") or not value:
             self._skipped_calibration_keys.add(key)
+            self._save_skipped_calibration_keys()
             return
+        if key in self._skipped_calibration_keys:
+            self._skipped_calibration_keys.discard(key)
+            self._save_skipped_calibration_keys()
         priority = next((f["priority"] for f in soul_calibration.FIELDS
                           if soul_calibration.field_key(f) == key), 50)
         try:
@@ -694,6 +726,7 @@ class Companion:
         try:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
+                mem.set_meta(CALIBRATION_SKIPPED_META_KEY, "[]", commit=False)
                 mem.retire_core_profile_facts_by_source("soul_calibration")
             finally:
                 mem.close()

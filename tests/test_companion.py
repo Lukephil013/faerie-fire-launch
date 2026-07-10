@@ -156,6 +156,51 @@ def test_companion_prompt_excludes_archived_curiosities():
         c.close()
 
 
+def test_calibration_status_has_no_example_text():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        status = c.calibration_status()
+        first = status["sections"][0]["attributes"][0]
+        assert "example" not in first
+        c.close()
+
+
+def test_calibration_skips_count_as_covered_for_ui_completion():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        from livingpc import soul_calibration
+        for field in soul_calibration.FIELDS:
+            status = c.calibration_save(field["section"], field["attribute"], "", skip=True)
+        assert status["done"] == 0
+        assert status["covered"] == status["total"]
+        assert status["complete"] is True
+        assert all(attr["state"] == "skipped"
+                   for sec in status["sections"] for attr in sec["attributes"])
+        c.close()
+
+
+def test_calibration_skips_persist_across_companion_restarts():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        from livingpc import soul_calibration
+        field = soul_calibration.FIELDS[0]
+        c.calibration_save(field["section"], field["attribute"], "", skip=True)
+        c.close()
+
+        reopened = Companion(cfg=cfg, chat=StubChat())
+        status = reopened.calibration_status()
+        first = status["sections"][0]["attributes"][0]
+        assert first["state"] == "skipped"
+        assert status["covered"] == 1
+        reopened.close()
+
+
 def test_persona_switch():
     with tempfile.TemporaryDirectory() as d:
         cfg = Config(db_path=os.path.join(d, "e.db"),
@@ -262,7 +307,7 @@ def test_companion_ui_has_no_persona_picker():
 def test_companion_api_toggle_maximize_without_window_is_a_safe_noop():
     import companion
     api = companion.Api()
-    assert api.window is None
+    assert api._window is None
     assert api.toggle_maximize() is False
 
 
@@ -277,9 +322,9 @@ def test_companion_api_toggle_maximize_calls_window_toggle_fullscreen():
             self.calls += 1
 
     api = companion.Api()
-    api.window = _FakeWindow()
+    api._window = _FakeWindow()
     assert api.toggle_maximize() is True
-    assert api.window.calls == 1
+    assert api._window.calls == 1
 
 
 def test_companion_api_minimize_calls_window_minimize():
@@ -294,9 +339,9 @@ def test_companion_api_minimize_calls_window_minimize():
 
     api = companion.Api()
     assert api.minimize() is False
-    api.window = _FakeWindow()
+    api._window = _FakeWindow()
     assert api.minimize() is True
-    assert api.window.calls == 1
+    assert api._window.calls == 1
 
 
 def test_companion_ui_has_maximize_button():
