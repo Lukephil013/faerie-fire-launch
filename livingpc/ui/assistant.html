@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  :root {
+    --line:rgba(110,140,240,.28); --fg:#e8edff; --muted:#8fa3d4; --cyan:#46ecff;
+    --red:#ff6b8a;
+  }
+  html,body { margin:0; height:100%; overflow:hidden;
+    font-family:'Segoe UI',Helvetica,Arial,sans-serif; background:transparent; }
+  #panel { display:flex; flex-direction:column; height:100%; box-sizing:border-box;
+    background: radial-gradient(120% 80% at 50% 0%, #15183a 0%, #0a0c1c 55%, #06070f 100%);
+    border:1px solid var(--line); border-radius:18px; overflow:hidden; color:var(--fg); }
+  #drag { display:flex; align-items:center; gap:10px;
+    padding:12px 16px 6px; cursor:move; }
+  #drag .logo { font-size:14.5px; font-weight:600; color:var(--cyan);
+    text-shadow:0 0 12px rgba(70,236,255,.45); pointer-events:none; }
+  #drag .sub { font-size:11px; color:var(--muted); pointer-events:none; }
+  #close { margin-left:auto; width:26px; height:26px;
+    border-radius:8px; border:1px solid var(--line); background:rgba(10,14,30,.85);
+    color:var(--muted); font-size:12px; cursor:pointer; line-height:1; }
+  #close:hover { color:var(--red); border-color:rgba(255,107,138,.5); }
+
+  #ask-row { padding:8px 16px 0; }
+  #q { width:100%; box-sizing:border-box; background:rgba(9,12,28,.85);
+    border:1px solid var(--line); border-radius:12px; color:var(--fg);
+    padding:11px 14px; font:inherit; font-size:14px; outline:none; }
+  #q:focus { border-color:var(--cyan); box-shadow:0 0 12px rgba(70,236,255,.25); }
+  #status { padding:7px 18px 2px; font-size:11px; color:var(--muted); min-height:15px; }
+  #status .spin { display:inline-block; width:10px; height:10px;
+    border:2px solid rgba(70,236,255,.3); border-top-color:var(--cyan);
+    border-radius:50%; animation:spin .8s linear infinite; vertical-align:-1px; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  #answer { flex:1; overflow-y:auto; margin:8px 16px 14px; padding:12px 14px;
+    background:rgba(9,12,28,.7); border:1px solid rgba(110,140,240,.16);
+    border-radius:12px; font-size:13.5px; line-height:1.6; white-space:pre-wrap;
+    word-break:break-word; color:#dfe9ff; }
+  #answer.hint { color:var(--muted); }
+  #answer::-webkit-scrollbar { width:7px; }
+  #answer::-webkit-scrollbar-thumb { background:#2b3563; border-radius:4px; }
+  .note { color:var(--muted); font-size:12px; }
+</style></head>
+<body>
+<div id="panel">
+  <div id="drag" class="pywebview-drag-region">
+    <span class="logo">✦ Ask Faerie Fire</span>
+    <span class="sub">sees your screen · knows you</span>
+    <button id="close" title="Hide (Esc)">✕</button>
+  </div>
+  <div id="ask-row">
+    <input id="q" type="text" placeholder="Ask anything about what’s on your screen…" spellcheck="false">
+  </div>
+  <div id="status">Press Enter to ask · Esc hides · the hotkey brings it back</div>
+  <div id="answer" class="hint">Answers appear here. I look at your current screen, the
+text on it, and what your second brain knows about you.</div>
+</div>
+
+<script>
+'use strict';
+function $(id){ return document.getElementById(id); }
+function api(){ return window.pywebview && pywebview.api; }
+let asking=false;
+
+function setStatus(html){ $('status').innerHTML=html; }
+function setAnswer(text, hint){
+  const a=$('answer'); a.textContent=text; a.className=hint?'hint':'';
+}
+
+function ask(){
+  const q=$('q').value.trim();
+  if(!q || asking || !api()) return;
+  asking=true;
+  setStatus('<span class="spin"></span>Thinking… (capturing screen + asking Claude)');
+  setAnswer('…');
+  pywebview.api.ask(q).then(r=>{
+    asking=false;
+    if(r && r.error){ setStatus('Something went wrong');
+      setAnswer('Error: '+r.error); return; }
+    setStatus('Press Enter to ask again');
+    const a=$('answer'); a.className='';
+    a.textContent=(r&&r.answer)||'(no answer)';
+    if(r && r.note){ const n=document.createElement('div');
+      n.className='note'; n.textContent='\n'+r.note; a.appendChild(n); }
+  }).catch(e=>{ asking=false; setStatus('Something went wrong'); setAnswer('Error: '+e); });
+}
+
+$('q').addEventListener('keydown', e=>{ if(e.key==='Enter') ask(); });
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && api()) pywebview.api.hide().catch(()=>{});
+});
+$('close').onclick=()=>{ if(api()) pywebview.api.hide().catch(()=>{}); };
+
+/* focus the input whenever the window is shown */
+window.addEventListener('focus', ()=>setTimeout(()=>{ $('q').focus(); $('q').select(); }, 60));
+function boot(tries){
+  if(api()){ $('q').focus(); }
+  else if(tries>0) setTimeout(()=>boot(tries-1),250);
+}
+window.addEventListener('pywebviewready',()=>boot(1));
+boot(30);
+</script>
+</body></html>

@@ -1,0 +1,53 @@
+# ---- Faerie Fire: never commit personal data or secrets ----
+# Databases (your activity log + second brain)
+data/
+*.db
+*.db-journal
+*.db-wal
+
+# Screenshots
+blobs/
+
+# Legacy/generated local exports may contain decrypted private notes
+vault/
+
+# Filing engine project docs — personal prose (nightly zip snapshots go to
+# data/backups alongside memory.db; see docs/filing_plan.md)
+projects/
+
+# Encryption salt + any local secrets
+secret.salt
+.env
+
+# Logs
+*.log
+triage.log
+diagnostics/
+
+# Local config (may hold personalized blocklist etc.); the example is tracked
+config.toml
+
+# ---- Python ----
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.test-tmp/
+pytest-cache-files-*/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# stray temp files
+*.tmp
+
+# capture daemon runtime files
+capture.lock
+.capture_stop
+tray.lock

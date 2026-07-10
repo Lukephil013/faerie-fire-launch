@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+python tools/update_handoff.py --staged
+git add docs/HANDOFF.md

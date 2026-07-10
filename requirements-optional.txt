@@ -1,0 +1,15 @@
+# Optional dependencies — installed best-effort. If one has no wheel for your
+# Python version (common on brand-new releases like 3.14), it is SKIPPED and the
+# related feature degrades gracefully:
+#   - rapidocr-onnxruntime  -> on-screen text (OCR). Without it, capture still
+#                              stores screenshots and simply skips text extraction.
+#   - pyttsx3               -> the companion's spoken voice (TTS).
+#   - faster-whisper        -> local speech-to-text (voice input).
+#   - sounddevice           -> microphone capture (voice input).
+#   - keyboard              -> global push-to-talk hotkey.
+# One package per line, no inline comments (fed to pip verbatim).
+rapidocr-onnxruntime>=1.3
+pyttsx3>=2.90
+faster-whisper>=1.0
+sounddevice>=0.4
+keyboard>=0.13

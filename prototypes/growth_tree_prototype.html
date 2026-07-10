@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Faerie Fire — Growth Tree Prototype (Oak)</title>
+<style>
+  :root {
+    --bg0:#020a06; --bg1:#07130c; --line:rgba(112,214,158,.22); --line2:rgba(112,214,158,.34);
+    --fg:#d9efe2; --muted:#7ea892; --cyan:#53e7c0; --green:#2fe3a0; --gold:#ffd479;
+    --panel:rgba(4,16,10,.82); --red:#ff7a6e;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; overflow:hidden; background:radial-gradient(1200px 700px at 50% 30%, #0a1f12 0%, var(--bg1) 45%, var(--bg0) 100%);
+    font-family:"Segoe UI",system-ui,sans-serif; color:var(--fg); }
+
+  header { position:fixed; top:0; left:0; right:0; height:52px; z-index:20; display:flex; align-items:center; gap:10px;
+    padding:0 18px; background:linear-gradient(rgba(2,10,6,.9),rgba(2,10,6,.45) 80%,transparent); pointer-events:none; }
+  header .logo { color:var(--cyan); font-size:18px; }
+  header b { letter-spacing:.5px; font-size:15px; }
+  header span.sub { color:var(--muted); font-size:11px; margin-top:3px; }
+  header .proto-chip { margin-left:auto; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--muted);
+    border:1px solid var(--line); border-radius:20px; padding:4px 10px; }
+
+  #stage { position:fixed; inset:0; width:100%; height:100%; cursor:grab; touch-action:none; }
+  #stage.dragging { cursor:grabbing; }
+
+  /* zoom-level label visibility */
+  .lbl { transition:opacity .35s; }
+  .lbl-2,.lbl-3 { opacity:0; }
+  #stage.zmid .lbl-2 { opacity:1; }
+  #stage.zdeep .lbl-3 { opacity:1; }
+  .node { cursor:pointer; }
+  .node .halo { transition:opacity .25s, r .25s; opacity:0; }
+  .node:hover .halo { opacity:.85; }
+  .node.selected .halo { opacity:1; }
+
+  /* ---- sidebar ---- */
+  #attention { position:fixed; top:66px; left:14px; width:246px; z-index:15;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px;
+    backdrop-filter:blur(6px); transition:transform .3s ease, opacity .3s ease; }
+  #attention.hidden { transform:translateX(-115%); opacity:0; }
+  #attention h3 { font-size:12px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted);
+    display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  #attention h3 .count { background:rgba(83,231,192,.15); color:var(--cyan); border-radius:10px; font-size:10px; padding:1px 7px; }
+  #att-close { margin-left:auto; background:none; border:none; color:var(--muted); font-size:15px; cursor:pointer; }
+  #att-close:hover { color:var(--cyan); }
+  .att-card { border:1px solid var(--line); border-radius:10px; padding:9px 10px; margin-bottom:8px;
+    background:rgba(8,24,15,.55); cursor:pointer; transition:border-color .15s, background .15s; }
+  .att-card:hover { border-color:var(--line2); background:rgba(12,32,20,.7); }
+  .att-card b { display:block; font-size:12.5px; }
+  .att-card span { font-size:11px; color:var(--muted); }
+  .att-card .pr { display:inline-block; font-size:9.5px; letter-spacing:.5px; text-transform:uppercase; margin-top:5px;
+    border-radius:8px; padding:1px 7px; }
+  .pr.high { color:var(--red); border:1px solid rgba(255,122,110,.4); }
+  .pr.due  { color:var(--gold); border:1px solid rgba(255,212,121,.4); }
+  .pr.med  { color:var(--cyan); border:1px solid rgba(83,231,192,.4); }
+  .att-card button { margin-top:7px; width:100%; border:none; border-radius:8px; padding:6px 0; font-size:12px; font-weight:700;
+    background:linear-gradient(90deg,var(--green),var(--cyan)); color:#032118; cursor:pointer; }
+  .att-card button:hover { filter:brightness(1.1); }
+  #att-toggle { position:fixed; top:66px; left:14px; z-index:14; width:34px; height:34px; border-radius:10px;
+    border:1px solid var(--line); background:var(--panel); color:var(--cyan); cursor:pointer; font-size:15px; }
+  #sim-extra { width:100%; margin-top:2px; background:none; border:1px dashed var(--line2); color:var(--muted);
+    border-radius:10px; padding:7px 0; font-size:11px; cursor:pointer; }
+  #sim-extra:hover { color:var(--cyan); border-color:var(--cyan); }
+
+  /* ---- detail card ---- */
+  #card { position:fixed; top:66px; right:14px; width:300px; z-index:15; background:var(--panel);
+    border:1px solid var(--line2); border-radius:16px; padding:16px; backdrop-filter:blur(6px);
+    transform:translateX(115%); opacity:0; transition:transform .35s ease, opacity .35s ease; }
+  #card.open { transform:none; opacity:1; }
+  #card .back { background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; padding:0 0 10px; }
+  #card .back:hover { color:var(--cyan); }
+  #card .chips { display:flex; gap:6px; margin-bottom:8px; }
+  #card .chip { font-size:9.5px; letter-spacing:.6px; text-transform:uppercase; border-radius:9px; padding:2px 8px;
+    border:1px solid var(--line2); color:var(--muted); }
+  #card .chip.new { color:#052015; background:linear-gradient(90deg,var(--green),var(--cyan)); border:none; font-weight:700; }
+  #card h2 { font-size:18px; line-height:1.25; margin-bottom:6px; }
+  #card p.desc { font-size:12.5px; color:var(--muted); line-height:1.5; margin-bottom:12px; }
+  #card .sec { font-size:10px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); margin:12px 0 5px; }
+  #card .next { border:1px solid rgba(47,227,160,.38); border-radius:10px; padding:9px 11px; font-size:12.5px; line-height:1.4; }
+  #card .bar { height:6px; border-radius:4px; background:rgba(112,214,158,.15); overflow:hidden; margin-top:4px; }
+  #card .bar i { display:block; height:100%; border-radius:4px; background:linear-gradient(90deg,var(--green),var(--cyan)); }
+  #card .bar-lbl { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); }
+  #card .btns { display:flex; gap:7px; margin-top:14px; }
+  #card .btns button { flex:1; border:1px solid var(--line2); background:rgba(8,24,15,.6); color:var(--fg);
+    border-radius:9px; padding:7px 0; font-size:11.5px; cursor:pointer; }
+  #card .btns button:hover { border-color:var(--cyan); color:var(--cyan); }
+
+  /* ---- controls ---- */
+  #controls { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:15; display:flex; gap:6px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px; backdrop-filter:blur(6px); }
+  #controls button { width:34px; height:30px; border:none; background:none; color:var(--fg); font-size:15px; cursor:pointer; border-radius:8px; }
+  #controls button:hover { background:rgba(83,231,192,.12); color:var(--cyan); }
+  #zoom-pct { min-width:56px; display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted); }
+
+  /* ---- banner ---- */
+  #banner { position:fixed; top:64px; left:50%; transform:translate(-50%,-16px); z-index:25; display:flex; gap:10px; align-items:center;
+    background:var(--panel); border:1px solid rgba(47,227,160,.5); border-radius:12px; padding:10px 18px;
+    opacity:0; pointer-events:none; transition:opacity .35s, transform .35s; }
+  #banner.show { opacity:1; transform:translate(-50%,0); }
+  #banner b { color:var(--cyan); font-size:13.5px; display:block; }
+  #banner span { color:var(--muted); font-size:11.5px; }
+  #banner .spark { font-size:16px; }
+
+  @keyframes pulse { 0%,100% { opacity:.75; } 50% { opacity:1; } }
+  @keyframes drift { 0% { transform:translate(0,0); opacity:0; } 15% { opacity:.7; } 85% { opacity:.5; }
+    100% { transform:translate(var(--dx),var(--dy)); opacity:0; } }
+  .firefly { animation:drift var(--dur) linear infinite; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">✦</span>
+  <div><b>Faerie Fire</b><br><span class="sub">Growth — prototype</span></div>
+  <span class="proto-chip">interactive prototype · sample data</span>
+</header>
+
+<div id="banner"><span class="spark">✦</span><div><b id="banner-title">New branch approved</b><span id="banner-sub">Your growth is being added to the tree.</span></div></div>
+
+<button id="att-toggle" title="Open attention panel">☰</button>
+<aside id="attention">
+  <h3>Needs Attention <span class="count" id="att-count">0</span><button id="att-close" title="Collapse">‹</button></h3>
+  <div id="att-list"></div>
+  <button id="sim-extra">+ simulate random growth</button>
+</aside>
+
+<div id="card"></div>
+
+<div id="controls">
+  <button id="z-out" title="Zoom out">−</button>
+  <div id="zoom-pct">100%</div>
+  <button id="z-in" title="Zoom in">+</button>
+  <button id="z-fit" title="Fit tree">⛶</button>
+</div>
+
+<svg id="stage" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow-soft" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <radialGradient id="soul-g"><stop offset="0%" stop-color="#ffe9a8"/><stop offset="55%" stop-color="#ffd479"/><stop offset="100%" stop-color="rgba(255,212,121,0)"/></radialGradient>
+    <radialGradient id="ground-g"><stop offset="0%" stop-color="rgba(47,227,160,.18)"/><stop offset="100%" stop-color="rgba(47,227,160,0)"/></radialGradient>
+    <!-- pre-faded foliage gradients: cheap canopy mass, no live blur filters -->
+    <radialGradient id="fol-deep"><stop offset="0%" stop-color="rgba(28,74,44,.62)"/><stop offset="60%" stop-color="rgba(28,74,44,.34)"/><stop offset="100%" stop-color="rgba(28,74,44,0)"/></radialGradient>
+    <radialGradient id="fol-mid"><stop offset="0%" stop-color="rgba(46,112,66,.55)"/><stop offset="60%" stop-color="rgba(46,112,66,.28)"/><stop offset="100%" stop-color="rgba(46,112,66,0)"/></radialGradient>
+    <radialGradient id="fol-lite"><stop offset="0%" stop-color="rgba(88,178,112,.5)"/><stop offset="55%" stop-color="rgba(88,178,112,.22)"/><stop offset="100%" stop-color="rgba(88,178,112,0)"/></radialGradient>
+    <linearGradient id="trunk-g" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#33251a"/><stop offset="55%" stop-color="#3e2f1f"/><stop offset="100%" stop-color="#46372a"/>
+    </linearGradient>
+  </defs>
+  <g id="bg-layer"></g>
+  <g id="canopy-layer"></g>
+  <g id="edge-layer"></g>
+  <g id="node-layer"></g>
+  <g id="fx-layer"></g>
+</svg>
+
+<script>
+/* ================= seeded randomness ================= */
+function hashStr(s){ let h=2166136261; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function rng(seed){ let a=seed>>>0; return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a);
+  t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+function jit(id,tag,lo,hi){ const r=rng(hashStr(id+':'+tag))(); return lo+r*(hi-lo); }
+
+/* ================= sample data (mirrors Soul/Root/Branch/Leaf) ================= */
+let NEXT_ID=1000;
+const TREE = {
+  id:'soul', type:'Soul', title:'Self',
+  desc:'The heart of the oak. Approved beliefs, values, and long-term direction live here.',
+  children:[
+    { id:'r-mental', type:'Root', title:'Mental Health', desc:'Practices and structures that keep the inner weather stable.', children:[
+      { id:'b-sleep', type:'Branch', title:'Sleep Rhythm', progress:.62, desc:'Consistent wind-down and wake times.', next:'Log two more weeks of wind-down data.', children:[
+        { id:'l-winddown', type:'Leaf', title:'No-screen wind-down', progress:.8 },
+        { id:'l-wake', type:'Leaf', title:'Fixed wake time', progress:.45 } ]},
+      { id:'b-journal', type:'Branch', title:'Journaling', progress:.4, desc:'Evening reflection loop feeding triage.', next:'Import last month of journal entries.', children:[
+        { id:'l-evening', type:'Leaf', title:'Evening pages', progress:.4 } ]} ]},
+    { id:'r-career', type:'Root', title:'Work / Career', desc:'Professional trajectory and the skills that compound it.', children:[
+      { id:'b-sfadmin', type:'Branch', title:'Salesforce Admin Path', progress:.55, desc:'Certification track toward admin role.', next:'Schedule the practice exam.', children:[
+        { id:'l-trailhead', type:'Leaf', title:'Trailhead modules', progress:.7 },
+        { id:'l-mock', type:'Leaf', title:'Mock exams', progress:.3 } ]},
+      { id:'b-autodesk', type:'Branch', title:'Autodesk Workflow', progress:.35, desc:'Current job tooling mastery.', next:'Map connection to Systems root.', children:[
+        { id:'l-scripts', type:'Leaf', title:'Automation scripts', progress:.5 } ]} ]},
+    { id:'r-creativity', type:'Root', title:'Creativity', desc:'Making things for their own sake.', children:[
+      { id:'b-writing', type:'Branch', title:'Worldbuilding', progress:.5, desc:'The long-running setting bible.', children:[
+        { id:'l-faerie', type:'Leaf', title:'Faerie lore doc', progress:.6 } ]} ]},
+    { id:'r-skills', type:'Root', title:'Skills', desc:'Deliberate practice tracks with mastery snapshots.', children:[
+      { id:'b-korean', type:'Branch', title:'Korean Fluency', progress:.3, desc:'Reading and listening pipeline.', next:'Add evidence from this week’s sessions.', children:[
+        { id:'l-anki', type:'Leaf', title:'Anki streak', progress:.85 },
+        { id:'l-listening', type:'Leaf', title:'Listening hours', progress:.25 } ]},
+      { id:'b-python', type:'Branch', title:'Python Depth', progress:.65, desc:'Beyond scripting: architecture and testing.', children:[
+        { id:'l-faeriefire', type:'Leaf', title:'Faerie Fire itself', progress:.7 } ]} ]},
+    { id:'r-learning', type:'Root', title:'Learning', desc:'Investigations graduate into structured study here.', children:[
+      { id:'b-cogsci', type:'Branch', title:'Memory & Cognition', progress:.4, desc:'Reading list from the curiosity engine.', children:[
+        { id:'l-papers', type:'Leaf', title:'Paper notes', progress:.35 } ]} ]},
+    { id:'r-systems', type:'Root', title:'Systems', desc:'Personal infrastructure: automation, capture, review loops.', children:[
+      { id:'b-vault', type:'Branch', title:'Obsidian Vault', progress:.75, desc:'Nightly memory export and structure.', children:[
+        { id:'l-templates', type:'Leaf', title:'Note templates', progress:.9 } ]},
+      { id:'b-nightly', type:'Branch', title:'Nightly Cycle', progress:.8, desc:'Triage → consolidate → backup → vault.', children:[] } ]},
+    { id:'r-foundations', type:'Root', title:'Foundations', desc:'Health, finances, relationships — the load-bearing basics.', children:[
+      { id:'b-budget', type:'Branch', title:'Budget Discipline', progress:.5, desc:'Monthly review habit.', children:[
+        { id:'l-review', type:'Leaf', title:'Monthly review', progress:.5 } ]} ]}
+  ]
+};
+
+const PROPOSAL = { parentId:'r-skills', node:{ id:'b-sfflow', type:'Branch', title:'Salesforce Flow Fundamentals', progress:0,
+  desc:'Understanding core concepts and building automation with Flows. Proposed by the Salesforce investigation.',
+  next:'Design & execute a validation prototype with 2–3 test users.', children:[] } };
+
+/* ================= oak layout ================= */
+const W=2400, H=1500, GROUND=1010;
+const TRUNK={ x:1200, base:GROUND, top:742, wBase:96, wTop:44 };
+const SOUL={ x:1200, y:880 };
+const nodes=new Map(), edges=new Map(); // id -> {node,parent,pos,angle,depth,attach?}
+
+function layout(){
+  nodes.clear(); edges.clear();
+  nodes.set('soul',{node:TREE,parent:null,pos:{...SOUL},angle:90,depth:0});
+  const roots=TREE.children, n=roots.length, span=150, start=165;
+  roots.forEach((r,i)=>{
+    const a=start-(i+0.5)*(span/n)+jit(r.id,'a',-4,4);
+    const rad=a*Math.PI/180, s=Math.sin(rad);
+    // limbs attach along the upper trunk: horizontal limbs lower, vertical limbs higher (oak habit)
+    const attach={ x:TRUNK.x+Math.cos(rad)*26, y:TRUNK.top+(1-s)*72+jit(r.id,'ay',-8,8) };
+    const L=(i%2?438:332)+jit(r.id,'len',-24,24); // staggered radii keep clusters apart
+    const pos={ x:attach.x+Math.cos(rad)*L*1.1, y:attach.y-s*L*0.76 }; // broad, slightly flattened crown
+    nodes.set(r.id,{node:r,parent:'soul',pos,angle:a,depth:1,attach});
+    edges.set(r.id,edgePath(attach,pos,r.id));
+    placeKids(r,pos,a,(span/n)*1.5,1);
+  });
+  function placeKids(node,ppos,angle,wedge,depth){
+    const kids=node.children||[], m=kids.length;
+    kids.forEach((k,j)=>{
+      const cw=Math.min(wedge,60);
+      const ca=angle+(j-(m-1)/2)*(cw/Math.max(m-1,1.4))+jit(k.id,'a',-3,3);
+      const rad=ca*Math.PI/180;
+      const cl=depth===1?(j%2?222:168)+jit(k.id,'len',-13,13):(j%2?110:82)+jit(k.id,'len',-8,8);
+      const pos={ x:ppos.x+Math.cos(rad)*cl*1.06, y:ppos.y-Math.sin(rad)*cl*0.8 };
+      nodes.set(k.id,{node:k,parent:node.id,pos,angle:ca,depth:depth+1});
+      edges.set(k.id,edgePath(ppos,pos,k.id));
+      placeKids(k,pos,ca,cw*0.8,depth+1);
+    });
+  }
+}
+/* crooked, oak-like limb: two joined curves with seeded kinks */
+function edgePath(p,c,id){
+  const dx=c.x-p.x, dy=c.y-p.y, d=Math.hypot(dx,dy)||1, px=-dy/d, py=dx/d;
+  const k1=jit(id,'c1',-.16,.16)*d, k2=jit(id,'c2',-.12,.12)*d, km=jit(id,'cm',-.11,.11)*d;
+  const mx=p.x+dx*.52+px*km, my=p.y+dy*.52+py*km;
+  const f=v=>v.toFixed(1);
+  return `M ${f(p.x)} ${f(p.y)} C ${f(p.x+dx*.2+px*k1)} ${f(p.y+dy*.2+py*k1)}, ${f(mx-dx*.14)} ${f(my-dy*.14)}, ${f(mx)} ${f(my)} `+
+         `S ${f(p.x+dx*.85+px*k2)} ${f(p.y+dy*.85+py*k2)}, ${f(c.x)} ${f(c.y)}`;
+}
+function descendants(node){ let c=0; (node.children||[]).forEach(k=>{ c+=1+descendants(k); }); return c; }
+function findNode(id,root=TREE){ if(root.id===id) return root;
+  for(const k of root.children||[]){ const f=findNode(id,k); if(f) return f; } return null; }
+
+/* ================= render ================= */
+const stage=document.getElementById('stage');
+const S={ bg:document.getElementById('bg-layer'), canopy:document.getElementById('canopy-layer'),
+          edge:document.getElementById('edge-layer'), node:document.getElementById('node-layer'),
+          fx:document.getElementById('fx-layer') };
+const EDGE_W=[0,17,7.5,3.2], NODE_R=[30,20,11,6.5], FONT=[26,21,13.5,10.5];
+const svgNS='http://www.w3.org/2000/svg';
+function el(tag,attrs,parent){ const e=document.createElementNS(svgNS,tag);
+  for(const k in attrs) e.setAttribute(k,attrs[k]); if(parent) parent.appendChild(e); return e; }
+
+function renderBackground(){
+  // canopy silhouette — the oak's dark leafy mass behind everything
+  el('ellipse',{cx:1200,cy:470,rx:900,ry:400,fill:'url(#fol-deep)'},S.bg);
+  el('ellipse',{cx:840,cy:560,rx:520,ry:300,fill:'url(#fol-deep)'},S.bg);
+  el('ellipse',{cx:1580,cy:540,rx:540,ry:310,fill:'url(#fol-deep)'},S.bg);
+  el('ellipse',{cx:1200,cy:330,rx:520,ry:250,fill:'url(#fol-mid)'},S.bg);
+  el('ellipse',{cx:1200,cy:GROUND+18,rx:880,ry:120,fill:'url(#ground-g)'},S.bg);
+
+  // massive tapered trunk with a slight S-curve
+  const t=TRUNK, hb=t.wBase/2, ht=t.wTop/2;
+  el('path',{d:`M ${t.x-hb-30} ${t.base+8}
+      C ${t.x-hb} ${t.base-40}, ${t.x-ht-16} ${t.base-160}, ${t.x-ht} ${t.top+40}
+      C ${t.x-ht+2} ${t.top+8}, ${t.x-ht+4} ${t.top}, ${t.x-ht+6} ${t.top-8}
+      L ${t.x+ht-6} ${t.top-8}
+      C ${t.x+ht-4} ${t.top}, ${t.x+ht-2} ${t.top+8}, ${t.x+ht} ${t.top+40}
+      C ${t.x+ht+16} ${t.base-160}, ${t.x+hb} ${t.base-40}, ${t.x+hb+30} ${t.base+8} Z`,
+    fill:'url(#trunk-g)', stroke:'rgba(112,214,158,.42)','stroke-width':2.5, filter:'url(#glow)'},S.bg);
+  // bark grooves
+  for(let i=0;i<5;i++){
+    const off=-hb*0.62+i*(hb*0.31), sway=jit('bark'+i,'s',-10,10);
+    el('path',{d:`M ${t.x+off} ${t.base-6} C ${t.x+off+sway} ${t.base-110}, ${t.x+off*0.62+sway} ${t.top+130}, ${t.x+off*0.5} ${t.top+26}`,
+      fill:'none', stroke:'rgba(0,0,0,.3)','stroke-width':3.5,'stroke-linecap':'round'},S.bg);
+  }
+  // buttress roots flaring at the base
+  for(let i=0;i<6;i++){
+    const dir=i<3?-1:1, k=i%3, ex=t.x+dir*(90+k*95)+jit('but'+i,'x',-16,16), ey=t.base+16+k*7;
+    el('path',{d:`M ${t.x+dir*hb*0.5} ${t.base-46} C ${t.x+dir*(hb*0.85)} ${t.base-18}, ${ex-dir*40} ${ey-8}, ${ex} ${ey}
+        C ${ex-dir*30} ${ey+3}, ${t.x+dir*hb*0.7} ${t.base+2}, ${t.x+dir*hb*0.28} ${t.base+6} Z`,
+      fill:'url(#trunk-g)', stroke:'rgba(112,214,158,.28)','stroke-width':1.6},S.bg);
+  }
+  // glowing underground rootlets
+  for(let i=0;i<9;i++){
+    const a=(196+i*17)*Math.PI/180, L=200+jit('uroot'+i,'l',0,190);
+    const ex=t.x+Math.cos(a)*L, ey=t.base+34+Math.abs(Math.sin(a))*120+jit('uroot'+i,'y',0,44);
+    el('path',{d:`M ${t.x} ${t.base-4} C ${t.x+(ex-t.x)*.3} ${t.base+46}, ${t.x+(ex-t.x)*.7} ${ey-30}, ${ex} ${ey}`,
+      fill:'none', stroke:'rgba(112,214,158,.2)','stroke-width':4.6-i*.36,'stroke-linecap':'round'},S.bg);
+  }
+  // fireflies
+  for(let i=0;i<14;i++){
+    const f=el('circle',{cx:300+jit('ff'+i,'x',0,1800), cy:220+jit('ff'+i,'y',0,900),
+      r:1.6+jit('ff'+i,'r',0,1.6), fill:'rgba(255,224,150,.8)', class:'firefly'},S.bg);
+    f.style.setProperty('--dx',(jit('ff'+i,'dx',-90,90))+'px');
+    f.style.setProperty('--dy',(jit('ff'+i,'dy',-70,20))+'px');
+    f.style.setProperty('--dur',(9+jit('ff'+i,'d',0,10))+'s');
+  }
+}
+
+/* foliage cluster for a node — layered soft circles, brighter toward the tips */
+function renderFoliage(id,info){
+  const g=el('g',{id:'f-'+id},S.canopy), {pos,depth}=info;
+  const spec=depth===1
+    ? [['fol-deep',150],['fol-mid',105],['fol-mid',80]]
+    : depth===2 ? [['fol-mid',88],['fol-lite',58]] : [['fol-lite',40]];
+  spec.forEach(([grad,r],k)=>{
+    el('circle',{cx:pos.x+jit(id,'fx'+k,-r*.4,r*.4), cy:pos.y+jit(id,'fy'+k,-r*.42,r*.28),
+      r:r+jit(id,'fr'+k,-r*.15,r*.15), fill:`url(#${grad})`},g);
+  });
+  return g;
+}
+
+function renderTree(){
+  S.canopy.innerHTML=''; S.edge.innerHTML=''; S.node.innerHTML='';
+  for(const [id,info] of nodes){ if(info.parent) renderFoliage(id,info); }
+  for(const [id,info] of nodes){
+    if(!info.parent) continue;
+    el('path',{d:edges.get(id),fill:'none',stroke:'rgba(112,214,158,.6)','stroke-width':EDGE_W[info.depth],
+      'stroke-linecap':'round',filter:info.depth<3?'url(#glow)':'none','data-edge':id},S.edge);
+  }
+  // soul — golden heart set into the trunk
+  const soul=el('g',{class:'node',id:'n-soul','data-id':'soul'},S.node);
+  el('circle',{cx:SOUL.x,cy:SOUL.y,r:58,fill:'url(#soul-g)',opacity:.55,style:'animation:pulse 4s infinite'},soul);
+  el('circle',{cx:SOUL.x,cy:SOUL.y,r:NODE_R[0],fill:'#0a2417',stroke:'var(--gold)','stroke-width':2.5,filter:'url(#glow)'},soul);
+  el('text',{x:SOUL.x,y:SOUL.y+9,'text-anchor':'middle','font-size':26,fill:'var(--gold)'},soul).textContent='✦';
+  el('text',{x:SOUL.x,y:SOUL.y+NODE_R[0]+34,'text-anchor':'middle','font-size':FONT[0],fill:'var(--fg)',class:'lbl lbl-1'},soul).textContent='Self';
+  el('text',{x:SOUL.x,y:SOUL.y+NODE_R[0]+58,'text-anchor':'middle','font-size':14,fill:'var(--muted)',class:'lbl lbl-1'},soul)
+    .textContent=descendants(TREE)+' nodes';
+  soul.addEventListener('click',e=>{ e.stopPropagation(); selectNode('soul'); });
+  for(const [id,info] of nodes){ if(info.parent) renderNode(id,info); }
+}
+function renderNode(id,info){
+  const {pos,depth,node}=info, r=NODE_R[depth];
+  const g=el('g',{class:'node','data-id':id,id:'n-'+id},S.node);
+  el('circle',{class:'halo',cx:pos.x,cy:pos.y,r:r+9,fill:'none',stroke:'var(--cyan)','stroke-width':2,opacity:0},g);
+  if(depth===3){
+    el('circle',{cx:pos.x,cy:pos.y,r:r,fill:'rgba(83,231,192,.9)',filter:'url(#glow)'},g);
+  } else {
+    el('circle',{cx:pos.x,cy:pos.y,r:r,fill:'#0a2417',stroke:'var(--cyan)','stroke-width':depth===1?2.4:1.8,filter:'url(#glow)'},g);
+    el('circle',{cx:pos.x,cy:pos.y,r:Math.max(2.5,r*.32),fill:'var(--cyan)',opacity:.9},g);
+  }
+  const t=el('text',{x:pos.x,y:pos.y+r+(depth===1?26:18),'text-anchor':'middle','font-size':FONT[depth],
+    fill:'var(--fg)',class:'lbl lbl-'+depth},g);
+  t.textContent=node.title;
+  if(depth===1) el('text',{x:pos.x,y:pos.y+r+46,'text-anchor':'middle','font-size':12,fill:'var(--muted)',class:'lbl lbl-1'},g)
+    .textContent=descendants(node)+' nodes';
+  g.addEventListener('click',e=>{ e.stopPropagation(); selectNode(id); });
+}
+
+/* ================= view / zoom ================= */
+const FULL={x:40,y:30,w:W-80,h:H-90};
+let view={...FULL}, tweening=null;
+function applyView(){
+  stage.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);
+  const scale=FULL.w/view.w;
+  document.getElementById('zoom-pct').textContent=Math.round(scale*100)+'%';
+  stage.classList.toggle('zmid',scale>1.45); stage.classList.toggle('zdeep',scale>2.4);
+}
+function tweenView(target,dur=650){
+  if(tweening) cancelAnimationFrame(tweening.raf);
+  const from={...view}, t0=performance.now();
+  return new Promise(res=>{
+    tweening={};
+    (function step(now){
+      let t=Math.min(1,(now-t0)/dur); t=t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+      view={ x:from.x+(target.x-from.x)*t, y:from.y+(target.y-from.y)*t,
+             w:from.w+(target.w-from.w)*t, h:from.h+(target.h-from.h)*t };
+      applyView();
+      if(t<1) tweening.raf=requestAnimationFrame(step); else { tweening=null; res(); }
+    })(t0);
+  });
+}
+function frameFor(id){
+  const info=nodes.get(id), d=info?info.depth:0;
+  const w=[1500,1050,700,470][d], h=w*(H/W)*0.95;
+  return { x:info.pos.x-w*(cardOpen?0.42:0.5), y:info.pos.y-h*0.44, w, h };
+}
+let cardOpen=false;
+
+let drag=null, justDragged=false;
+stage.addEventListener('pointerdown',e=>{ drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y,moved:false};
+  stage.setPointerCapture(e.pointerId); stage.classList.add('dragging'); });
+stage.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  if(Math.abs(dx)+Math.abs(dy)>4) drag.moved=true;
+  const r=stage.getBoundingClientRect();
+  view.x=drag.vx-dx*view.w/r.width; view.y=drag.vy-dy*view.h/r.height; applyView();
+});
+stage.addEventListener('pointerup',()=>{ justDragged=!!(drag&&drag.moved); drag=null; stage.classList.remove('dragging'); });
+stage.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=stage.getBoundingClientRect(), f=e.deltaY<0?1/1.16:1.16;
+  const nw=Math.min(Math.max(view.w*f,300),FULL.w*1.25), nh=nw*(view.h/view.w);
+  const mx=view.x+((e.clientX-r.left)/r.width)*view.w, my=view.y+((e.clientY-r.top)/r.height)*view.h;
+  view={ x:mx-((e.clientX-r.left)/r.width)*nw, y:my-((e.clientY-r.top)/r.height)*nh, w:nw, h:nh };
+  applyView();
+},{passive:false});
+stage.addEventListener('click',e=>{ if(!justDragged && (e.target===stage||e.target.closest('#bg-layer')||e.target.closest('#canopy-layer'))) closeCard(); });
+
+document.getElementById('z-in').onclick=()=>zoomStep(1/1.35);
+document.getElementById('z-out').onclick=()=>zoomStep(1.35);
+document.getElementById('z-fit').onclick=()=>{ closeCard(); tweenView(FULL); };
+function zoomStep(f){
+  const cx=view.x+view.w/2, cy=view.y+view.h/2;
+  const nw=Math.min(Math.max(view.w*f,300),FULL.w*1.25), nh=nw*(view.h/view.w);
+  tweenView({x:cx-nw/2,y:cy-nh/2,w:nw,h:nh},380);
+}
+window.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeCard(); tweenView(FULL); } });
+
+/* ================= detail card ================= */
+const card=document.getElementById('card');
+let selectedId=null;
+function selectNode(id,isNew=false){
+  selectedId=id; cardOpen=true;
+  document.querySelectorAll('.node.selected').forEach(n=>n.classList.remove('selected'));
+  const g=document.getElementById('n-'+id); if(g) g.classList.add('selected');
+  renderCard(id,isNew); card.classList.add('open');
+  tweenView(frameFor(id),700);
+}
+function renderCard(id,isNew){
+  const node=findNode(id), info=nodes.get(id);
+  const prog=node.progress;
+  card.innerHTML=`
+    <button class="back">‹ Back to tree</button>
+    <div class="chips">${isNew?'<span class="chip new">New</span>':''}<span class="chip">${node.type}</span>
+      ${info.depth<=1?`<span class="chip">${descendants(node)} nodes</span>`:''}</div>
+    <h2>${node.title}</h2>
+    <p class="desc">${node.desc||'No description yet — open Edit to add one.'}</p>
+    ${node.next?`<div class="sec">Next action</div><div class="next">✦ ${node.next}</div>`:''}
+    ${prog!==undefined?`<div class="sec">Progress</div>
+      <div class="bar-lbl"><span>completion</span><span>${Math.round(prog*100)}%</span></div>
+      <div class="bar"><i style="width:${Math.round(prog*100)}%"></i></div>`:''}
+    <div class="btns"><button data-a="edit">Edit</button><button data-a="plan">Plan</button><button data-a="chat">Ask GoalAI</button></div>`;
+  card.querySelector('.back').onclick=()=>{ closeCard(); tweenView(FULL); };
+  card.querySelectorAll('.btns button').forEach(b=>b.onclick=()=>flashBanner('Prototype stub','In the real build this opens the existing '+
+    (b.dataset.a==='edit'?'edit drawer':b.dataset.a==='plan'?'planner drawer':'GoalAI chat')+'.'));
+}
+function closeCard(){
+  cardOpen=false; card.classList.remove('open'); selectedId=null;
+  document.querySelectorAll('.node.selected').forEach(n=>n.classList.remove('selected'));
+}
+
+/* ================= banner ================= */
+let bannerTimer=null;
+function flashBanner(title,sub,ms=3200){
+  document.getElementById('banner-title').textContent=title;
+  document.getElementById('banner-sub').textContent=sub;
+  const b=document.getElementById('banner'); b.classList.add('show');
+  clearTimeout(bannerTimer); bannerTimer=setTimeout(()=>b.classList.remove('show'),ms);
+}
+
+/* ================= growth animation ================= */
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function growNode(parentId,spec){
+  const parent=findNode(parentId);
+  spec.id=spec.id||('new-'+(NEXT_ID++));
+  parent.children=parent.children||[]; parent.children.push(spec);
+  layout();
+  closeCard();
+  flashBanner('New '+spec.type.toLowerCase()+' approved','Your growth is being added to the tree.',5200);
+  await tweenView(FULL,600); await sleep(300);
+
+  renderTree();
+  const info=nodes.get(spec.id);
+  const edge=S.edge.querySelector(`[data-edge="${spec.id}"]`);
+  const nodeG=document.getElementById('n-'+spec.id);
+  const folG=document.getElementById('f-'+spec.id);
+  nodeG.style.opacity=0; if(folG) folG.style.opacity=0;
+  const len=edge.getTotalLength();
+  edge.style.strokeDasharray=len; edge.style.strokeDashoffset=len;
+  edge.setAttribute('stroke','var(--cyan)');
+  const pulse=el('circle',{r:8,fill:'#eafff5',filter:'url(#glow-soft)'},S.fx);
+
+  await new Promise(res=>{
+    const t0=performance.now(), dur=1300;
+    (function step(now){
+      let t=Math.min(1,(now-t0)/dur); const e=1-Math.pow(1-t,3);
+      edge.style.strokeDashoffset=len*(1-e);
+      const pt=edge.getPointAtLength(len*e);
+      pulse.setAttribute('cx',pt.x); pulse.setAttribute('cy',pt.y);
+      if(t<1) requestAnimationFrame(step); else res();
+    })(t0);
+  });
+  pulse.remove();
+  for(let i=0;i<10;i++){
+    const a=Math.PI*2*i/10, sp=el('circle',{cx:info.pos.x,cy:info.pos.y,r:2.4,fill:'#eafff5',filter:'url(#glow)'},S.fx);
+    const dist=26+Math.random()*30, t0=performance.now();
+    (function fly(now){
+      const t=Math.min(1,(now-t0)/650), e=1-Math.pow(1-t,2);
+      sp.setAttribute('cx',info.pos.x+Math.cos(a)*dist*e); sp.setAttribute('cy',info.pos.y+Math.sin(a)*dist*e);
+      sp.setAttribute('opacity',1-t);
+      if(t<1) requestAnimationFrame(fly); else sp.remove();
+    })(t0);
+  }
+  nodeG.style.transition='opacity .4s'; nodeG.style.opacity=1;
+  if(folG){ folG.style.transition='opacity 1.1s'; folG.style.opacity=1; } // leaves fill in around the new growth
+  await sleep(600);
+  selectNode(spec.id,true);
+}
+
+/* ================= sidebar ================= */
+let attention=[
+  { title:'Review proposal', sub:'Salesforce Flow Fundamentals', pr:'high', prLbl:'High priority', approve:true },
+  { title:'Validate node', sub:'Korean Fluency', pr:'due', prLbl:'Due soon', nodeId:'b-korean' },
+  { title:'Map connection', sub:'Autodesk & Systems', pr:'med', prLbl:'Medium priority', nodeId:'b-autodesk' },
+  { title:'Add evidence', sub:'Listening hours', pr:'med', prLbl:'Low priority', nodeId:'l-listening' }
+];
+function renderAttention(){
+  document.getElementById('att-count').textContent=attention.length;
+  const box=document.getElementById('att-list');
+  box.innerHTML=attention.map((a,i)=>`
+    <div class="att-card" data-i="${i}">
+      <b>${a.title}</b><span>${a.sub}</span><br><span class="pr ${a.pr}">${a.prLbl}</span>
+      ${a.approve?'<button data-approve="1">Approve & grow</button>':''}
+    </div>`).join('');
+  box.querySelectorAll('.att-card').forEach(cardEl=>{
+    const item=attention[+cardEl.dataset.i];
+    const btn=cardEl.querySelector('button');
+    if(btn) btn.onclick=e=>{ e.stopPropagation(); attention=attention.filter(x=>x!==item); renderAttention();
+      growNode(PROPOSAL.parentId,PROPOSAL.node); };
+    cardEl.onclick=()=>{ if(item.nodeId) selectNode(item.nodeId); };
+  });
+}
+document.getElementById('att-toggle').onclick=()=>document.getElementById('attention').classList.remove('hidden');
+document.getElementById('att-close').onclick=()=>document.getElementById('attention').classList.add('hidden');
+document.getElementById('sim-extra').onclick=()=>{
+  const branches=[...nodes.values()].filter(i=>i.depth===2);
+  const pick=branches[Math.floor(Math.random()*branches.length)].node;
+  const names=['Weekly review','Spaced practice','Field test','Deep-dive session','Teach-back note','Milestone check'];
+  growNode(pick.id,{ type:'Leaf', title:names[Math.floor(Math.random()*names.length)], progress:0,
+    desc:'Simulated growth — in the real build this comes from an approved proposal.' });
+};
+
+/* ================= boot ================= */
+layout(); renderBackground(); renderTree(); renderAttention();
+applyView();
+view={x:-140,y:-80,w:W+280,h:H+180}; applyView(); setTimeout(()=>tweenView(FULL,900),150);
+</script>
+</body>
+</html>
