@@ -34,6 +34,9 @@ except OSError:
 # --- imports / syntax ---
 check("import gui.py", lambda: __import__("gui") and "imports clean")
 check("import brain.py", lambda: __import__("livingpc.companion.brain", fromlist=["x"]) and "imports clean")
+# gui.py imports this lazily inside open-chat calls, so a missing module only
+# surfaces at runtime ("No module named 'companion'") — test it eagerly here.
+check("chat bridge (companion.Api)", lambda: getattr(__import__("companion"), "Api") and "imports clean")
 
 from livingpc import lang, onboarding, soul_calibration  # noqa: E402
 from livingpc.companion import personas  # noqa: E402

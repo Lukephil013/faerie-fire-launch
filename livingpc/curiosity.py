@@ -245,10 +245,13 @@ class CuriosityStore:
                 "SELECT * FROM curiosity ORDER BY is_greatest DESC, id").fetchall()
         return [self._curiosity_dict(r) for r in rows]
 
-    def set_greatest(self, curiosity_id: int) -> None:
+    def set_greatest(self, curiosity_id: int, on: bool = True) -> None:
+        """Mark one curiosity as the greatest (clearing any other), or with
+        on=False un-mark it — clicking the star again toggles it off."""
         self.conn.execute("UPDATE curiosity SET is_greatest=0")
-        self.conn.execute(
-            "UPDATE curiosity SET is_greatest=1 WHERE id=?", (curiosity_id,))
+        if on:
+            self.conn.execute(
+                "UPDATE curiosity SET is_greatest=1 WHERE id=?", (curiosity_id,))
         self.conn.commit()
 
     def set_status(self, curiosity_id: int, status: str) -> None:
@@ -1620,8 +1623,8 @@ def respond_suggestion(store: CuriosityStore, item_id: int, action: str) -> None
     store.mark_suggestion_resolved(item_id, action)
 
 
-def set_greatest(store: CuriosityStore, curiosity_id: int) -> None:
-    store.set_greatest(curiosity_id)
+def set_greatest(store: CuriosityStore, curiosity_id: int, on: bool = True) -> None:
+    store.set_greatest(curiosity_id, on)
 
 
 def pause_curiosity(store: CuriosityStore, curiosity_id: int) -> None:

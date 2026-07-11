@@ -1144,11 +1144,11 @@ class GuiApi:
             inf.close()
             store.close()
 
-    def curiosity_set_greatest(self, curiosity_id) -> dict:
+    def curiosity_set_greatest(self, curiosity_id, on=True) -> dict:
         from livingpc.curiosity import CuriosityStore, set_greatest
         store = CuriosityStore(self.cfg.memory_db_path)
         try:
-            set_greatest(store, int(curiosity_id))
+            set_greatest(store, int(curiosity_id), bool(on))
             return {"ok": True}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
