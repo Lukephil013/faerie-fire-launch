@@ -1,0 +1,14 @@
+# Core dependencies — capture, the companion window, triage, and encryption.
+# Every package here publishes wheels for current Python (incl. 3.14).
+# Installed by "bats/Install Dependencies.bat". Keep specs on their own lines
+# with NO inline comments (the installer feeds each line to pip verbatim).
+mss>=9.0
+Pillow>=10.0
+psutil>=5.9
+pythonnet>=3.1.0
+# Pinned below 5.3 — that release added window.native, which relies on newer
+# WebView2 COM interfaces than this machine's WebView2 Runtime supports; see
+# the note in requirements.txt for the full explanation.
+pywebview>=5.0,<5.3
+anthropic>=0.39
+cryptography>=42.0

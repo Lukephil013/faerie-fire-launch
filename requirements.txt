@@ -1,0 +1,38 @@
+# Core capture deps
+mss>=9.0          # fast cross-platform screenshots
+Pillow>=10.0      # image handling + perceptual hash
+psutil>=5.9       # resolve foreground process name from PID
+
+# OCR (optional). If not installed, the capturer stores screenshots
+# and skips text extraction gracefully.
+rapidocr-onnxruntime>=1.3
+
+# Triage (the daily second-brain pass). Only needed for run_triage.py with the
+# 'claude' backend; the 'stub' backend needs nothing extra.
+anthropic>=0.39
+
+# Encryption (optional). Enables at-rest encryption of OCR text + memory values
+# when LIVINGPC_DB_KEY is set. Without a key, nothing is encrypted. No compilation.
+cryptography>=42.0
+
+# Companion window (Phase 2). Frameless desktop face via the built-in Edge
+# WebView2 on Windows. Only needed for companion.py.
+# Pinned below 5.3: that release added window.native, which queries newer
+# WebView2 COM interfaces (ICoreWebView2Controller2/4) than older WebView2
+# Runtime installs support. On a mismatch, pywebview's own error handling
+# recurses into nonsense property paths and freezes the UI thread — this is
+# the exact "Not Responding" freeze seen on this machine. Keep this upper
+# bound until the WebView2 Runtime is confirmed current, or until pywebview
+# fixes the fallback behavior.
+pywebview>=5.0,<5.3
+
+# Companion voice (milestone C). Offline TTS via Windows SAPI — no downloads.
+pyttsx3>=2.90
+
+# Companion ears (milestone D). Local speech-to-text + mic capture.
+faster-whisper>=1.0
+sounddevice>=0.4
+keyboard>=0.13          # optional: global push-to-talk hotkey
+
+# System-tray background app (always-on capture with a tray icon).
+pystray>=0.19

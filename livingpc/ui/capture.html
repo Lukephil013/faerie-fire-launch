@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  :root {
+    --line:rgba(110,140,240,.28); --line2:rgba(110,140,240,.16);
+    --fg:#e8edff; --muted:#8fa3d4; --cyan:#46ecff; --green:#2fe3a0;
+    --red:#ff6b8a; --amber:#ffd166;
+    --card:rgba(19,24,55,.72); --card2:rgba(9,12,28,.85);
+  }
+  html,body { margin:0; height:100%; font-family:'Segoe UI',Helvetica,Arial,sans-serif;
+    background: radial-gradient(120% 80% at 50% 0%, #15183a 0%, #0a0c1c 55%, #06070f 100%);
+    color:var(--fg); overflow:hidden; }
+  ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background:#2b3563; border-radius:4px; }
+
+  #app { display:flex; flex-direction:column; height:100vh; padding:16px 20px 18px; box-sizing:border-box; gap:12px; }
+  header { display:flex; align-items:center; gap:12px; }
+  header .logo { font-size:18px; font-weight:600; color:var(--cyan);
+    text-shadow:0 0 14px rgba(70,236,255,.45); }
+  header .sub { font-size:12px; color:var(--muted); }
+  #state { margin-left:auto; display:flex; align-items:center; gap:8px;
+    font-size:12.5px; font-weight:600; letter-spacing:.5px;
+    border:1px solid var(--line); border-radius:20px; padding:5px 15px; }
+  #state .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  #state.capturing { color:var(--green); border-color:rgba(47,227,160,.5); }
+  #state.capturing .dot { background:var(--green); box-shadow:0 0 9px rgba(47,227,160,.8);
+    animation:pulse 1.8s ease-in-out infinite; }
+  #state.quiet { color:var(--amber); border-color:rgba(255,209,102,.45); }
+  #state.quiet .dot { background:var(--amber); }
+  #state.stopped { color:var(--red); border-color:rgba(255,107,138,.45); }
+  #state.stopped .dot { background:var(--red); }
+  @keyframes pulse { 50% { opacity:.4; } }
+
+  .btns { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { font-family:inherit; cursor:pointer; border-radius:12px; font-size:12.5px;
+    padding:8px 16px; border:1px solid var(--line); background:rgba(10,14,30,.85);
+    color:#cfe0ff; transition:all .15s ease; }
+  button:hover { border-color:rgba(110,140,240,.55); background:rgba(24,32,66,.9); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.start { background:rgba(47,227,160,.14); border-color:rgba(47,227,160,.5); color:var(--green); }
+  button.start:hover { background:rgba(47,227,160,.28); }
+  button.stop { background:rgba(255,209,102,.12); border-color:rgba(255,209,102,.45); color:var(--amber); }
+  button.stop:hover { background:rgba(255,209,102,.26); }
+  button.danger { background:rgba(255,107,138,.1); border-color:rgba(255,107,138,.4); color:var(--red); }
+  button.danger:hover { background:rgba(255,107,138,.24); }
+  .danger-note { font-size:11.5px; color:var(--amber); opacity:.8; }
+
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:14px;
+    display:flex; flex-direction:column; overflow:hidden; }
+  .panel .head { font-size:11px; letter-spacing:1.8px; text-transform:uppercase;
+    color:var(--muted); padding:9px 14px 7px; border-bottom:1px solid var(--line2);
+    display:flex; align-items:center; }
+  .panel .head .right { margin-left:auto; letter-spacing:0; text-transform:none; }
+  pre { margin:0; padding:10px 14px; overflow:auto; flex:1;
+    font:12px/1.55 Consolas,'Cascadia Mono',monospace; color:#d6e0ff;
+    background:var(--card2); white-space:pre-wrap; word-break:break-word; }
+  #status-panel { flex:0 0 30%; min-height:120px; }
+  #log-panel { flex:1; min-height:140px; }
+  .spin { display:inline-block; width:11px; height:11px; border:2px solid rgba(70,236,255,.3);
+    border-top-color:var(--cyan); border-radius:50%; animation:spin .8s linear infinite;
+    vertical-align:-1px; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #busy { font-size:12px; color:var(--cyan); }
+
+  #modal { position:fixed; inset:0; background:rgba(3,4,10,.7); display:none;
+    align-items:center; justify-content:center; z-index:60; }
+  #modal.show { display:flex; }
+  #modal .box { background:var(--card); border:1px solid rgba(255,107,138,.5);
+    border-radius:16px; padding:22px 26px; max-width:420px; box-shadow:0 12px 50px rgba(0,0,0,.6); }
+  #modal h3 { margin:0 0 8px; font-size:15px; color:var(--red); }
+  #modal p { margin:0 0 16px; font-size:13px; color:var(--muted); line-height:1.5; }
+  #modal .row { display:flex; gap:10px; justify-content:flex-end; }
+</style></head>
+<body>
+<div id="app">
+  <header>
+    <span class="logo">✦ Capture Control</span>
+    <span class="sub">Faerie Fire</span>
+    <span id="state"><span class="dot"></span><span id="state-text">checking…</span></span>
+  </header>
+
+  <div class="btns">
+    <button class="start" id="b-start">Start</button>
+    <button class="stop" id="b-stop">Stop</button>
+    <button id="b-reset">Reset</button>
+    <button id="b-refresh">Refresh status</button>
+    <button id="b-diag">Collect diagnostics</button>
+    <button id="b-bundle">Companion bundle</button>
+    <button id="b-folder">Open diagnostics folder</button>
+    <button id="b-gui">Open Memory GUI</button>
+    <span id="busy"></span>
+  </div>
+  <div class="btns">
+    <button class="danger" id="b-force">Force stop all pythonw</button>
+    <span class="danger-note">Use Reset first — Force Stop is the broad old emergency button.</span>
+  </div>
+
+  <div class="panel" id="status-panel">
+    <div class="head">Current status<span class="right" id="status-when"></span></div>
+    <pre id="status-text-body">…</pre>
+  </div>
+  <div class="panel" id="log-panel">
+    <div class="head">Command output + diagnostic log</div>
+    <pre id="log"></pre>
+  </div>
+</div>
+
+<div id="modal">
+  <div class="box">
+    <h3>Force stop all pythonw?</h3>
+    <p>This kills <b>every</b> pythonw.exe process on the machine, not just Faerie
+       Fire. Try Reset first. Continue?</p>
+    <div class="row">
+      <button id="m-cancel">Cancel</button>
+      <button class="danger" id="m-ok">Force stop</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+function $(id){ return document.getElementById(id); }
+function api(){ return window.pywebview && pywebview.api; }
+let busyCount=0;
+
+function setBusy(on, label){
+  busyCount += on?1:-1; if(busyCount<0) busyCount=0;
+  $('busy').innerHTML = busyCount ? '<span class="spin"></span>'+(label||'working…') : '';
+}
+function appendLog(text){
+  if(!text) return;
+  const el=$('log'); el.textContent += text;
+  if(el.textContent.length>120000) el.textContent=el.textContent.slice(-90000);
+  el.scrollTop=el.scrollHeight;
+}
+function setState(state){
+  const el=$('state'); el.className='';
+  const label={capturing:'capturing', quiet:'running / quiet', stopped:'stopped'}[state]||'unknown';
+  if(state==='capturing'||state==='quiet'||state==='stopped') el.classList.add(state);
+  $('state-text').textContent=label;
+}
+
+function refreshStatus(){
+  if(!api()) return;
+  pywebview.api.status().then(r=>{
+    $('status-text-body').textContent=r.text||'(no output)';
+    $('status-when').textContent=new Date().toLocaleTimeString();
+    setState(r.state);
+  }).catch(()=>{});
+}
+function pollLog(){
+  if(!api()) return;
+  pywebview.api.log_tail().then(t=>appendLog(t)).catch(()=>{});
+}
+
+function runAction(name, label){
+  if(!api()) return;
+  setBusy(true, label);
+  appendLog('\n--- '+label+' ---\n');
+  pywebview.api[name]().then(out=>{
+    setBusy(false); appendLog((out||'(no output)')+'\n'); refreshStatus();
+  }).catch(e=>{ setBusy(false); appendLog('failed: '+e+'\n'); });
+}
+
+$('b-start').onclick =()=>runAction('start','Start');
+$('b-stop').onclick  =()=>runAction('stop','Stop');
+$('b-reset').onclick =()=>runAction('reset','Reset');
+$('b-diag').onclick  =()=>runAction('collect_diagnostics','Collect diagnostics');
+$('b-bundle').onclick=()=>runAction('companion_bundle','Companion bundle');
+$('b-refresh').onclick=refreshStatus;
+$('b-folder').onclick=()=>{ if(api()) pywebview.api.open_diagnostics().catch(()=>{}); };
+$('b-gui').onclick=()=>{ if(api()) pywebview.api.open_memory_gui()
+  .then(()=>appendLog('\n--- Open Memory GUI ---\nOpened gui.py.\n')).catch(()=>{}); };
+
+$('b-force').onclick=()=>$('modal').classList.add('show');
+$('m-cancel').onclick=()=>$('modal').classList.remove('show');
+$('m-ok').onclick=()=>{ $('modal').classList.remove('show'); runAction('force_stop','Force stop all pythonw'); };
+
+function boot(tries){
+  if(api()){ refreshStatus(); pollLog();
+    setInterval(refreshStatus,5000); setInterval(pollLog,3000); }
+  else if(tries>0) setTimeout(()=>boot(tries-1),250);
+}
+window.addEventListener('pywebviewready',()=>boot(1));
+boot(30);
+</script>
+</body></html>
