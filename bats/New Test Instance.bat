@@ -21,7 +21,7 @@ echo   to:   %DEST%
 echo.
 
 robocopy "%SRC%" "%DEST%" /E /NFL /NDL /NJH /NJS ^
-  /XD data diagnostics .git .githooks __pycache__ .pytest_cache ^
+  /XD data diagnostics reports .git .githooks __pycache__ .pytest_cache ^
   /XF tray.lock secret.salt .env *.pyc *.pyo
 
 if not exist "%DEST%\gui.py" (
@@ -64,6 +64,18 @@ if errorlevel 1 (
 
 %PY% -c "import webview; print('GUI bridge import ok')"
 if errorlevel 1 goto depfail
+
+REM Pre-launch health gate: imports, language layer, and UI-file integrity
+REM (catches a truncated/broken memory.html BEFORE it becomes a frozen app).
+if exist smoke_test_unified.py (
+  %PY% smoke_test_unified.py --quick
+  if errorlevel 1 (
+    echo.
+    echo [X] Smoke test FAILED - not launching. See diagnostics\smoke_result.txt
+    pause
+    exit /b 1
+  )
+)
 
 %PY% gui.py --view command-center
 

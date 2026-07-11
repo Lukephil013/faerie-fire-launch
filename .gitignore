@@ -24,6 +24,9 @@ secret.salt
 triage.log
 diagnostics/
 
+# Generated activity reports (personal data, regenerate on demand)
+reports/
+
 # Local config (may hold personalized blocklist etc.); the example is tracked
 config.toml
 

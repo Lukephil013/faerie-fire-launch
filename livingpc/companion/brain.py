@@ -22,6 +22,7 @@ from ..config import APP_DIR
 from .. import soul_calibration
 from .history import ChatStore
 from .personas import get_persona, list_personas
+from ..lang import T as lang_T, is_ko as lang_is_ko
 import json
 import re
 
@@ -297,6 +298,14 @@ class Companion:
                 "saved memory, investigations/journals, and the Growth tree when "
                 "those are available."
             )
+            if lang_is_ko():
+                static += (
+                    "\n\nKOREAN DISTRIBUTION LANGUAGE RULE:\n"
+                    "Use Korean for ordinary replies, button-triggered summaries, "
+                    "Soul Calibration synthesis, Growth discussion, and Investigation "
+                    "discussion. Keep technical command names like /file and "
+                    "/recalibrate exactly as typed."
+                )
         else:
             static += (
                 "\n\nHOW FAERIE FIRE ITSELF WORKS (read-only architecture reference; "
@@ -466,18 +475,21 @@ class Companion:
                     if d["summary"]:
                         line += f" — {d['summary'][:100]}"
                     lines.append(line)
-                return "Your project docs:\n" + "\n".join(lines)
+                return lang_T("Your project docs:", "프로젝트 문서:") + "\n" + "\n".join(lines)
             if lower.startswith("/undo"):
                 entry_id = text[len("/undo"):].strip()
                 if not entry_id:
-                    return "Give me the entry id: `/undo <id>`"
+                    return lang_T("Give me the entry id: `/undo <id>`",
+                                  "항목 ID를 알려주세요: `/undo <id>`")
                 result = filing.undo(projects_dir, entry_id)
                 if not result["found"]:
-                    return f"I couldn't find a filed entry with id {entry_id}."
+                    return lang_T(f"I couldn't find a filed entry with id {entry_id}.",
+                                  f"ID가 {entry_id}인 파일링 항목을 찾지 못했어요.")
                 if result["deleted_doc"]:
-                    return ("Undone — that was the doc's only entry, so I "
-                            "removed the doc too.")
-                return "Undone — that entry is gone, everything else untouched."
+                    return lang_T("Undone — that was the doc's only entry, so I removed the doc too.",
+                                  "되돌렸어요. 그 문서의 유일한 항목이라 문서도 함께 제거했어요.")
+                return lang_T("Undone — that entry is gone, everything else untouched.",
+                              "되돌렸어요. 해당 항목만 사라졌고 다른 것은 그대로예요.")
             dump = text[len("/file"):].strip()
             if not dump:
                 dump = self._pending_dump or ""
@@ -485,26 +497,32 @@ class Companion:
                 # they answered a clarify question: file both parts together
                 dump = self._pending_dump + "\n\nClarification: " + dump
             if not dump:
-                return ("Nothing to file yet. Use `/file <your thought>`, or "
-                        "send the thought first and then `/file`.")
+                return lang_T("Nothing to file yet. Use `/file <your thought>`, or "
+                              "send the thought first and then `/file`.",
+                              "아직 파일링할 내용이 없어요. `/file <생각>`을 쓰거나, "
+                              "먼저 생각을 보낸 뒤 `/file`을 입력해 주세요.")
             result = filing.file_dump(self.cfg, dump)
             if result["clarify"]:
                 self._pending_dump = dump
                 self._pending_clarify = True
                 return (result["clarify"]
-                        + "\n\n_(Answer with `/file <the detail>` and I'll file "
-                          "it together with what you already told me.)_")
+                        + lang_T("\n\n_(Answer with `/file <the detail>` and I'll file "
+                                 "it together with what you already told me.)_",
+                                 "\n\n_(`/file <세부 내용>`으로 답하면, 이미 말해준 내용과 함께 파일링할게요.)_"))
             self._pending_dump = None
             self._pending_clarify = False
             lines = []
             for item in result["filed"]:
-                verb = "Started" if item["created"] else "Filed under"
+                verb = (lang_T("Started", "새로 시작함") if item["created"]
+                        else lang_T("Filed under", "아래에 파일링함"))
                 lines.append(f"{verb} **{item['title']}**  "
                              f"(undo: `/undo {item['entry_id']}`)")
-            return "\n".join(lines) or "Nothing ended up needing filing."
+            return "\n".join(lines) or lang_T("Nothing ended up needing filing.",
+                                              "결국 파일링할 내용이 없었어요.")
         except Exception as e:
             log_diag("filing", f"companion filing failed error={type(e).__name__}")
-            return f"(I had trouble filing that: {type(e).__name__})"
+            return lang_T(f"(I had trouble filing that: {type(e).__name__})",
+                          f"(파일링하는 중 문제가 생겼어요: {type(e).__name__})")
 
     # _filing_reply above only ever looks at the USER's message text, so it
     # can't do anything when the user asks Faerie to file on their behalf
@@ -535,20 +553,24 @@ class Companion:
                 self._pending_dump = content
                 self._pending_clarify = True
                 rendered = (result["clarify"]
-                            + "\n\n_(Answer with `/file <the detail>` and I'll file "
-                              "it together with what you already told me.)_")
+                            + lang_T("\n\n_(Answer with `/file <the detail>` and I'll file "
+                                     "it together with what you already told me.)_",
+                                     "\n\n_(`/file <세부 내용>`으로 답하면, 이미 말해준 내용과 함께 파일링할게요.)_"))
             else:
                 self._pending_dump = None
                 self._pending_clarify = False
                 lines = []
                 for item in result["filed"]:
-                    verb = "Started" if item["created"] else "Filed under"
+                    verb = (lang_T("Started", "새로 시작함") if item["created"]
+                            else lang_T("Filed under", "아래에 파일링함"))
                     lines.append(f"{verb} **{item['title']}**  "
                                  f"(undo: `/undo {item['entry_id']}`)")
-                rendered = "\n".join(lines) or "Nothing ended up needing filing."
+                rendered = "\n".join(lines) or lang_T("Nothing ended up needing filing.",
+                                                      "결국 파일링할 내용이 없었어요.")
         except Exception as e:
             log_diag("filing", f"companion filing (model-triggered) failed error={type(e).__name__}")
-            rendered = f"(I had trouble filing that: {type(e).__name__})"
+            rendered = lang_T(f"(I had trouble filing that: {type(e).__name__})",
+                              f"(파일링하는 중 문제가 생겼어요: {type(e).__name__})")
         return self._FILE_BLOCK_RE.sub(lambda _m: rendered, text).strip()
 
     # --- skills (user-extensible commands; see livingpc/skills.py) ---------
@@ -680,7 +702,7 @@ class Companion:
             sections.append({"section": section, "attributes": attrs})
         total = len(soul_calibration.FIELDS)
         covered_count = done_count + skipped_count
-        return {"sections": sections, "done": done_count, "covered": covered_count,
+        return {"ok": True, "sections": sections, "done": done_count, "covered": covered_count,
                 "skipped": skipped_count, "total": total,
                 "complete": covered_count >= total}
 
@@ -761,13 +783,16 @@ class Companion:
             "you engage with them going forward. Write it as one continuous, warm "
             "message — not a list of facts read back at them, not a personality-"
             "test printout. A few short paragraphs is enough."
+            + (" Write the message in Korean." if lang_is_ko() else "")
         )
-        user = "What they shared during Soul Calibration:\n" + "\n".join(lines)
+        user = lang_T("What they shared during Soul Calibration:",
+                      "Soul Calibration에서 공유한 내용:") + "\n" + "\n".join(lines)
         try:
             text = self.chat.reply(system, [{"role": "user", "content": user}], max_tokens=700)
         except Exception as error:
             log_diag("chat", f"calibration synthesis failed error={type(error).__name__}")
-            return {"ok": False, "message": "Could not generate that synthesis right now."}
+            return {"ok": False, "message": lang_T("Could not generate that synthesis right now.",
+                                                   "지금은 종합 메시지를 만들 수 없어요.")}
         self.history.append({"role": "assistant", "content": text})
         self.chats.append(self.chat_id, "assistant", text)
         return {"ok": True, "text": text}
@@ -779,8 +804,10 @@ class Companion:
         if lower not in {"/recalibrate", "/reset calibration", "/calibration reset"}:
             return None
         self.calibration_reset()
-        return ("Soul Calibration has been reset — open it from the Command Center "
-                "(or Settings) to go through all 13 questions again.")
+        return lang_T("Soul Calibration has been reset — open it from the Command Center "
+                      "(or Settings) to go through all 13 questions again.",
+                      "Soul Calibration이 초기화됐어요. 본부나 설정에서 다시 열면 "
+                      "13개 질문을 처음부터 다시 진행할 수 있어요.")
 
     # --- chat-driven tree management (replaces the old Investigations tab) -
     # The model is always quietly considering whether something in the

@@ -1,7 +1,15 @@
 # Faerie Fire — Feature Reference
 
 This is the current behavior reference. See `docs/INDEX.md` for documentation
-authority; `living_computer_design.md` and `devlog/` are historical.
+authority.
+
+> **Launch-distribution note (2026-07-11):** this folder is the unified
+> bilingual (EN/한국어) launch build. Personal-profile entry points and bats
+> (capture daemon/tray, companion window, assistant, triage/journal runners,
+> diagnostics collectors) were removed from this distribution — the library
+> code under `livingpc/` remains, and everything removed lives in git history
+> and in the separate personal install. Sections below describing those
+> features apply to the personal profile, not this folder's launchers.
 
 A scannable map of everything the system does and the details worth remembering.
 Update this when implemented behavior changes.

@@ -1,0 +1,38 @@
+key present: True
+
+model: claude-sonnet-4-6
+
+raw call ok, response head: ```json
+{"dimensions":[{"slug":"overall_wellbeing","label":"Overall Wellbeing","description":"General sense of physical, mental, and emotional health","checkin_prompt":"How would you rate your overall
+
+draft raw response:
+```json
+{
+  "dimensions": [
+    {
+      "slug": "pattern_recognition",
+      "label": "Noticing Energy Patterns",
+      "description": "Getting better at spotting the specific foods, meal timings, or combinations that precede crashes versus sustained energy — building a personal map over time.",
+      "checkin_prompt": "Did you notice any connection today between what or when you ate and how your energy shifted afterward?"
+    },
+    {
+      "slug": "handoff_anticipation",
+      "label": "Anticipating Handoff Dips",
+      "description": "Learning to foresee the transition moments — end of a task, between meals, shift changes — and preparing for them rather than being caught off guard.",
+      "checkin_prompt": "Did a handoff point today catch you by surprise, or did you see it coming in time to do something about it?"
+    },
+    {
+      "slug": "preemptive_fueling",
+      "label": "Preemptive Fueling Skill",
+      "description": "Developing the habit and judgment to eat or snack ahead of a predicted dip, rather than reactively after the crash has already started.",
+      "checkin_prompt": "Did you manage to eat or adjust anything before an energy dip today, rather than after it hit?"
+    },
+    {
+      "slug": "signal_vocabulary",
+      "label": "Naming Inner Signals",
+      "description": "Building a richer, more precise personal language for early-warning body signals — distinguishing hunger from fatigue from mental fog — so responses can be more targeted.",
+      "checkin_
+
+json parsed: dims=4 states=3
+
+proposed_profile: domain=custom dims=['Noticing Energy Patterns', 'Anticipating Handoff Dips', 'Pre-Handoff Fueling', 'Describing Crashes Precisely'] states=["Today's Energy Arc", 'Food Felt Right', 'Crashes Today']

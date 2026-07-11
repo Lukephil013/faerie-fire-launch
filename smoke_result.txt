@@ -1,0 +1,17 @@
+[ok] import gui.py: imports clean
+[ok] import brain.py: imports clean
+[ok] app_language default: en
+[ok] FIELDS via module __getattr__: 13 fields
+[ok] sections_in_order: 8 sections
+[ok] EN field label: Favorite movie
+[ok] EN persona: Companion
+[ok] EN seed label: Getting to know Faerie Fire
+[ok] set_app_language ko: ko
+[ok] KO field label: 좋아하는 영화
+[ok] KO section: 취향의 기준점
+[ok] KO persona: 동반자
+[ok] KO persona system mentions Korean: yes
+[ok] KO seed label: 페어리 파이어 알아가기
+[ok] GoalAI profile draft (live call): returned None (no key or model failure) — would fall back to templates
+[ok] config.toml restored
+[ok] memory.html JS syntax: node --check passed (252507 bytes of JS)

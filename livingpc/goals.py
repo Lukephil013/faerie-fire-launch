@@ -18,6 +18,7 @@ from typing import Any
 from . import crypto
 from .db import connect as db_connect
 from .diagnostics import log_diag
+from .lang import T
 
 
 NODE_TYPES = {"umbrella", "overgoal", "subgoal", "task"}
@@ -256,7 +257,7 @@ class GoalStore:
             "INSERT INTO goal_node "
             "(parent_id,node_type,title,status,priority,position,created_at,updated_at) "
             "VALUES (NULL,'umbrella',?,'active','normal',0,?,?)",
-            (crypto.enc("Actualized Self"), now, now),
+            (crypto.enc(T("Actualized Self", "실현된 나")), now, now),
         )
         return int(cur.lastrowid)
 

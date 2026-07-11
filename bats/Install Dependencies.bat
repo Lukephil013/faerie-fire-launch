@@ -11,7 +11,13 @@ echo Python version (common on brand-new releases like 3.14) can't block the
 echo rest. Core packages must succeed; optional ones (OCR/voice) are best-effort.
 echo.
 
-REM --- One interpreter for BOTH pip and launching. Prefer the py launcher. ---
+REM --- One interpreter for BOTH pip and launching. Prefer the py launcher,
+REM     because the launch bats ("py -3"/"pyw -3") use it too. Installing with
+REM     plain "python" while launching with "py -3" (or vice versa) can split
+REM     packages across two different Python installs - the #1 cause of the
+REM     black-window/frozen-app problem on multi-Python machines. ---
+set "INSTALL_TRIED="
+:detect
 set "PY="
 py -3 -c "import sys" >nul 2>nul
 if not errorlevel 1 set "PY=py -3"
@@ -26,12 +32,29 @@ echo Interpreter: %PYEXE%
 %PY% -c "import sys;print('Python '+'.'.join(map(str,sys.version_info[:3])))"
 echo.
 
+echo ------------------------------------------------------------
+echo [CHECK] WebView2 Runtime (renders the app window)
+echo ------------------------------------------------------------
+set "WV2="
+reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv >nul 2>nul && set "WV2=1"
+if not defined WV2 reg query "HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv >nul 2>nul && set "WV2=1"
+if not defined WV2 reg query "HKCU\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv >nul 2>nul && set "WV2=1"
+if defined WV2 (
+  echo    [ok] WebView2 Runtime detected.
+) else (
+  echo    [!] WebView2 Runtime NOT detected. The app window will stay black
+  echo        without it. It ships with Windows 11 and most Windows 10 PCs;
+  echo        if the window never renders on this PC, install it from:
+  echo        https://developer.microsoft.com/microsoft-edge/webview2/
+)
+echo.
+
 echo Upgrading pip...
 %PY% -m pip install --upgrade pip
 echo.
 
 echo ------------------------------------------------------------
-echo [CORE] required packages (capture + companion window)
+echo [CORE] required packages (capture + companion window + chat)
 echo ------------------------------------------------------------
 for /f "usebackq eol=# tokens=* delims=" %%P in ("requirements-core.txt") do echo. & echo Installing %%P & %PY% -m pip install "%%P"
 echo.
@@ -52,36 +75,66 @@ for /f "usebackq eol=# tokens=* delims=" %%P in ("requirements-optional.txt") do
 echo.
 
 echo ------------------------------------------------------------
-echo [VERIFY] imports the tray icon + companion window depend on
+echo [VERIFY] imports the app depends on
 echo ------------------------------------------------------------
 %PY% -c "import PIL, pystray, webview; print('   [ok] PIL, pystray, webview (pywebview) all import')"
+if errorlevel 1 goto verifyfail
+%PY% -c "import anthropic, cryptography; print('   [ok] anthropic (chat) + cryptography (key storage) import')"
+if errorlevel 1 goto verifyfail
+%PY% -c "import importlib.metadata as m; v=m.version('pywebview'); parts=tuple(int(p) for p in v.split('.')[:2]); import sys; print('   [ok] pywebview '+v+' (pinned range)' if (5,0)<=parts<(5,3) else '   [X] pywebview '+v+' is OUTSIDE the pinned >=5.0,<5.3 range'); sys.exit(0 if (5,0)<=parts<(5,3) else 1)"
 if errorlevel 1 goto verifyfail
 
 echo.
 echo ============================================
-echo   Success - the tray icon and companion window will work.
+echo   Success - Faerie Fire will run on this PC.
 echo ============================================
 echo.
 %PY% -c "import importlib.util as u; mods=['rapidocr_onnxruntime','pyttsx3','faster_whisper','sounddevice','keyboard']; [print('   optional',m,'->', 'installed' if u.find_spec(m) else 'MISSING (feature disabled)') for m in mods]"
 echo.
 echo Next:
+echo   - Launch the app:        "Launch Faerie Fire.bat"  (first run = onboarding)
 echo   - Tray icon + capture:   "Start Background Capture.bat"
-echo   - Companion window:      "Companion.bat"
 echo   - Control panel:         "Memory GUI.bat"
 goto end
 
 :verifyfail
 echo.
-echo [X] A CORE package still won't import under %PYEXE%.
+echo [X] A CORE package still won't import (or is the wrong version) under
+echo     %PYEXE%.
 echo     Most likely pywebview's backend (pythonnet) had no wheel. Try:
-echo        %PY% -m pip install "pythonnet>=3.1.0" pywebview
+echo        %PY% -m pip install "pythonnet>=3.1.0" "pywebview>=5.0,<5.3"
 echo     If that fails, install Python 3.12 from python.org (best wheel
 echo     coverage), then re-run this script.
 goto end
 
 :nopython
-echo [X] Python is not on PATH. Install Python 3 from python.org
-echo     (tick "Add python.exe to PATH"), then re-run this.
+if defined INSTALL_TRIED goto installfailed
+set "INSTALL_TRIED=1"
+echo ------------------------------------------------------------
+echo Python 3 was not found on this PC - installing it automatically.
+echo (One-time step; about a 26 MB download.)
+echo ------------------------------------------------------------
+echo.
+echo   [1/2] Trying winget (Windows package manager)...
+winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+set "PATH=%LOCALAPPDATA%\Programs\Python\Launcher;%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%PATH%"
+py -3 -c "import sys" >nul 2>nul
+if not errorlevel 1 goto detect
+echo.
+echo   [2/2] winget unavailable or failed - downloading the official
+echo         installer from python.org instead...
+curl -L -o "%TEMP%\faerie-python-3.12.10.exe" https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
+if errorlevel 1 goto installfailed
+echo   Running the installer silently (per-user, includes the "py" launcher)...
+start /wait "" "%TEMP%\faerie-python-3.12.10.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_test=0
+set "PATH=%LOCALAPPDATA%\Programs\Python\Launcher;%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%PATH%"
+goto detect
+
+:installfailed
+echo.
+echo [X] Automatic Python install did not work. Install Python 3.12 manually
+echo     from https://www.python.org/downloads/ (tick "Add python.exe to
+echo     PATH" and keep the "py launcher" option), then re-run this script.
 
 :end
 echo.

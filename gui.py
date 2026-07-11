@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 from livingpc import crypto, onboarding
 from livingpc.config import load
 from livingpc.diagnostics import log_diag
+from livingpc.lang import T, app_language, is_language_set, set_app_language
 from livingpc.inference_review import InferenceReview
 from livingpc.memory import MemoryStore
 
@@ -85,6 +86,9 @@ class GuiApi:
                 "initial_view": self.initial_view,
                 "backend": getattr(self.cfg, "companion_backend", "?"),
                 "inference_backend": getattr(self.cfg, "inference_backend", "?"),
+                # Unified build: the UI enables the Korean layer when "ko".
+                "language": app_language(),
+                "language_set": is_language_set(),
                 # Onboarding only exists for launch profile — a personal install
                 # always manages its own key via the environment, as before.
                 "needs_onboarding": profile == "launch" and not onboarding.is_complete(),
@@ -103,6 +107,24 @@ class GuiApi:
                 "needs_onboarding": False,
                 "bootstrap_error": f"{type(error).__name__}: {error}",
             }
+
+    def app_usage_summary(self) -> dict:
+        """Today's model usage (calls + estimated cost) for the Settings drawer,
+        so one shared key across machines doesn't turn into a surprise bill."""
+        try:
+            from livingpc.llm_usage import daily_summary
+            return {"ok": True, **daily_summary()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def app_set_language(self, lang) -> dict:
+        """Persist the UI/model language ("en" or "ko"); picked at onboarding
+        and changeable later. The JS layer applies it live; Python strings and
+        the window title pick it up fully on next launch."""
+        try:
+            return {"ok": True, "language": set_app_language(str(lang or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
     # --- onboarding (launch profile first run) -----------------------------
     def onboarding_status(self) -> dict:
@@ -133,7 +155,7 @@ class GuiApi:
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)
         try:
-            title = str(title or "").strip() or "Actualized Self"
+            title = str(title or "").strip() or T("Actualized Self", "실현된 나")
             purpose = str(purpose or "").strip()
             store.update(store.root_id, title=title, description=purpose)
             investigation_id = onboarding.seed_example_investigation(self.cfg.memory_db_path)
@@ -1699,6 +1721,43 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def generate_daily_report(self) -> dict:
+        """On-demand markdown report of what was added today. Writes to
+        reports/daily/ and opens it."""
+        try:
+            from livingpc.activity_report import save_daily_report
+            path, markdown = save_daily_report(self.cfg)
+            self._open_path(path)
+            return {"ok": True, "path": path, "markdown": markdown}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def generate_full_report(self) -> dict:
+        """On-demand markdown report mapping out everything in the database,
+        all time. Writes to reports/ and opens it."""
+        try:
+            from livingpc.activity_report import save_full_report
+            path, markdown = save_full_report(self.cfg)
+            self._open_path(path)
+            return {"ok": True, "path": path, "markdown": markdown}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def open_reports_folder(self) -> dict:
+        try:
+            from livingpc.activity_report import reports_dir
+            self._open_path(reports_dir(self.cfg))
+            return {"ok": True}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    @staticmethod
+    def _open_path(path) -> None:
+        if os.name == "nt":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", path])
+
 
 def main(argv=None):
     import os
@@ -1713,7 +1772,7 @@ def main(argv=None):
         api = GuiApi(initial_view=args.view)
         log_diag("gui_startup", f"GuiApi ready profile={getattr(api.cfg,'profile','?')}")
         window = webview.create_window(
-            "Faerie Fire", url=os.path.join(UI_DIR, "memory.html"), js_api=api,
+            T("Faerie Fire", "페어리 파이어"), url=os.path.join(UI_DIR, "memory.html"), js_api=api,
             width=1500, height=900, min_size=(1024, 720),
             frameless=False, easy_drag=False, resizable=True,
             background_color="#06070f",

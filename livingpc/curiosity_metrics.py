@@ -227,7 +227,83 @@ GENERIC_PROFILE = (
 )
 
 
+_DRAFT_SYSTEM = (
+    "You design a small mastery-tracking rubric for ONE personal investigation. "
+    "From the investigation's title and framing, draft measures that are "
+    "specific to ITS actual subject — never generic fitness/study filler. "
+    "Output STRICT JSON only, no prose, matching exactly:\n"
+    '{"dimensions":[{"slug":"...","label":"...","description":"...",'
+    '"checkin_prompt":"..."}],"state_metrics":[{"slug":"...","label":"...",'
+    '"description":"...","checkin_prompt":"..."}]}\n'
+    "Rules: 3-5 dimensions (growth skills the person can get better at), "
+    "1-3 state_metrics (today-only readings like energy or comfort — never "
+    "scored). slugs: short lowercase ascii with underscores, unique. "
+    "checkin_prompt: one plain evening question about TODAY, answerable in a "
+    "sentence. Keep labels under 4 words. Reflective and non-diagnostic; no "
+    "medical or clinical claims."
+)
+
+
+def _draft_profile_with_model(curiosity: dict) -> MetricProfile | None:
+    """One model call to draft measures from the investigation's own framing.
+    Returns None on any failure so the keyword templates below still apply."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        return None
+    try:
+        from anthropic import Anthropic
+        from .lang import is_ko
+        client = Anthropic(api_key=key, timeout=25.0, max_retries=0)
+        model = os.environ.get("FAERIE_METRIC_MODEL") or "claude-sonnet-4-6"
+        system = _DRAFT_SYSTEM + (
+            " Write every label, description, and checkin_prompt in natural "
+            "Korean (keep slugs ascii)." if is_ko() else "")
+        prompt = ("INVESTIGATION TITLE: " + str(curiosity.get("label") or "") +
+                  "\nFRAMING:\n" + str(curiosity.get("directive") or ""))
+        msg = client.messages.create(model=model, max_tokens=900, system=system,
+                                     messages=[{"role": "user", "content": prompt}])
+        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        try:
+            from .llm_usage import record_response
+            record_response("metric_profile", model, msg, 0.0)
+        except Exception:
+            pass
+        start, end = text.find("{"), text.rfind("}")
+        data = json.loads(text[start:end + 1])
+        seen: set[str] = set()
+
+        def build(items, weight):
+            out = []
+            for item in items or []:
+                slug = str(item.get("slug") or "").strip().lower().replace(" ", "_")[:40]
+                label = str(item.get("label") or "").strip()[:60]
+                prompt_text = str(item.get("checkin_prompt") or "").strip()[:200]
+                if not slug or not label or not prompt_text or slug in seen:
+                    continue
+                seen.add(slug)
+                out.append(_dimension(slug, label,
+                                      str(item.get("description") or "").strip()[:200],
+                                      prompt_text, weight))
+            return out
+
+        dims = build(data.get("dimensions"), 0.2)[:5]
+        states = build(data.get("state_metrics"), 0)[:3]
+        if len(dims) < 3 or not states:
+            return None
+        return MetricProfile(int(curiosity["id"]), 1, "draft", "custom",
+                             tuple(dims), tuple(states), _now())
+    except Exception:
+        return None
+
+
 def proposed_profile(curiosity: dict) -> MetricProfile | None:
+    # Preferred: one GoalAI call drafts measures from the investigation's own
+    # framing (domain "custom"), so a food-crash investigation gets food-crash
+    # measures instead of a canned template that happened to keyword-match.
+    drafted = _draft_profile_with_model(curiosity)
+    if drafted is not None:
+        return drafted
+    # Fallback: the original keyword-matched starter templates.
     text = f"{curiosity.get('label', '')} {curiosity.get('directive', '')}".lower()
     if any(word in text for word in ("mental", "mood", "anxiety", "wellbeing", "stress")):
         domain, dimensions, states = MENTAL_HEALTH_PROFILE

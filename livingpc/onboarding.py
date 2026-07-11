@@ -23,13 +23,18 @@ import os
 
 from .config import DATA_DIR
 from . import crypto
+from .lang import T
 
 _KEY_FILE = os.path.join(DATA_DIR, "api_key.secret")
 _MARKER_FILE = os.path.join(DATA_DIR, ".onboarding_complete")
 
 
 def has_stored_key() -> bool:
-    return os.path.exists(_KEY_FILE)
+    # The file existing isn't enough: it's DPAPI-encrypted per user+machine,
+    # so a data/ folder copied from another PC contains a key file that can't
+    # decrypt here. Only report a key if it actually loads, so onboarding /
+    # the Change API Key flow correctly ask for a new one on a new machine.
+    return os.path.exists(_KEY_FILE) and load_api_key() is not None
 
 
 def load_api_key() -> str | None:
@@ -91,9 +96,10 @@ def validate_api_key(key: str) -> tuple[bool, str]:
     """One minimal live call to confirm the key actually works before we store it."""
     key = (key or "").strip()
     if not key:
-        return False, "Enter an API key first."
+        return False, T("Enter an API key first.", "먼저 API 키를 입력해주세요.")
     if not key.startswith("sk-ant-"):
-        return False, "That doesn't look like an Anthropic API key (expected it to start with \"sk-ant-\")."
+        return False, T("That doesn't look like an Anthropic API key (expected it to start with \"sk-ant-\").",
+                        "Anthropic API 키처럼 보이지 않아요. \"sk-ant-\"로 시작해야 해요.")
     try:
         from anthropic import Anthropic
         client = Anthropic(api_key=key, timeout=15.0)
@@ -111,10 +117,13 @@ def _friendly_error(error: Exception) -> str:
     text = str(error)
     lowered = text.lower()
     if "authentication" in lowered or "401" in text:
-        return "That key was rejected by Anthropic (authentication failed)."
+        return T("That key was rejected by Anthropic (authentication failed).",
+                 "Anthropic에서 이 키를 거절했어요. 인증에 실패했습니다.")
     if "credit" in lowered or "billing" in lowered or "402" in text:
-        return "The key is valid, but that account has no available credit."
-    return f"Could not validate the key: {type(error).__name__}: {error}"
+        return T("The key is valid, but that account has no available credit.",
+                 "키는 유효하지만, 해당 계정에 사용 가능한 크레딧이 없어요.")
+    return T(f"Could not validate the key: {type(error).__name__}: {error}",
+             f"키를 확인할 수 없어요: {type(error).__name__}: {error}")
 
 
 def is_complete() -> bool:
@@ -127,14 +136,24 @@ def mark_complete() -> None:
         handle.write("1")
 
 
-DEFAULT_INVESTIGATION_LABEL = "Getting to know Faerie Fire"
-DEFAULT_INVESTIGATION_DIRECTIVE = (
-    "This is a seeded starter investigation so there's something to look at on "
-    "day one. Investigations are open questions Faerie actively pursues — "
-    "asking you things, and once grounded in what you've confirmed, suggesting "
-    "next moves. Answer a question below whenever you like, or start a real "
-    "investigation of your own from the Investigations tab and archive this one."
-)
+# Evaluated lazily (functions, not constants) because the language is chosen
+# during onboarding itself, in the same process, right before seeding runs.
+def default_investigation_label() -> str:
+    return T("Getting to know Faerie Fire", "페어리 파이어 알아가기")
+
+
+def default_investigation_directive() -> str:
+    return T(
+        "This is a seeded starter investigation so there's something to look at on "
+        "day one. Investigations are open questions Faerie actively pursues — "
+        "asking you things, and once grounded in what you've confirmed, suggesting "
+        "next moves. Answer a question below whenever you like, or start a real "
+        "investigation of your own from the Investigations tab and archive this one.",
+        "첫날 바로 살펴볼 수 있도록 미리 심어둔 시작 탐구예요. 탐구는 페어리가 "
+        "계속 따라가며 질문하고, 당신이 확인해준 내용을 바탕으로 다음 움직임을 "
+        "제안하는 열린 질문이에요. 원할 때 아래 질문에 답하거나, 채팅에서 새로운 "
+        "탐구를 시작한 뒤 이 항목을 보관해도 좋아요.",
+    )
 
 
 def seed_example_investigation(memory_db_path: str) -> int | None:
@@ -150,7 +169,7 @@ def seed_example_investigation(memory_db_path: str) -> int | None:
         return None
     store = CuriosityStore(memory_db_path)
     try:
-        return store.add_curiosity(DEFAULT_INVESTIGATION_DIRECTIVE, DEFAULT_INVESTIGATION_LABEL)
+        return store.add_curiosity(default_investigation_directive(), default_investigation_label())
     except Exception:
         return None
     finally:
