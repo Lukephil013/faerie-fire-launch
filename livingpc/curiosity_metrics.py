@@ -245,8 +245,14 @@ _DRAFT_SYSTEM = (
 
 
 def _draft_profile_with_model(curiosity: dict) -> MetricProfile | None:
-    """One model call to draft measures from the investigation's own framing.
-    Returns None on any failure so the keyword templates below still apply."""
+    """Draft measures only after an explicit request from the UI.
+
+    Listing an Investigation must remain local, fast, and free of surprise
+    cloud calls.  The caller may include a bounded ``metric_context`` assembled
+    from the user's own answered investigation material.
+    """
+    if not curiosity.get("allow_model_draft"):
+        return None
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         return None
@@ -260,6 +266,9 @@ def _draft_profile_with_model(curiosity: dict) -> MetricProfile | None:
             "Korean (keep slugs ascii)." if is_ko() else "")
         prompt = ("INVESTIGATION TITLE: " + str(curiosity.get("label") or "") +
                   "\nFRAMING:\n" + str(curiosity.get("directive") or ""))
+        context = str(curiosity.get("metric_context") or "").strip()
+        if context:
+            prompt += "\n\nUSER-APPROVED INVESTIGATION CONTEXT:\n" + context[:6000]
         msg = client.messages.create(model=model, max_tokens=900, system=system,
                                      messages=[{"role": "user", "content": prompt}])
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
@@ -297,20 +306,22 @@ def _draft_profile_with_model(curiosity: dict) -> MetricProfile | None:
 
 
 def proposed_profile(curiosity: dict) -> MetricProfile | None:
-    # Preferred: one GoalAI call drafts measures from the investigation's own
-    # framing (domain "custom"), so a food-crash investigation gets food-crash
-    # measures instead of a canned template that happened to keyword-match.
+    # Preferred: an explicitly requested model draft from the Investigation's
+    # own framing and bounded answer context.
     drafted = _draft_profile_with_model(curiosity)
     if drafted is not None:
         return drafted
-    # Fallback: the original keyword-matched starter templates.
+    # Offline/failure fallback: familiar starter profiles where they fit, then
+    # a generic profile so every deliberate tracking request has a local path.
     text = f"{curiosity.get('label', '')} {curiosity.get('directive', '')}".lower()
-    if any(word in text for word in ("mental", "mood", "anxiety", "wellbeing", "stress")):
+    if any(word in text for word in ("mental", "mood", "anxiety", "wellbeing", "stress",
+                                     "정신", "기분", "불안", "스트레스")):
         domain, dimensions, states = MENTAL_HEALTH_PROFILE
-    elif any(word in text for word in ("exercise", "fitness", "workout", "gym", "strength")):
+    elif any(word in text for word in ("exercise", "fitness", "workout", "gym", "strength",
+                                       "운동", "체력", "헬스", "근력")):
         domain, dimensions, states = EXERCISE_PROFILE
     else:
-        return None
+        domain, dimensions, states = GENERIC_PROFILE
     return MetricProfile(int(curiosity["id"]), 1, "draft", domain,
                          tuple(dimensions), tuple(states), _now())
 
@@ -343,8 +354,6 @@ class MetricStore:
     def ensure_profile(self, curiosity: dict) -> MetricProfile | None:
         existing = self.get_profile(int(curiosity["id"]))
         if existing:
-            if existing.domain == "general" and existing.status == "draft":
-                return None
             return existing
         profile = proposed_profile(curiosity)
         if profile is None:
@@ -419,9 +428,11 @@ class MetricStore:
         profile = self.get_profile(curiosity_id)
         if not profile:
             raise ValueError(f"metric profile for curiosity {curiosity_id} not found")
-        dims = _validated_dimensions(dimensions or [asdict(d) for d in profile.dimensions],
+        dims = _validated_dimensions(dimensions if dimensions is not None
+                                     else [asdict(d) for d in profile.dimensions],
                                      require_weight=True)
-        states = _validated_dimensions(state_metrics or [asdict(d) for d in profile.state_metrics],
+        states = _validated_dimensions(state_metrics if state_metrics is not None
+                                       else [asdict(d) for d in profile.state_metrics],
                                        require_weight=False)
         approved_at = _now()
         self.conn.execute(
@@ -531,7 +542,10 @@ class MetricStore:
             "SELECT * FROM curiosity_daily_snapshot WHERE curiosity_id=? AND snapshot_date<? "
             "ORDER BY snapshot_date DESC LIMIT 1", (curiosity_id, snapshot_date),
         ).fetchone()
-        prior_metrics = json.loads(prior["metrics_json"]) if prior else {}
+        # A revised rubric starts a new, explicitly versioned series.  Reusing
+        # old values under renamed/redefined dimensions would fabricate a trend.
+        prior_metrics = (json.loads(prior["metrics_json"])
+                         if prior and int(prior["profile_version"]) == profile.version else {})
         events = self.conn.execute(
             "SELECT * FROM curiosity_metric_event WHERE curiosity_id=? AND occurred_on=? "
             "ORDER BY id", (curiosity_id, snapshot_date),
@@ -593,7 +607,8 @@ class MetricStore:
                 "WHERE curiosity_id=?", (curiosity_id,))
             self.conn.commit()
         trend = self._trend(curiosity_id, snapshot_date, overall,
-                            has_evidence=evidence_count > 0)
+                            has_evidence=evidence_count > 0,
+                            profile_version=profile.version)
         summary = _snapshot_summary(overall, overall_conf, trend, calibration_days)
         snapshot = DailySnapshot(
             curiosity_id, snapshot_date, profile.version, metrics, state,
@@ -656,15 +671,32 @@ class MetricStore:
         ).fetchall()
         return sum(min(DAILY_XP_CAP, int(row["total"] or 0)) for row in rows)
 
+    def global_xp(self, through_date: str | None = None) -> int:
+        """Lifetime XP across every Investigation, including archived ones.
+
+        The same daily cap applies once to the whole person, so opening extra
+        Investigations cannot multiply the Soul-level economy.
+        """
+        clauses = ""
+        params: tuple = ()
+        if through_date:
+            clauses = " WHERE occurred_on<=?"
+            params = (through_date,)
+        rows = self.conn.execute(
+            "SELECT occurred_on,SUM(xp) total FROM curiosity_metric_event" + clauses +
+            " GROUP BY occurred_on", params).fetchall()
+        return sum(min(DAILY_XP_CAP, int(row["total"] or 0)) for row in rows)
+
     def _trend(self, curiosity_id: int, snapshot_date: str,
-               current: float | None, *, has_evidence: bool) -> float | None:
+               current: float | None, *, has_evidence: bool,
+               profile_version: int) -> float | None:
         target = date.fromisoformat(snapshot_date)
         start = (target - timedelta(days=13)).isoformat()
         rows = self.conn.execute(
             "SELECT snapshot_date,overall_mastery FROM curiosity_daily_snapshot "
-            "WHERE curiosity_id=? AND snapshot_date>=? AND snapshot_date<? "
+            "WHERE curiosity_id=? AND profile_version=? AND snapshot_date>=? AND snapshot_date<? "
             "AND overall_mastery IS NOT NULL AND evidence_count>0 ORDER BY snapshot_date",
-            (curiosity_id, start, snapshot_date),
+            (curiosity_id, profile_version, start, snapshot_date),
         ).fetchall()
         values = [(row["snapshot_date"], float(row["overall_mastery"])) for row in rows]
         if has_evidence and current is not None:

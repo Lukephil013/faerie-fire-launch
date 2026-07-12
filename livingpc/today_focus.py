@@ -15,19 +15,22 @@ from __future__ import annotations
 import json
 import os
 import time
+import hashlib
 from datetime import date
 
 from .diagnostics import log_diag
 
 _META_DATE_KEY = "today_focus_date"
 _META_DATA_KEY = "today_focus_json"
+_META_SIGNATURE_KEY = "today_focus_signature"
 
 _SYSTEM = (
     "You help someone decide which 1-3 active tasks (called Leaves) are most "
     "worth focusing on today, out of a longer list. Weigh stated priority, "
     "due dates, and anything that looks stale or blocked. Reply with ONLY a "
     "JSON array, no prose, no markdown fences, like: "
-    '[{"id": 12, "reason": "one short sentence"}]. Pick at most 3. If '
+    '[{"id": 12, "mode":"main", "reason": "one short sentence"}]. '
+    "Pick one main task and, when useful, one low_energy alternative. If "
     "everything looks equally low-stakes, it's fine to pick just 1, or none "
     "at all if nothing stands out."
 )
@@ -54,7 +57,9 @@ def _fallback_picks(active_leaves):
 
     ranked = sorted(active_leaves, key=rank)
     return [{"id": t["id"], "title": t.get("title", ""),
-             "reason": "Sorted by priority and due date."} for t in ranked[:3]]
+             "mode": "main" if i == 0 else "low_energy",
+             "reason": "Sorted by priority, due date, and recent goal state."}
+            for i, t in enumerate(ranked[:2])]
 
 
 def _ask_model(config, active_leaves):
@@ -70,7 +75,9 @@ def _ask_model(config, active_leaves):
     client = Anthropic(api_key=api_key,
                        timeout=getattr(config, "llm_timeout_seconds", 60.0))
     lines = [f"- id={t['id']} title={t.get('title', '')!r} "
-             f"priority={t.get('priority', 'normal')} due={t.get('due_date') or 'none'}"
+             f"priority={t.get('priority', 'normal')} due={t.get('due_date') or 'none'} "
+             f"completion={t.get('completion') or 'unknown'} mastery={t.get('mastery') or 'unknown'} "
+             f"updated={t.get('updated_at') or 'unknown'} description={str(t.get('description') or '')[:280]!r}"
              for t in active_leaves[:40]]
     prompt = "Active Leaves:\n" + "\n".join(lines)
     started = time.monotonic()
@@ -91,16 +98,25 @@ def _ask_model(config, active_leaves):
         tid = item.get("id")
         if tid not in by_id:
             continue
-        picks.append({"id": tid, "title": by_id[tid].get("title", ""),
+        mode = str(item.get("mode") or "main").strip().lower()
+        if mode not in {"main", "low_energy"}:
+            mode = "main"
+        picks.append({"id": tid, "title": by_id[tid].get("title", ""), "mode": mode,
                       "reason": str(item.get("reason") or "").strip()[:200]})
     return picks[:3] or None
 
 
 def get_today_focus(config, mem, tree, *, force=False):
     today = date.today().isoformat()
+    active = [t for t in _collect_leaves(tree) if t.get("status") != "completed"]
+    signature = hashlib.sha256(json.dumps([
+        {key: task.get(key) for key in ("id", "title", "description", "priority", "due_date",
+                                         "completion", "mastery", "updated_at", "status")}
+        for task in active
+    ], sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     if not force:
         cached_date = mem.get_meta(_META_DATE_KEY)
-        if cached_date == today:
+        if cached_date == today and mem.get_meta(_META_SIGNATURE_KEY) == signature:
             cached = mem.get_meta(_META_DATA_KEY)
             if cached is not None:
                 try:
@@ -109,10 +125,10 @@ def get_today_focus(config, mem, tree, *, force=False):
                 except ValueError:
                     pass
 
-    active = [t for t in _collect_leaves(tree) if t.get("status") != "completed"]
     if not active:
         mem.set_meta(_META_DATE_KEY, today)
         mem.set_meta(_META_DATA_KEY, json.dumps([]))
+        mem.set_meta(_META_SIGNATURE_KEY, signature)
         return {"ok": True, "date": today, "picks": [], "source": "none"}
 
     picks = None
@@ -128,4 +144,5 @@ def get_today_focus(config, mem, tree, *, force=False):
 
     mem.set_meta(_META_DATE_KEY, today)
     mem.set_meta(_META_DATA_KEY, json.dumps(picks))
+    mem.set_meta(_META_SIGNATURE_KEY, signature)
     return {"ok": True, "date": today, "picks": picks, "source": source}

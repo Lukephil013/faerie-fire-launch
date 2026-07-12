@@ -167,7 +167,7 @@ class Config:
     curiosity_suggestion_min_confidence: float = 0.80  # "grounded in confirmed beliefs" gate
     curiosity_max_open_per_curiosity: int = 6          # pause generation until the user catches up
     curiosity_metrics_enabled: bool = True
-    curiosity_checkin_hour: int = 21                   # local time; gentle daily reminder
+    curiosity_checkin_hour: int = 19                   # eligible time; shared weekly gate still applies
     curiosity_calibration_days: int = 7                # local-only before any dashboard migration
     curiosity_chart_days: int = 30
 
@@ -182,6 +182,15 @@ class Config:
     goal_ai_context_max_chars: int = 14000
     goal_ai_max_open_proposals: int = 3
     goal_ai_notifications: bool = True
+    goal_relevance_stale_days: int = 30         # gentle check after a month without movement
+    # Shared unsolicited-reflection rhythm. Explicit /remind reminders bypass
+    # this gate because the user requested them directly.
+    reflection_min_days: int = 7                # global maximum: one prompt per week
+    reflection_quiet_start_hour: int = 21       # no reflective toasts overnight
+    reflection_quiet_end_hour: int = 8
+    reflection_backlog_limit: int = 3           # do not build an anxiety queue
+    reflection_snooze_base_days: int = 3        # 3, 6, 12, 24 (capped at 28)
+    reflection_ignore_suppress_days: int = 30   # repeated ignores extend suppression
     # Notion sync: by default mirrors each curiosity to a child page under a
     # parent Notion page. When notion_curiosity_database_id is configured,
     # curiosities become database rows and only their marked managed section
@@ -224,9 +233,12 @@ class Config:
     filing_ollama_url: str = "http://localhost:11434"   # used when backend == 'ollama'
     filing_ollama_model: str = "qwen2.5:14b"
 
-    # Skills: user-extensible slash commands (skills/*.py). /teach drafts new
-    # ones in chat; installs only on explicit approval. See livingpc/skills.py.
+    # Skills: user-extensible slash commands (skills/*.py) and on-demand
+    # workflow skills (skills/<name>/SKILL.md). /teach drafts new ones in
+    # chat; installs only on explicit approval. See livingpc/skills.py.
     skills_dir: str = "skills"
+    workflow_max_active: int = 3            # loaded SKILL.md bodies per chat (oldest evicted)
+    workflow_body_max_chars: int = 20000    # a body over this is broken, not truncated
     # Reminders (/remind): fired as toasts by the daemon's 30s poll.
     reminders_enabled: bool = True
 

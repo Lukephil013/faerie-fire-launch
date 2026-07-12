@@ -1,5 +1,6 @@
 """Tests for the inference store (Phase A of the inference engine)."""
 import os
+import sqlite3
 import sys
 import tempfile
 
@@ -138,6 +139,160 @@ def test_stats():
         st = s.stats()
         assert st.get("confirmed") == 1 and st.get("rejected") == 1
         assert st.get("candidate") == 1 and st.get("core_beliefs") == 0
+        s.close()
+
+
+def _person_payload(statement="I focus better with a clear handoff.", **changes):
+    payload = {
+        "theme": "energy", "statement": statement, "scope": "situational",
+        "sensitivity": "normal", "confidence": .78,
+        "rationale": "Two Investigation answers point in this direction.",
+        "evidence": ["answer one", "answer two"],
+        "counterevidence": ["Not true on travel days"],
+        "change_over_time": "This is newer and narrower than the prior belief.",
+    }
+    payload.update(changes)
+    return payload
+
+
+def test_person_model_proposal_is_inert_until_separately_approved():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        proposal = s.add_person_proposal(3, 7, "new", _person_payload())
+        assert proposal["status"] == "open"
+        assert s.confirmed() == []
+        applied = s.decide_person_proposal(proposal["id"], "approve")
+        assert applied["status"] == "approved"
+        belief = s.confirmed()[0]
+        assert belief["statement"] == "I focus better with a clear handoff."
+        assert belief["scope"] == "situational"
+        assert belief["source_kind"] == "curiosity_synthesis"
+        assert belief["source_id"] == 7
+        assert belief["counterevidence"] == ["Not true on travel days"]
+        s.close()
+
+
+def test_narrowing_preserves_old_belief_as_retired_history():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        old = s.add_candidate("energy", "My energy always crashes after lunch", confidence=.9)
+        s.confirm(old)
+        proposal = s.add_person_proposal(
+            3, 8, "narrow",
+            _person_payload("My energy sometimes dips after low-protein lunches."),
+            target_inference_id=old)
+        applied = s.decide_person_proposal(proposal["id"], "approve")
+        assert s.get(old)["status"] == "retired"
+        new = s.get(applied["applied_inference_id"])
+        assert new["status"] == "confirmed"
+        assert new["refines_id"] == old
+        assert "sometimes" in new["statement"]
+        s.close()
+
+
+def test_contradiction_does_not_leave_both_claims_current():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        old = s.add_candidate("social energy", "Meeting new people always drains me", confidence=.9)
+        s.confirm(old)
+        proposal = s.add_person_proposal(
+            4, 13, "contradict",
+            _person_payload(
+                "Meeting new people can energize me when the setting feels voluntary.",
+                theme="social energy", confidence=.82),
+            target_inference_id=old)
+        applied = s.decide_person_proposal(proposal["id"], "approve")
+        current_ids = {belief["id"] for belief in s.confirmed()}
+        assert old not in current_ids
+        assert applied["applied_inference_id"] in current_ids
+        assert s.get(old)["status"] == "retired"
+        s.close()
+
+
+def test_support_strengthens_existing_belief_without_duplicate():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        belief_id = s.add_candidate("energy", "Clear handoffs help me focus", confidence=.7)
+        s.confirm(belief_id)
+        before = s.get(belief_id)["confidence"]
+        proposal = s.add_person_proposal(
+            3, 9, "support", _person_payload(""), target_inference_id=belief_id)
+        applied = s.decide_person_proposal(proposal["id"], "approve")
+        assert applied["applied_inference_id"] == belief_id
+        assert s.get(belief_id)["confidence"] > before
+        assert len(s.confirmed()) == 1
+        s.close()
+
+
+def test_rejected_person_update_is_durable_and_does_not_change_beliefs():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        proposal = s.add_person_proposal(3, 10, "new", _person_payload())
+        rejected = s.decide_person_proposal(
+            proposal["id"], "reject", note="This overgeneralizes me")
+        assert rejected["status"] == "rejected"
+        assert rejected["decision_note"] == "This overgeneralizes me"
+        assert s.confirmed() == []
+        s.close()
+
+
+def test_identity_scope_requires_stronger_evidence_than_situational_scope():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        weak_identity = _person_payload(
+            "I am fundamentally avoidant.", scope="identity", confidence=.89,
+            evidence=["one", "two"])
+        try:
+            s.add_person_proposal(3, 11, "new", weak_identity)
+            assert False, "weak identity proposal should be rejected"
+        except ValueError as error:
+            assert "identity-level" in str(error)
+        strong_identity = _person_payload(
+            "I consistently value autonomy across domains.", scope="identity",
+            confidence=.93, evidence=["work", "relationships", "creative choices"])
+        proposal = s.add_person_proposal(3, 12, "new", strong_identity)
+        assert proposal["payload"]["scope"] == "identity"
+        s.close()
+
+
+def test_edited_proposal_is_revalidated_and_situational_is_not_core_identity():
+    with tempfile.TemporaryDirectory() as d:
+        s = _store(d)
+        proposal = s.add_person_proposal(3, 14, "new", _person_payload())
+        edited = dict(proposal["payload"]); edited["statement"] = ""
+        try:
+            s.decide_person_proposal(proposal["id"], "approve", payload=edited)
+            assert False, "blank edited statement should not apply"
+        except ValueError as error:
+            assert "requires a proposed statement" in str(error)
+        applied = s.decide_person_proposal(proposal["id"], "approve")
+        belief = s._dict(s.get(applied["applied_inference_id"]))
+        assert belief["scope"] == "situational"
+        assert belief["is_core_belief"] is False
+        s.close()
+
+
+def test_legacy_person_model_migrates_without_losing_beliefs():
+    with tempfile.TemporaryDirectory() as d:
+        db = os.path.join(d, "memory.db")
+        conn = sqlite3.connect(db)
+        conn.executescript("""
+        CREATE TABLE inference (
+          id INTEGER PRIMARY KEY, theme TEXT NOT NULL, statement TEXT NOT NULL,
+          confidence REAL, status TEXT DEFAULT 'candidate', evidence TEXT,
+          refines_id INTEGER, source_refs TEXT, times_confirmed INTEGER DEFAULT 0,
+          times_skipped INTEGER DEFAULT 0, created_at TEXT, validated_at TEXT,
+          last_shown_at TEXT);
+        INSERT INTO inference VALUES
+          (1,'values','I value autonomy',.9,'confirmed','{}',NULL,'[]',1,0,NULL,NULL,NULL);
+        """)
+        conn.commit(); conn.close()
+        s = InferenceStore(db)
+        belief = s.confirmed()[0]
+        assert belief["statement"] == "I value autonomy"
+        assert belief["scope"] == "general"
+        proposal = s.add_person_proposal(1, 1, "new", _person_payload())
+        assert proposal["status"] == "open"
         s.close()
 
 

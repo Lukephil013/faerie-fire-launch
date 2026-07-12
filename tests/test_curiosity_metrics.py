@@ -49,9 +49,10 @@ class TestMetricProfiles:
         assert approved.dimensions[0].weight == 0.75
         assert approved.dimensions[1].weight == 0.25
 
-    def test_unsupported_curiosity_gets_no_automatic_profile(self):
-        assert proposed_profile(curiosity("piano", "learn piano")) is None
-        assert self.store.ensure_profile(curiosity("piano", "learn piano")) is None
+    def test_general_offline_fallback_is_available_for_an_explicit_draft(self):
+        profile = proposed_profile(curiosity("piano", "learn piano"))
+        assert profile.domain == "general"
+        assert self.store.ensure_profile(curiosity("piano", "learn piano")).domain == "general"
 
     def test_negative_state_prompts_use_positive_ten_is_better_wording(self):
         mental = proposed_profile(curiosity("mental health", "support my wellbeing"))
@@ -153,6 +154,12 @@ class TestMetricScoring:
         assert snapshot.total_xp == DAILY_XP_CAP
         assert snapshot.level == 2
         assert snapshot.xp_into_level == 0
+
+    def test_global_xp_has_one_cap_and_survives_other_investigations(self):
+        self.store.record_event(1, "milestone", "one", occurred_on="2026-07-01")
+        self.store.record_event(2, "milestone", "two", occurred_on="2026-07-01")
+        self.store.record_event(2, "milestone", "three", occurred_on="2026-07-01")
+        assert self.store.global_xp("2026-07-01") == DAILY_XP_CAP
 
     def test_replacing_checkin_does_not_duplicate_xp(self):
         growth = {item.slug: 3 for item in self.profile.dimensions}

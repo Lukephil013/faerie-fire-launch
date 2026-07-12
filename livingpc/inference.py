@@ -132,6 +132,36 @@ CREATE TABLE IF NOT EXISTS inference_inquiry_message (
     FOREIGN KEY (inquiry_id) REFERENCES inference_inquiry(id)
 );
 CREATE INDEX IF NOT EXISTS idx_inquiry_message ON inference_inquiry_message(inquiry_id,id);
+
+-- Investigation-derived changes remain inert proposals until separately
+-- approved. The inference table remains the sole person-model truth store.
+CREATE TABLE IF NOT EXISTS person_model_proposal (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    curiosity_id        INTEGER NOT NULL,
+    synthesis_id        INTEGER NOT NULL,
+    operation           TEXT NOT NULL,
+    target_inference_id INTEGER,
+    payload_json        TEXT NOT NULL,
+    fingerprint         TEXT NOT NULL UNIQUE,
+    status              TEXT NOT NULL DEFAULT 'open',
+    created_at          TEXT NOT NULL,
+    decided_at          TEXT,
+    decision_note       TEXT,
+    applied_inference_id INTEGER,
+    CHECK (operation IN ('new','support','contradict','narrow','retire',
+                         'situational','change_over_time')),
+    CHECK (status IN ('open','approved','rejected')),
+    FOREIGN KEY (target_inference_id) REFERENCES inference(id),
+    FOREIGN KEY (applied_inference_id) REFERENCES inference(id)
+);
+CREATE INDEX IF NOT EXISTS idx_person_model_proposal_curiosity
+ON person_model_proposal(curiosity_id,status,id DESC);
+CREATE TABLE IF NOT EXISTS person_model_reconciliation_run (
+    synthesis_id INTEGER PRIMARY KEY,
+    curiosity_id INTEGER NOT NULL,
+    result_count INTEGER NOT NULL,
+    completed_at TEXT NOT NULL
+);
 """
 
 
@@ -197,6 +227,16 @@ class InferenceStore:
             self.conn.execute("ALTER TABLE inference ADD COLUMN absorbed_by_id INTEGER")
         if "evidence_cutoff_id" not in cols:
             self.conn.execute("ALTER TABLE inference ADD COLUMN evidence_cutoff_id INTEGER")
+        if "scope" not in cols:
+            self.conn.execute("ALTER TABLE inference ADD COLUMN scope TEXT DEFAULT 'general'")
+        if "sensitivity" not in cols:
+            self.conn.execute("ALTER TABLE inference ADD COLUMN sensitivity TEXT DEFAULT 'normal'")
+        if "counterevidence" not in cols:
+            self.conn.execute("ALTER TABLE inference ADD COLUMN counterevidence TEXT DEFAULT '[]'")
+        if "source_kind" not in cols:
+            self.conn.execute("ALTER TABLE inference ADD COLUMN source_kind TEXT")
+        if "source_id" not in cols:
+            self.conn.execute("ALTER TABLE inference ADD COLUMN source_id INTEGER")
         evidence_cols = {
             r["name"] for r in self.conn.execute("PRAGMA table_info(evidence)")
         }
@@ -302,6 +342,194 @@ class InferenceStore:
         self.conn.commit()
         return cur.rowcount
 
+    # --- Investigation -> person-model proposals -----------------------
+    @staticmethod
+    def _normalize_person_payload(payload: dict | None) -> dict:
+        raw = payload if isinstance(payload, dict) else {}
+
+        def text(name: str, limit: int = 2000) -> str:
+            return str(raw.get(name) or "").strip()[:limit]
+
+        def strings(name: str, limit: int = 10) -> list[str]:
+            values = raw.get(name) if isinstance(raw.get(name), list) else []
+            return [str(value).strip()[:500] for value in values
+                    if str(value).strip()][:limit]
+
+        try:
+            confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        scope = text("scope", 40).lower() or "situational"
+        if scope not in {"situational", "domain", "identity"}:
+            scope = "situational"
+        sensitivity = text("sensitivity", 40).lower() or "normal"
+        if sensitivity not in {"normal", "sensitive"}:
+            sensitivity = "normal"
+        return {
+            "theme": text("theme", 160) or "investigation",
+            "statement": text("statement"), "scope": scope,
+            "sensitivity": sensitivity, "confidence": confidence,
+            "rationale": text("rationale"),
+            "evidence": strings("evidence"),
+            "counterevidence": strings("counterevidence"),
+            "change_over_time": text("change_over_time", 800),
+        }
+
+    def _person_proposal_dict(self, row) -> dict | None:
+        if row is None:
+            return None
+        try:
+            payload = json.loads(crypto.dec(row["payload_json"]) or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        target = self.get(row["target_inference_id"]) if row["target_inference_id"] else None
+        return {
+            "id": int(row["id"]), "curiosity_id": int(row["curiosity_id"]),
+            "synthesis_id": int(row["synthesis_id"]), "operation": row["operation"],
+            "target_inference_id": row["target_inference_id"],
+            "target": self._dict(target) if target is not None else None,
+            "payload": self._normalize_person_payload(payload), "status": row["status"],
+            "created_at": row["created_at"], "decided_at": row["decided_at"],
+            "decision_note": crypto.dec(row["decision_note"]) or "",
+            "applied_inference_id": row["applied_inference_id"],
+        }
+
+    def add_person_proposal(self, curiosity_id: int, synthesis_id: int,
+                            operation: str, payload: dict, *,
+                            target_inference_id: int | None = None) -> dict:
+        operation = str(operation or "").strip().lower()
+        allowed = {"new", "support", "contradict", "narrow", "retire",
+                   "situational", "change_over_time"}
+        if operation not in allowed:
+            raise ValueError("unknown person-model operation")
+        normalized = self._normalize_person_payload(payload)
+        target = self.get(int(target_inference_id)) if target_inference_id else None
+        if operation != "new" and target is None:
+            raise ValueError("this person-model update requires an existing belief")
+        if operation not in {"support", "retire"} and not normalized["statement"]:
+            raise ValueError("this person-model update requires a proposed statement")
+        if normalized["scope"] == "identity" and (
+                normalized["confidence"] < .9 or len(normalized["evidence"]) < 3):
+            raise ValueError("identity-level updates require 90% confidence and three evidence items")
+        material = json.dumps({"curiosity_id": int(curiosity_id),
+                               "synthesis_id": int(synthesis_id),
+                               "operation": operation,
+                               "target": int(target_inference_id or 0),
+                               "payload": normalized}, ensure_ascii=False, sort_keys=True)
+        fingerprint = __import__("hashlib").sha256(material.encode("utf-8")).hexdigest()
+        self.conn.execute(
+            "INSERT OR IGNORE INTO person_model_proposal "
+            "(curiosity_id,synthesis_id,operation,target_inference_id,payload_json,"
+            "fingerprint,status,created_at) VALUES (?,?,?,?,?,?,'open',?)",
+            (int(curiosity_id), int(synthesis_id), operation,
+             int(target_inference_id) if target_inference_id else None,
+             crypto.enc(json.dumps(normalized, ensure_ascii=False, sort_keys=True)),
+             fingerprint, _now()))
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM person_model_proposal WHERE fingerprint=?", (fingerprint,)
+        ).fetchone()
+        return self._person_proposal_dict(row)
+
+    def person_proposals(self, curiosity_id: int | None = None, *,
+                         synthesis_id: int | None = None,
+                         status: str | None = None) -> list[dict]:
+        clauses, params = [], []
+        if curiosity_id is not None:
+            clauses.append("curiosity_id=?"); params.append(int(curiosity_id))
+        if synthesis_id is not None:
+            clauses.append("synthesis_id=?"); params.append(int(synthesis_id))
+        if status is not None:
+            clauses.append("status=?"); params.append(str(status))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            "SELECT * FROM person_model_proposal" + where + " ORDER BY id DESC",
+            tuple(params)).fetchall()
+        return [self._person_proposal_dict(row) for row in rows]
+
+    def person_reconciliation_run(self, synthesis_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM person_model_reconciliation_run WHERE synthesis_id=?",
+            (int(synthesis_id),)).fetchone()
+        return (dict(row) if row is not None else None)
+
+    def mark_person_reconciled(self, synthesis_id: int, curiosity_id: int,
+                               result_count: int) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO person_model_reconciliation_run "
+            "(synthesis_id,curiosity_id,result_count,completed_at) VALUES (?,?,?,?)",
+            (int(synthesis_id), int(curiosity_id), int(result_count), _now()))
+        self.conn.commit()
+
+    def decide_person_proposal(self, proposal_id: int, action: str, *,
+                               payload: dict | None = None,
+                               note: str = "") -> dict:
+        row = self.conn.execute(
+            "SELECT * FROM person_model_proposal WHERE id=?", (int(proposal_id),)
+        ).fetchone()
+        proposal = self._person_proposal_dict(row)
+        if not proposal or proposal["status"] != "open":
+            raise ValueError("person-model proposal is no longer open")
+        if action not in {"approve", "reject"}:
+            raise ValueError("unknown person-model decision")
+        normalized = self._normalize_person_payload(
+            payload if payload is not None else proposal["payload"])
+        if proposal["operation"] not in {"support", "retire"} and not normalized["statement"]:
+            raise ValueError("this person-model update requires a proposed statement")
+        if normalized["scope"] == "identity" and (
+                normalized["confidence"] < .9 or len(normalized["evidence"]) < 3):
+            raise ValueError("identity-level updates require 90% confidence and three evidence items")
+        applied_id = None
+        now = _now()
+        if action == "approve":
+            target_id = proposal["target_inference_id"]
+            operation = proposal["operation"]
+            if operation == "support":
+                target = self.get(target_id)
+                confidence = _bump(target["confidence"] if target else normalized["confidence"])
+                self.conn.execute(
+                    "UPDATE inference SET confidence=?,resolution_status='accepted',"
+                    "validated_at=? WHERE id=?", (confidence, now, target_id))
+                applied_id = target_id
+            elif operation == "retire":
+                self.conn.execute(
+                    "UPDATE inference SET status='retired',validated_at=? WHERE id=?",
+                    (now, target_id))
+            else:
+                if target_id:
+                    self.conn.execute(
+                        "UPDATE inference SET status='retired',validated_at=? WHERE id=?",
+                        (now, target_id))
+                cur = self.conn.execute(
+                    "INSERT INTO inference (theme,statement,confidence,status,evidence,"
+                    "refines_id,source_refs,times_confirmed,created_at,validated_at,"
+                    "resolution_status,evidence_cutoff_id,scope,sensitivity,counterevidence,"
+                    "source_kind,source_id) VALUES (?,?,?,'confirmed',?,?,?,1,?,?,"
+                    "'accepted',?,?,?,?,?,?)",
+                    (normalized["theme"], crypto.enc(normalized["statement"]),
+                     normalized["confidence"],
+                     json.dumps({"method": "investigation-reconciliation",
+                                 "synthesis_id": proposal["synthesis_id"],
+                                 "evidence_count": len(normalized["evidence"])}),
+                     target_id, json.dumps([proposal["synthesis_id"]]), now, now,
+                     self._evidence_cutoff_id(normalized["theme"]), normalized["scope"],
+                     normalized["sensitivity"],
+                     crypto.enc(json.dumps(
+                         normalized["counterevidence"], ensure_ascii=False)),
+                     "curiosity_synthesis", proposal["synthesis_id"]))
+                applied_id = int(cur.lastrowid)
+        status = "approved" if action == "approve" else "rejected"
+        self.conn.execute(
+            "UPDATE person_model_proposal SET status=?,payload_json=?,decided_at=?,"
+            "decision_note=?,applied_inference_id=? WHERE id=?",
+            (status, crypto.enc(json.dumps(normalized, ensure_ascii=False, sort_keys=True)),
+             now, crypto.enc(str(note or "")), applied_id, int(proposal_id)))
+        self.conn.commit()
+        updated = self.conn.execute(
+            "SELECT * FROM person_model_proposal WHERE id=?", (int(proposal_id),)
+        ).fetchone()
+        return self._person_proposal_dict(updated)
+
     # --- reads ------------------------------------------------------------
     def get(self, inference_id: int):
         return self.conn.execute(
@@ -318,10 +546,23 @@ class InferenceStore:
             "times_skipped": r["times_skipped"],
             "resolution_status": r["resolution_status"],
             "absorbed_by_id": r["absorbed_by_id"],
-            "is_core_belief": (r["status"] == "confirmed" and (
+            "scope": r["scope"] or "general",
+            "sensitivity": r["sensitivity"] or "normal",
+            "counterevidence": self._decoded_json_list(r["counterevidence"]),
+            "source_kind": r["source_kind"], "source_id": r["source_id"],
+            "is_core_belief": (r["status"] == "confirmed" and
+                (r["scope"] or "general") in {"general", "identity"} and (
                 r["resolution_status"] == "accepted"
                 or r["times_confirmed"] >= CORE_BELIEF_CONFIRMATIONS)),
         }
+
+    @staticmethod
+    def _decoded_json_list(value) -> list:
+        try:
+            decoded = json.loads(crypto.dec(value) or "[]")
+            return decoded if isinstance(decoded, list) else []
+        except (TypeError, ValueError):
+            return []
 
     def to_review(self, limit: int | None = None, *,
                   min_confidence: float = SURFACE_CONFIDENCE) -> list[dict]:

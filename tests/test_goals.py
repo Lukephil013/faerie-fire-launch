@@ -7,8 +7,10 @@ from livingpc import crypto
 from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goals import (
-    GoalStore, StubGoalPlanner, continue_planning, start_planning, summarize_plan,
+    GoalStore, StubGoalPlanner, continue_planning, record_experiment_outcome,
+    start_planning, summarize_plan,
 )
+from livingpc.inference import InferenceStore
 from livingpc.memory import MemoryStore
 
 
@@ -275,7 +277,7 @@ class TestGoalPlanner(GoalTestCase):
         item = self._suggestion()
         session = start_planning(self.goals, StubGoalPlanner(), item)
         bad = {"nodes": [{"type": "overgoal", "title": "Valid parent", "children": [
-            {"type": "overgoal", "title": "Invalid nested overgoal", "children": []}
+            {"type": "task", "title": "", "children": []}
         ]}]}
         self.goals.set_plan_draft(session["id"], bad, summary="bad", ready=True)
         with self.assertRaises(ValueError):
@@ -284,6 +286,155 @@ class TestGoalPlanner(GoalTestCase):
             "SELECT COUNT(*) FROM goal_node WHERE node_type!='umbrella'").fetchone()[0]
         self.assertEqual(count, 0)
         self.assertEqual(self.goals.plan_session(session["id"])["status"], "ready")
+
+    def test_commit_coerces_model_draft_types_onto_valid_placements(self):
+        """A real model draft used type='umbrella' at top level with tasks and a
+        nested overgoal under it; commits must coerce instead of erroring."""
+        item = self._suggestion()
+        session = start_planning(self.goals, StubGoalPlanner(), item)
+        draft = {"nodes": [{
+            "type": "umbrella", "title": "Run micro-test", "children": [
+                {"type": "task", "title": "Brainstorm session", "children": []},
+                {"type": "overgoal", "title": "Evaluate and select", "children": [
+                    {"type": "task", "title": "Shortlist tasks", "children": []},
+                ]},
+                {"type": "goal", "title": "Unknown typed leaf", "children": []},
+            ],
+        }]}
+        self.goals.set_plan_draft(session["id"], draft, summary="plan", ready=True)
+        result = self.goals.commit_plan(session["id"])
+        top = self.goals.get(result["goal_id"])
+        self.assertEqual(top["type"], "overgoal")
+        rows = self.goals.conn.execute(
+            "SELECT node_type FROM goal_node WHERE parent_id=?",
+            (result["goal_id"],)).fetchall()
+        self.assertEqual(sorted(r["node_type"] for r in rows),
+                         ["subgoal", "task", "task"])
+
+
+class TestExperimentOutcomes(GoalTestCase):
+    def _leaf(self):
+        over = self.goals.create("overgoal", "Energy")
+        return over, self.goals.create("task", "Try a prepared handoff", parent_id=over)
+
+    def test_completed_attempted_avoided_and_abandoned_all_produce_learning(self):
+        _, leaf = self._leaf()
+        for index, result in enumerate(("completed", "attempted", "avoided", "abandoned")):
+            if index:
+                leaf = self.goals.create(
+                    "task", f"Experiment {result}",
+                    parent_id=self.goals.get(leaf)["parent_id"])
+            outcome = self.goals.add_outcome(
+                leaf, result, f"What happened for {result}",
+                expected_obstacle="I expected friction", surprise="The timing mattered",
+                helpfulness=5, changed_understanding=f"Learning from {result}",
+                next_adjustment=f"Adjust after {result}")
+            self.assertEqual(outcome["result"], result)
+            self.assertEqual(len(self.goals.outcomes(leaf)), 1)
+            expected = "completed" if result == "completed" else "active"
+            self.assertEqual(self.goals.get(leaf)["status"], expected)
+            evidence = self.goals.conn.execute(
+                "SELECT label FROM goal_evidence_link WHERE goal_id=? AND source_kind='experiment_outcome'",
+                (leaf,)).fetchone()
+            self.assertIn(f"Learning from {result}", crypto.dec(evidence["label"]))
+            raw = self.goals.conn.execute(
+                "SELECT what_happened,expected_obstacle,surprise,changed_understanding,"
+                "next_adjustment FROM experiment_outcome WHERE id=?",
+                (outcome["id"],)).fetchone()
+            if crypto.enabled():
+                self.assertTrue(all(crypto.is_encrypted(value) for value in raw))
+
+    def test_outcome_infers_investigation_link_from_implemented_suggestion(self):
+        cid = self.curiosities.add_curiosity("understand energy", "Energy")
+        item = self.curiosities.add_item(cid, "suggestion", "Prepare the handoff")
+        over, leaf = self._leaf()
+        self.goals.conn.execute(
+            "UPDATE curiosity_item SET implementation_goal_id=? WHERE id=?", (leaf, item))
+        self.goals.conn.commit()
+        outcome = self.goals.add_outcome(
+            leaf, "attempted", "I tried it once", helpfulness=6)
+        self.assertEqual(outcome["curiosity_id"], cid)
+        self.assertEqual(outcome["source_item_id"], item)
+
+    def test_failed_advice_creates_lower_confidence_synthesis_draft(self):
+        cfg = Config(memory_db_path=self.db, db_path=os.path.join(self.tmp.name, "events.db"),
+                     goal_ai_backend="stub", inference_backend="stub")
+        cid = self.curiosities.add_curiosity("understand handoff energy", "Handoff")
+        over, leaf = self._leaf()
+        self.goals.link_curiosity(over, cid)
+        synthesis = self.curiosities.add_synthesis(cid, {
+            "interpretation": "Preparing every handoff should prevent the dip.",
+            "confidence": .8,
+            "supporting_evidence": [{"item_id": 1, "summary": "One good day"}],
+            "counterevidence": [], "experiments": ["Prepare the handoff"],
+        })
+        self.curiosities.decide_synthesis(synthesis["id"], "approve")
+        inf = InferenceStore(self.db)
+        belief_id = inf.add_candidate(
+            "handoff energy", "Prepared handoffs protect my energy", confidence=.9)
+        inf.confirm(belief_id); inf.close()
+        from livingpc.goal_ai import GoalAgentStore, build_agent_context
+        agents = GoalAgentStore(self.db)
+        try:
+            result = record_experiment_outcome(cfg, leaf, {
+                "result": "attempted", "what_happened": "The preparation added pressure.",
+                "expected_obstacle": "Forgetting the plan",
+                "surprise": "Planning itself was draining", "helpfulness": 2,
+                "changed_understanding": "Preparation only helps when it stays lightweight.",
+                "next_adjustment": "Try a one-line handoff cue instead.",
+            })
+            self.assertTrue(result["synthesis_drafted"])
+            memories = MemoryStore(self.db)
+            try:
+                memory = next(item for item in memories.active_as_dicts()
+                              if item["id"] == result["memory_id"])
+                self.assertIn("Preparation only helps", memory["value"])
+            finally:
+                memories.close()
+            draft = self.curiosities.latest_synthesis(cid, status="draft")
+            approved = self.curiosities.latest_synthesis(cid, status="approved")
+            self.assertLess(draft["payload"]["confidence"],
+                            approved["payload"]["confidence"])
+            self.assertEqual(draft["based_on_outcome_id"], result["outcome"]["id"])
+            self.assertTrue(any("2/10 helpful" in item
+                                for item in draft["payload"]["counterevidence"]))
+            self.assertEqual(agents.state(leaf)["dirty"], True)
+            context = build_agent_context(self.goals, agents, leaf)
+            self.assertIn("one-line handoff cue", json.dumps(context))
+            next_proposal = agents.get_proposal(result["next_proposal_id"])
+            self.assertEqual(next_proposal["type"], "create_child")
+            self.assertIn("one-line handoff cue", next_proposal["payload"]["title"])
+            self.assertFalse(any(
+                "one-line handoff cue" in node["title"].lower()
+                for node in self.goals.catalog()))
+        finally:
+            agents.close()
+        inf = InferenceStore(self.db)
+        try:
+            self.assertGreater(inf.evidence_episode_count("handoff energy"), 0)
+        finally:
+            inf.close()
+        tree_leaf = next(node for node in self.goals.tree()["children"]
+                         if node["id"] == over)["children"][0]
+        self.assertEqual(tree_leaf["outcomes"][0]["next_adjustment"],
+                         "Try a one-line handoff cue instead.")
+
+    def test_helpful_outcome_marks_synthesis_ready_without_silent_model_call(self):
+        cfg = Config(memory_db_path=self.db, db_path=os.path.join(self.tmp.name, "events.db"),
+                     goal_ai_backend="stub", inference_backend="stub")
+        cid = self.curiosities.add_curiosity("understand energy", "Energy")
+        over, leaf = self._leaf(); self.goals.link_curiosity(over, cid)
+        synthesis = self.curiosities.add_synthesis(cid, {
+            "interpretation": "A small cue may help.", "confidence": .6})
+        self.curiosities.decide_synthesis(synthesis["id"], "approve")
+        result = record_experiment_outcome(cfg, leaf, {
+            "result": "completed", "what_happened": "The cue helped.",
+            "helpfulness": 8, "changed_understanding": "Smaller preparation works better."})
+        self.assertFalse(result["synthesis_drafted"])
+        readiness = self.curiosities.synthesis_due(cid)
+        self.assertTrue(readiness["due"])
+        self.assertEqual(readiness["new_outcomes"], 1)
+        self.assertIsNone(self.curiosities.latest_synthesis(cid, status="draft"))
 
 
 class TestGoalBridge(unittest.TestCase):
@@ -311,6 +462,24 @@ class TestGoalBridge(unittest.TestCase):
         self.assertTrue(changed["ok"])
         over = next(x for x in changed["tree"]["children"] if x["id"] == made["goal_id"])
         self.assertEqual(over["completion"]["percent"], 100.0)
+
+    def test_experiment_outcome_bridge_updates_leaf_and_preserves_learning(self):
+        state = self.api.goal_state(); root = state["tree"]["id"]
+        over = self.api.goal_create("overgoal", "Energy", root)["goal_id"]
+        leaf = self.api.goal_create("task", "Try a smaller handoff", over)["goal_id"]
+        saved = self.api.goal_experiment_outcome(leaf, {
+            "result": "completed", "what_happened": "The smaller cue was easier.",
+            "helpfulness": 8, "surprise": "Less planning felt safer.",
+            "changed_understanding": "Lightweight preparation works better.",
+            "next_adjustment": "Test the cue before a social transition.",
+        })
+        self.assertTrue(saved["ok"])
+        state = self.api.goal_state()
+        node = next(child for parent in state["tree"]["children"]
+                    for child in parent.get("children", []) if child["id"] == leaf)
+        self.assertEqual(node["status"], "completed")
+        self.assertEqual(node["outcomes"][0]["next_adjustment"],
+                         "Test the cue before a social transition.")
 
     def test_implement_bridge_flow(self):
         curiosity = CuriosityStore(self.api.cfg.memory_db_path)

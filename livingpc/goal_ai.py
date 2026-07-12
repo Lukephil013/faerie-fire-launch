@@ -15,6 +15,7 @@ from . import crypto
 from .db import connect as db_connect
 from .diagnostics import log_diag
 from .goals import GoalStore
+from .lang import T as lang_T, is_ko as lang_is_ko
 
 
 HEALTH_STATES = {"unknown", "on-track", "needs-attention", "blocked"}
@@ -22,6 +23,11 @@ PROMOTION_CONFIDENCE_GATE = 0.8
 PROPOSAL_TYPES = {
     "create_child", "update_fields", "pause", "archive",
     "request_evidence", "start_curiosity", "promote_insight",
+}
+RELEVANCE_STATES = {"current", "questionable", "outgrown", "unclear"}
+GARDENING_TYPES = {
+    "rewrite", "split", "merge", "pause", "archive",
+    "attach_evidence", "leave_unchanged",
 }
 ACTIVE_AGENT_STATUSES = {"active"}
 
@@ -179,6 +185,57 @@ CREATE TABLE IF NOT EXISTS goal_harvest_route (
     FOREIGN KEY (harvest_id) REFERENCES goal_harvest(id),
     FOREIGN KEY (target_node_id) REFERENCES goal_node(id)
 );
+
+CREATE TABLE IF NOT EXISTS goal_relevance_state (
+    node_id INTEGER PRIMARY KEY,
+    relevance_state TEXT NOT NULL DEFAULT 'unclear',
+    relevance_score REAL NOT NULL DEFAULT 0,
+    confidence REAL NOT NULL DEFAULT 0,
+    rationale TEXT,
+    what_changed TEXT,
+    evidence_refs TEXT,
+    last_review_id INTEGER,
+    last_reviewed_at TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK (relevance_state IN ('current','questionable','outgrown','unclear')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id)
+);
+CREATE TABLE IF NOT EXISTS goal_relevance_review (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    relevance_state TEXT NOT NULL,
+    relevance_score REAL NOT NULL,
+    confidence REAL NOT NULL,
+    review_json TEXT NOT NULL,
+    context_hash TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK (relevance_state IN ('current','questionable','outgrown','unclear')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id)
+);
+CREATE INDEX IF NOT EXISTS idx_goal_relevance_review_node
+ON goal_relevance_review(node_id,id DESC);
+CREATE TABLE IF NOT EXISTS goal_gardening_proposal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    target_node_id INTEGER NOT NULL,
+    proposal_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    rationale TEXT,
+    evidence_refs TEXT,
+    fingerprint TEXT NOT NULL,
+    target_version TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    CHECK (proposal_type IN ('rewrite','split','merge','pause','archive',
+                             'attach_evidence','leave_unchanged')),
+    CHECK (status IN ('open','approved','dismissed','refined','stale')),
+    FOREIGN KEY (review_id) REFERENCES goal_relevance_review(id),
+    FOREIGN KEY (target_node_id) REFERENCES goal_node(id)
+);
+CREATE INDEX IF NOT EXISTS idx_goal_gardening_proposal_node
+ON goal_gardening_proposal(target_node_id,status,id DESC);
 """
 
 
@@ -214,6 +271,27 @@ class HarvestDraft:
     summary: str
     insights: list[dict] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class GardeningProposal:
+    proposal_type: str
+    target_node_id: int
+    payload: dict = field(default_factory=dict)
+    rationale: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RelevanceReview:
+    relevance_state: str
+    relevance_score: float
+    confidence: float
+    rationale: str
+    what_changed: str = ""
+    still_serves: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+    proposals: list[GardeningProposal] = field(default_factory=list)
 
 
 class GoalAgentStore:
@@ -571,6 +649,186 @@ class GoalAgentStore:
              hashlib.sha256(canonical.encode()).hexdigest(), target["updated_at"], int(proposal_id)))
         self.conn.commit()
         return self.get_proposal(proposal_id)
+
+    # --- Growth-tree relevance and gardening ---------------------------
+    def relevance_state(self, node_id: int) -> dict:
+        row = self.conn.execute(
+            "SELECT * FROM goal_relevance_state WHERE node_id=?", (int(node_id),)
+        ).fetchone()
+        if not row:
+            return {"node_id": int(node_id), "relevance_state": "unclear",
+                    "relevance_score": 0.0, "confidence": 0.0,
+                    "rationale": "", "what_changed": "", "evidence_refs": [],
+                    "last_review_id": None, "last_reviewed_at": None}
+        return {
+            "node_id": int(row["node_id"]),
+            "relevance_state": row["relevance_state"],
+            "relevance_score": float(row["relevance_score"]),
+            "confidence": float(row["confidence"]),
+            "rationale": crypto.dec(row["rationale"]) or "",
+            "what_changed": crypto.dec(row["what_changed"]) or "",
+            "evidence_refs": self._dec_json(row["evidence_refs"], []),
+            "last_review_id": row["last_review_id"],
+            "last_reviewed_at": row["last_reviewed_at"],
+        }
+
+    def relevance_reviews(self, node_id: int, limit: int = 12) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM goal_relevance_review WHERE node_id=? "
+            "ORDER BY id DESC LIMIT ?", (int(node_id), max(1, min(100, int(limit))))
+        ).fetchall()
+        out = []
+        for row in rows:
+            payload = self._dec_json(row["review_json"], {})
+            out.append({"id": int(row["id"]), "node_id": int(row["node_id"]),
+                        "relevance_state": row["relevance_state"],
+                        "relevance_score": float(row["relevance_score"]),
+                        "confidence": float(row["confidence"]), "payload": payload,
+                        "model": row["model"], "created_at": row["created_at"]})
+        return out
+
+    def _gardening_proposal(self, row) -> dict:
+        return {
+            "id": int(row["id"]), "review_id": int(row["review_id"]),
+            "target_node_id": int(row["target_node_id"]),
+            "type": row["proposal_type"],
+            "payload": self._dec_json(row["payload_json"], {}),
+            "rationale": crypto.dec(row["rationale"]) or "",
+            "evidence_refs": self._dec_json(row["evidence_refs"], []),
+            "status": row["status"], "target_version": row["target_version"],
+            "created_at": row["created_at"], "resolved_at": row["resolved_at"],
+        }
+
+    def gardening_proposals(self, node_id: int | None = None, *,
+                            status: str | None = "open") -> list[dict]:
+        where, args = [], []
+        if node_id is not None:
+            where.append("target_node_id=?"); args.append(int(node_id))
+        if status is not None:
+            where.append("status=?"); args.append(str(status))
+        sql = "SELECT * FROM goal_gardening_proposal" + (
+            " WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC"
+        return [self._gardening_proposal(row) for row in
+                self.conn.execute(sql, tuple(args)).fetchall()]
+
+    def get_gardening_proposal(self, proposal_id: int) -> dict:
+        row = self.conn.execute(
+            "SELECT * FROM goal_gardening_proposal WHERE id=?", (int(proposal_id),)
+        ).fetchone()
+        if not row:
+            raise ValueError("tree-gardening proposal not found")
+        return self._gardening_proposal(row)
+
+    def save_relevance_review(self, node_id: int, review: RelevanceReview,
+                              context_digest: str, model: str, *,
+                              allowed_evidence_refs: set[str]) -> dict:
+        if review.relevance_state not in RELEVANCE_STATES:
+            raise ValueError("invalid relevance state")
+        node = self.conn.execute(
+            "SELECT updated_at FROM goal_node WHERE id=?", (int(node_id),)
+        ).fetchone()
+        if not node:
+            raise ValueError("goal not found")
+        score = max(0.0, min(1.0, float(review.relevance_score)))
+        confidence = max(0.0, min(1.0, float(review.confidence)))
+        refs = [str(ref) for ref in review.evidence_refs
+                if str(ref) in allowed_evidence_refs][:12]
+        now = _now()
+        payload = {"rationale": str(review.rationale or "").strip(),
+                   "what_changed": str(review.what_changed or "").strip(),
+                   "still_serves": str(review.still_serves or "").strip(),
+                   "evidence_refs": refs}
+        cur = self.conn.execute(
+            "INSERT INTO goal_relevance_review "
+            "(node_id,relevance_state,relevance_score,confidence,review_json,"
+            "context_hash,model,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (int(node_id), review.relevance_state, score, confidence,
+             crypto.enc(_json(payload)), str(context_digest), str(model), now))
+        review_id = int(cur.lastrowid)
+        self.conn.execute(
+            "INSERT INTO goal_relevance_state "
+            "(node_id,relevance_state,relevance_score,confidence,rationale,what_changed,"
+            "evidence_refs,last_review_id,last_reviewed_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(node_id) DO UPDATE SET relevance_state=excluded.relevance_state,"
+            "relevance_score=excluded.relevance_score,confidence=excluded.confidence,"
+            "rationale=excluded.rationale,what_changed=excluded.what_changed,"
+            "evidence_refs=excluded.evidence_refs,last_review_id=excluded.last_review_id,"
+            "last_reviewed_at=excluded.last_reviewed_at,updated_at=excluded.updated_at",
+            (int(node_id), review.relevance_state, score, confidence,
+             crypto.enc(payload["rationale"]), crypto.enc(payload["what_changed"]),
+             crypto.enc(_json(refs)), review_id, now, now))
+        created = []
+        for proposal in review.proposals[:6]:
+            if proposal.proposal_type not in GARDENING_TYPES:
+                continue
+            if int(proposal.target_node_id) != int(node_id):
+                continue
+            proposal_refs = [str(ref) for ref in proposal.evidence_refs
+                             if str(ref) in allowed_evidence_refs][:12]
+            if proposal.proposal_type != "leave_unchanged" and not proposal_refs:
+                continue
+            data = dict(proposal.payload or {})
+            if proposal.proposal_type == "merge":
+                versions = {}
+                for raw_id in data.get("source_node_ids", [])[:6]:
+                    try:
+                        source_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    source = self.conn.execute(
+                        "SELECT updated_at FROM goal_node WHERE id=?", (source_id,)
+                    ).fetchone()
+                    if source:
+                        versions[str(source_id)] = source["updated_at"]
+                data["_source_versions"] = versions
+            canonical = _json({"review": review_id, "type": proposal.proposal_type,
+                               "target": int(node_id), "payload": data})
+            fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
+            if self.conn.execute(
+                "SELECT 1 FROM goal_gardening_proposal WHERE target_node_id=? "
+                "AND fingerprint=? AND status IN ('open','dismissed')",
+                (int(node_id), fingerprint)).fetchone():
+                continue
+            proposal_cur = self.conn.execute(
+                "INSERT INTO goal_gardening_proposal "
+                "(review_id,target_node_id,proposal_type,payload_json,rationale,"
+                "evidence_refs,fingerprint,target_version,status,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,'open',?)",
+                (review_id, int(node_id), proposal.proposal_type,
+                 crypto.enc(_json(data)), crypto.enc(proposal.rationale),
+                 crypto.enc(_json(proposal_refs)), fingerprint, node["updated_at"], now))
+            created.append(int(proposal_cur.lastrowid))
+        self.conn.commit()
+        return {"review_id": review_id, "proposals_created": len(created),
+                "proposal_ids": created, "state": self.relevance_state(node_id)}
+
+    def resolve_gardening_proposal(self, proposal_id: int, status: str) -> None:
+        if status not in {"approved", "dismissed", "stale"}:
+            raise ValueError("invalid gardening-proposal resolution")
+        self.conn.execute(
+            "UPDATE goal_gardening_proposal SET status=?,resolved_at=? "
+            "WHERE id=? AND status IN ('open','refined')",
+            (status, _now(), int(proposal_id)))
+        self.conn.commit()
+
+    def refine_gardening_proposal(self, proposal_id: int, payload: dict,
+                                  rationale: str = "") -> dict:
+        proposal = self.get_gardening_proposal(proposal_id)
+        if proposal["status"] not in {"open", "refined"}:
+            raise ValueError("only open gardening proposals can be refined")
+        target = self.conn.execute(
+            "SELECT updated_at FROM goal_node WHERE id=?",
+            (proposal["target_node_id"],)).fetchone()
+        canonical = _json({"review": proposal["review_id"], "type": proposal["type"],
+                           "target": proposal["target_node_id"], "payload": payload})
+        self.conn.execute(
+            "UPDATE goal_gardening_proposal SET payload_json=?,rationale=?,fingerprint=?,"
+            "target_version=?,status='refined' WHERE id=?",
+            (crypto.enc(_json(payload)), crypto.enc(rationale or proposal["rationale"]),
+             hashlib.sha256(canonical.encode()).hexdigest(), target["updated_at"],
+             int(proposal_id)))
+        self.conn.commit()
+        return self.get_gardening_proposal(proposal_id)
 
     def assessments(self, node_id: int, limit: int = 10) -> list[dict]:
         rows = self.conn.execute(
@@ -1048,6 +1306,35 @@ Return strict JSON: {"summary":str,"insights":[{"title":str,"detail":str,
 "target_node_id":int,"insight_indexes":[int],"reason":str}]}.
 """
 
+RELEVANCE_SYSTEM = """You are reviewing whether one node in a personal Growth
+tree still represents the user's current direction. This is gardening, not a
+performance judgment. A goal becoming outdated, completed in spirit, or no
+longer wanted is successful learning. Use only supplied context and evidence.
+
+Return strict JSON:
+{"relevance_state":"current"|"questionable"|"outgrown"|"unclear",
+"relevance_score":0-1,"confidence":0-1,"rationale":str,
+"what_changed":str,"still_serves":str,"evidence_refs":[str],
+"proposals":[{"type":"rewrite"|"split"|"merge"|"pause"|"archive"|
+"attach_evidence"|"leave_unchanged","target_node_id":int,"payload":object,
+"rationale":str,"evidence_refs":[str]}]}
+
+Payloads:
+- rewrite: {"title":str?,"description":str?}
+- split: {"parts":[{"title":str,"description":str}]}
+- merge: {"source_node_ids":[int],"title":str?,"description":str?}
+- pause/archive/leave_unchanged: {}
+- attach_evidence: {"source_kind":str,"source_id":str,"label":str}
+
+Rules:
+- Explain exactly which newer evidence made the node questionable.
+- Mutation proposals require at least one supplied evidence reference.
+- Preserve useful parts and successful history; do not equate inactivity with
+  irrelevance and do not recommend change merely because time passed.
+- Prefer leave_unchanged when evidence does not justify a structural change.
+- Never claim a proposal was applied. The user decides each mutation.
+"""
+
 
 def _extract_json(text: str) -> dict:
     match = re.search(r"\{.*\}", (text or "").strip(), re.DOTALL)
@@ -1137,6 +1424,42 @@ def parse_harvest(text: str, *, allow_routes: bool) -> HarvestDraft | None:
     return HarvestDraft(summary, insights[:12], routes[:12])
 
 
+def parse_relevance_review(text: str, node_id: int) -> RelevanceReview | None:
+    data = _extract_json(text)
+    state = str(data.get("relevance_state") or "unclear").strip().lower()
+    rationale = str(data.get("rationale") or "").strip()
+    if state not in RELEVANCE_STATES or not rationale:
+        return None
+    try:
+        score = max(0.0, min(1.0, float(data.get("relevance_score", 0))))
+        confidence = max(0.0, min(1.0, float(data.get("confidence", 0))))
+    except (TypeError, ValueError):
+        score, confidence = 0.0, 0.0
+    refs = [str(ref).strip() for ref in data.get("evidence_refs", [])
+            if str(ref).strip()][:12]
+    proposals = []
+    for raw in data.get("proposals", [])[:6] if isinstance(
+            data.get("proposals"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("type") or "").strip().lower()
+        if kind not in GARDENING_TYPES:
+            continue
+        try:
+            target = int(raw.get("target_node_id") or node_id)
+        except (TypeError, ValueError):
+            target = int(node_id)
+        proposal_refs = [str(ref).strip() for ref in raw.get("evidence_refs", [])
+                         if str(ref).strip()][:12]
+        proposals.append(GardeningProposal(
+            kind, target, dict(raw.get("payload") or {}),
+            str(raw.get("rationale") or "").strip(), proposal_refs))
+    return RelevanceReview(
+        state, score, confidence, rationale,
+        str(data.get("what_changed") or "").strip(),
+        str(data.get("still_serves") or "").strip(), refs, proposals)
+
+
 class StubGoalAgentModel:
     model_name = "stub-goal-agent"
 
@@ -1182,6 +1505,23 @@ class StubGoalAgentModel:
         label = {"umbrella": "Soul", "overgoal": "Root",
                  "subgoal": "Branch", "task": "Leaf"}.get(node["type"], "node")
         return f"This {label} defines what meaningful progress toward {node['title']} looks like."
+
+    def review_relevance(self, context: dict, evidence: list[dict]) -> RelevanceReview:
+        node = context["node"]
+        refs = [item["ref"] for item in evidence[:6]]
+        if evidence:
+            rationale = (f"New evidence exists for {node['title']}, but the offline review "
+                         "cannot justify changing the tree.")
+            changed = "New linked evidence should be reviewed before changing this node."
+        else:
+            rationale = (f"There is no newer evidence showing that {node['title']} should "
+                         "change.")
+            changed = ""
+        return RelevanceReview(
+            "current" if not evidence else "unclear", .75 if not evidence else .5,
+            .6, rationale, changed, node.get("description", ""), refs,
+            [GardeningProposal("leave_unchanged", node["id"], {},
+                               "Current evidence does not justify a mutation.", refs)])
 
 
 class ClaudeGoalAgentModel:
@@ -1246,6 +1586,14 @@ class ClaudeGoalAgentModel:
             raise ValueError("GoalAI returned no description")
         return description[:1200]
 
+    def review_relevance(self, context: dict, evidence: list[dict]) -> RelevanceReview:
+        prompt = "NODE CONTEXT:\n" + _json(context) + "\nNEWER EVIDENCE:\n" + _json(evidence)
+        result = parse_relevance_review(
+            self._call(RELEVANCE_SYSTEM, prompt), context["node"]["id"])
+        if not result:
+            raise ValueError("GoalAI returned an invalid relevance review")
+        return result
+
 
 def get_goal_agent_model(config, node_type: str, *, manual: bool = False):
     backend = (getattr(config, "goal_ai_backend", "") or
@@ -1296,6 +1644,315 @@ def generate_goal_description(config, node_id: int, *, model=None) -> str:
         return active.describe(context)
     finally:
         agents.close(); goals.close()
+
+
+_GOAL_STATUS_LABELS_KO = {"active": "활성", "paused": "일시정지", "archived": "보관됨",
+                          "completed": "완료"}
+
+
+def _goal_status_label(status: str) -> str:
+    if not lang_is_ko():
+        return status
+    return _GOAL_STATUS_LABELS_KO.get(status, status)
+
+
+def _goal_relevance_evidence(goals: GoalStore, agents: GoalAgentStore,
+                             node_id: int, since: str | None) -> list[dict]:
+    """Bounded local evidence that can justify reconsidering one tree node."""
+    node = goals.get(node_id)
+    if not node:
+        raise ValueError("goal not found")
+    evidence = [{"ref": f"node:{node_id}", "kind": "stored_node",
+                 "summary": f"{node['title']} [{_goal_status_label(node['status'])}]: "
+                            f"{node.get('description', '')}",
+                 "created_at": node["updated_at"], "is_new": False}]
+    cutoff = since or node["updated_at"]
+    for row in goals.conn.execute(
+        "SELECT id,source_kind,source_id,label,created_at FROM goal_evidence_link "
+        "WHERE goal_id=? AND created_at>? ORDER BY id DESC LIMIT 12",
+        (int(node_id), cutoff)).fetchall():
+        evidence.append({"ref": f"goal_evidence:{row['id']}",
+                         "kind": row["source_kind"],
+                         "summary": crypto.dec(row["label"]) or row["source_kind"],
+                         "created_at": row["created_at"], "is_new": True})
+    tables = {row["name"] for row in goals.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if {"curiosity_synthesis", "goal_curiosity_link", "curiosity"}.issubset(tables):
+        rows = goals.conn.execute(
+            "SELECT s.id,s.payload_json,s.created_at,c.label FROM goal_curiosity_link l "
+            "JOIN curiosity c ON c.id=l.curiosity_id "
+            "JOIN curiosity_synthesis s ON s.curiosity_id=c.id "
+            "WHERE l.goal_id=? AND s.status='approved' AND s.created_at>? "
+            "ORDER BY s.id DESC LIMIT 8", (int(node_id), cutoff)).fetchall()
+        for row in rows:
+            payload = agents._dec_json(row["payload_json"], {})
+            evidence.append({"ref": f"synthesis:{row['id']}", "kind": "investigation",
+                             "summary": (crypto.dec(row["label"]) or
+                                        lang_T("Investigation", "탐구")) +
+                             ": " + str(payload.get("interpretation") or "")[:600],
+                             "created_at": row["created_at"], "is_new": True})
+    for row in goals.conn.execute(
+        "SELECT id,title,status,updated_at FROM goal_node WHERE parent_id=? "
+        "AND updated_at>? ORDER BY updated_at DESC LIMIT 12",
+        (int(node_id), cutoff)).fetchall():
+        evidence.append({"ref": f"child:{row['id']}", "kind": "child_change",
+                         "summary": lang_T(
+                             f"{crypto.dec(row['title'])} is now {row['status']}",
+                             f"{crypto.dec(row['title'])}이(가) 이제 "
+                             f"{_goal_status_label(row['status'])} 상태예요"),
+                         "created_at": row["updated_at"], "is_new": True})
+    if "person_model_proposal" in tables:
+        from .inference import concept_similarity
+        rows = goals.conn.execute(
+            "SELECT id,payload_json,decided_at FROM person_model_proposal "
+            "WHERE status='approved' AND decided_at>? ORDER BY id DESC LIMIT 20",
+            (cutoff,)).fetchall()
+        node_text = f"{node['title']} {node.get('description', '')}"
+        for row in rows:
+            payload = agents._dec_json(row["payload_json"], {})
+            candidate_text = f"{payload.get('theme', '')} {payload.get('statement', '')}"
+            if concept_similarity(node_text, candidate_text) < .35:
+                continue
+            evidence.append({"ref": f"person_update:{row['id']}",
+                             "kind": "person_model_change",
+                             "summary": str(payload.get("statement") or "")[:600],
+                             "created_at": row["decided_at"], "is_new": True})
+    evidence.sort(key=lambda item: (item["is_new"], item.get("created_at") or ""),
+                  reverse=True)
+    return evidence[:24]
+
+
+def _last_goal_activity(goals: GoalStore, node_id: int) -> str | None:
+    """Latest user-meaningful activity in this node or its descendants."""
+    cte = ("WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL "
+           "SELECT g.id FROM goal_node g JOIN descendants d ON g.parent_id=d.id) ")
+    values = []
+    node_row = goals.conn.execute(
+        cte + "SELECT MAX(updated_at) value FROM goal_node "
+        "WHERE id IN (SELECT id FROM descendants)",
+        (int(node_id),)).fetchone()
+    if node_row and node_row["value"]:
+        values.append(node_row["value"])
+    evidence_row = goals.conn.execute(
+        cte + "SELECT MAX(created_at) value FROM goal_evidence_link "
+        "WHERE goal_id IN (SELECT id FROM descendants)", (int(node_id),)).fetchone()
+    if evidence_row and evidence_row["value"]:
+        values.append(evidence_row["value"])
+    tables = {row["name"] for row in goals.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "mastery_subject_event" in tables:
+        row = goals.conn.execute(
+            cte + "SELECT MAX(created_at) value FROM mastery_subject_event "
+            "WHERE subject_type='goal' AND subject_id IN (SELECT id FROM descendants)",
+            (int(node_id),)).fetchone()
+        if row and row["value"]:
+            values.append(row["value"])
+    if {"goal_curiosity_link", "curiosity_synthesis"}.issubset(tables):
+        row = goals.conn.execute(
+            cte + "SELECT MAX(s.created_at) value FROM goal_curiosity_link l "
+            "JOIN curiosity_synthesis s ON s.curiosity_id=l.curiosity_id "
+            "WHERE l.goal_id IN (SELECT id FROM descendants) AND s.status='approved'",
+            (int(node_id),)).fetchone()
+        if row and row["value"]:
+            values.append(row["value"])
+    return max(values) if values else None
+
+
+def goal_relevance_view(goals: GoalStore, agents: GoalAgentStore,
+                        node_id: int, *, stale_days: int = 30,
+                        now: datetime | None = None) -> dict:
+    node = goals.get(node_id)
+    if not node:
+        raise ValueError("goal not found")
+    state = agents.relevance_state(node_id)
+    evidence = _goal_relevance_evidence(
+        goals, agents, node_id, state.get("last_reviewed_at"))
+    new_evidence = [item for item in evidence if item["is_new"]]
+    now = now or datetime.now(timezone.utc)
+    quiet_cutoff = (now - timedelta(days=max(7, int(stale_days)))).isoformat()
+    last_activity = _last_goal_activity(goals, node_id)
+    quiet_due = (node["status"] == "active" and bool(last_activity) and
+                 last_activity <= quiet_cutoff and
+                 (not state.get("last_reviewed_at") or
+                  state["last_reviewed_at"] <= quiet_cutoff))
+    evidence_due = (node["status"] != "archived" and
+                    bool(state.get("last_reviewed_at")) and bool(new_evidence))
+    due_reason = ""
+    due_kind = None
+    if evidence_due:
+        due_kind = "new_evidence"
+        due_reason = f"{len(new_evidence)} newer evidence item(s) may affect this node."
+    elif quiet_due:
+        due_kind = "quiet"
+        due_reason = (f"This active goal has had no meaningful movement for about "
+                      f"{max(7, int(stale_days))} days. It may still matter; Faerie is checking gently.")
+    return {"state": state, "reviews": agents.relevance_reviews(node_id, 6),
+            "proposals": agents.gardening_proposals(node_id),
+            "due": evidence_due or quiet_due, "due_kind": due_kind,
+            "new_evidence": new_evidence,
+            "last_meaningful_activity": last_activity, "due_reason": due_reason}
+
+
+def relevance_due_nodes(goals: GoalStore, agents: GoalAgentStore, *,
+                        stale_days: int = 30,
+                        now: datetime | None = None) -> list[dict]:
+    rows = goals.conn.execute(
+        "SELECT id FROM goal_node WHERE status IN ('active','paused') ORDER BY id"
+    ).fetchall()
+    due = []
+    for row in rows:
+        view = goal_relevance_view(
+            goals, agents, int(row["id"]), stale_days=stale_days, now=now)
+        if view["due"]:
+            due.append({"node_id": int(row["id"]),
+                        "new_evidence": len(view["new_evidence"]),
+                        "reason": view["due_reason"], "kind": view["due_kind"]})
+    return due
+
+
+def review_goal_relevance(config, node_id: int, *, model=None) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path, ensure=False)
+    try:
+        node = goals.get(node_id)
+        if not node:
+            raise ValueError("goal not found")
+        context = build_agent_context(
+            goals, agents, node_id,
+            max_chars=int(getattr(config, "goal_ai_context_max_chars", 14000)))
+        state = agents.relevance_state(node_id)
+        evidence = _goal_relevance_evidence(
+            goals, agents, node_id, state.get("last_reviewed_at"))
+        active = model or get_goal_agent_model(config, node["type"], manual=True)
+        digest = hashlib.sha256(_json({"context": context, "evidence": evidence}).encode()).hexdigest()
+        goals.conn.commit(); agents.conn.commit()
+        review = active.review_relevance(context, evidence)
+        saved = agents.save_relevance_review(
+            node_id, review, digest, active.model_name,
+            allowed_evidence_refs={item["ref"] for item in evidence})
+        return {"ok": True, **saved,
+                "view": goal_relevance_view(goals, agents, node_id)}
+    finally:
+        agents.close(); goals.close()
+
+
+def _validate_merge_sources(goals: GoalStore, target: dict, data: dict) -> list[dict]:
+    if target["type"] == "umbrella":
+        raise ValueError("the Soul cannot be merged")
+    sources = []
+    versions = data.get("_source_versions") if isinstance(
+        data.get("_source_versions"), dict) else {}
+    for raw_id in data.get("source_node_ids", [])[:6]:
+        source_id = int(raw_id)
+        if source_id == target["id"] or any(item["id"] == source_id for item in sources):
+            continue
+        source = goals.get(source_id)
+        if not source or source["status"] == "archived":
+            raise ValueError("merge source is missing or archived")
+        if source["type"] != target["type"] or source["parent_id"] != target["parent_id"]:
+            raise ValueError("merge sources must be sibling nodes of the same type")
+        if versions.get(str(source_id)) != source["updated_at"]:
+            raise ValueError("a merge source changed since this proposal was created")
+        sources.append(source)
+    if not sources:
+        raise ValueError("merge proposal has no valid source nodes")
+    return sources
+
+
+def decide_gardening_proposal(config, proposal_id: int, action: str, *,
+                              payload: dict | None = None,
+                              rationale: str = "") -> dict:
+    agents = GoalAgentStore(config.memory_db_path, ensure=False)
+    goals = GoalStore(config.memory_db_path)
+    try:
+        proposal = agents.get_gardening_proposal(proposal_id)
+        if proposal["status"] not in {"open", "refined"}:
+            raise ValueError("gardening proposal is no longer open")
+        if action == "dismiss":
+            agents.resolve_gardening_proposal(proposal_id, "dismissed")
+            return {"ok": True, "status": "dismissed"}
+        if action == "refine":
+            revised = agents.refine_gardening_proposal(
+                proposal_id, dict(payload or {}), rationale)
+            return {"ok": True, "status": "refined", "proposal": revised}
+        if action != "approve":
+            raise ValueError("unknown gardening-proposal action")
+        if payload is not None:
+            proposal = agents.refine_gardening_proposal(
+                proposal_id, dict(payload), rationale)
+        target = goals.get(proposal["target_node_id"])
+        if not target or target["updated_at"] != proposal["target_version"]:
+            agents.resolve_gardening_proposal(proposal_id, "stale")
+            raise ValueError("goal changed since this gardening proposal was created")
+        kind, data = proposal["type"], proposal["payload"]
+        if kind == "rewrite":
+            changes = {key: data[key] for key in ("title", "description")
+                       if key in data and str(data[key]).strip()}
+            if not changes:
+                raise ValueError("rewrite proposal has no wording")
+            goals.update(target["id"], **changes)
+        elif kind == "split":
+            if target["type"] == "umbrella":
+                raise ValueError("the Soul cannot be split")
+            parts = [part for part in data.get("parts", []) if isinstance(part, dict)
+                     and str(part.get("title") or "").strip()][:4]
+            if len(parts) < 2:
+                raise ValueError("split proposal requires at least two parts")
+            goals.update(target["id"], title=str(parts[0]["title"]).strip(),
+                         description=str(parts[0].get("description") or ""))
+            for part in parts[1:]:
+                goals.create(target["type"], str(part["title"]).strip(),
+                             parent_id=target["parent_id"],
+                             description=str(part.get("description") or ""))
+        elif kind == "merge":
+            sources = _validate_merge_sources(goals, target, data)
+            for source in sources:
+                child_ids = [int(row["id"]) for row in goals.conn.execute(
+                    "SELECT id FROM goal_node WHERE parent_id=? ORDER BY position,id",
+                    (source["id"],)).fetchall()]
+                for child_id in child_ids:
+                    goals.move(child_id, target["id"])
+                goals.conn.execute(
+                    "INSERT OR IGNORE INTO goal_curiosity_link "
+                    "SELECT ?,curiosity_id,created_at FROM goal_curiosity_link WHERE goal_id=?",
+                    (target["id"], source["id"]))
+                for ev in goals.conn.execute(
+                    "SELECT source_kind,source_id,label,created_at FROM goal_evidence_link "
+                    "WHERE goal_id=?", (source["id"],)).fetchall():
+                    goals.conn.execute(
+                        "INSERT OR IGNORE INTO goal_evidence_link "
+                        "(goal_id,source_kind,source_id,label,created_at) VALUES (?,?,?,?,?)",
+                        (target["id"], ev["source_kind"], ev["source_id"],
+                         ev["label"], ev["created_at"]))
+                goals.conn.commit()
+                goals.update(source["id"], status="archived")
+            changes = {key: data[key] for key in ("title", "description")
+                       if key in data and str(data[key]).strip()}
+            if changes:
+                goals.update(target["id"], **changes)
+        elif kind == "pause":
+            goals.update(target["id"], status="paused")
+        elif kind == "archive":
+            goals.delete_subtree(target["id"])
+        elif kind == "attach_evidence":
+            source_kind = str(data.get("source_kind") or "").strip()
+            source_id = str(data.get("source_id") or "").strip()
+            if not source_kind or not source_id:
+                raise ValueError("evidence attachment requires a source")
+            goals.add_evidence(target["id"], source_kind, source_id,
+                               str(data.get("label") or proposal["rationale"]))
+        elif kind == "leave_unchanged":
+            pass
+        agents.conn.execute(
+            "UPDATE goal_relevance_state SET last_reviewed_at=?,updated_at=? WHERE node_id=?",
+            (_now(), _now(), int(target["id"])))
+        agents.conn.commit()
+        agents.resolve_gardening_proposal(proposal_id, "approved")
+        agents.mark_dirty(target["id"], reason="tree gardening approved")
+        return {"ok": True, "status": "approved", "tree": goals.tree(),
+                "proposal_type": kind}
+    finally:
+        goals.close(); agents.close()
 
 
 def run_goal_agent(config, node_id: int, *, model=None, manual: bool = False) -> dict:

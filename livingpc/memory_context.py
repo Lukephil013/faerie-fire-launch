@@ -6,7 +6,8 @@ import re
 from dataclasses import dataclass
 
 
-_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_'-]*")
+_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+_CJK_RUN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\uac00-\ud7a3]+")
 _STOPWORDS = {
     "about", "after", "again", "also", "and", "are", "because", "been",
     "before", "being", "but", "can", "could", "did", "does", "for", "from",
@@ -37,11 +38,15 @@ def estimate_tokens(text_or_chars: str | int) -> int:
 
 
 def _tokens(text: str) -> set[str]:
-    return {
+    lowered = (text or "").lower()
+    tokens = {
         token.lower()
-        for token in _WORD.findall(text or "")
+        for token in _WORD.findall(lowered)
         if len(token) >= 3 and token.lower() not in _STOPWORDS
     }
+    for run in _CJK_RUN_RE.findall(lowered):
+        tokens.update(run[i:i + 2] for i in range(max(0, len(run) - 1)))
+    return tokens
 
 
 def _clean(text, limit: int) -> str:

@@ -109,7 +109,12 @@ ON core_profile_fact(section, attribute) WHERE status='active';
 """
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+# `\w` is Unicode-aware in Python.  Keeping the tokenizer local and
+# deterministic matters because it powers duplicate detection in several
+# privacy-sensitive paths; an ASCII-only expression made Korean memories look
+# unrelated to one another.
+_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_CJK_RUN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\uac00-\ud7a3]+")
 _STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
     "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was",
@@ -119,10 +124,16 @@ _DIRECTED_RELATIONS = {"supports", "contradicts", "causes", "part_of"}
 
 
 def _tokens(value: object) -> set[str]:
-    return {
-        token for token in _TOKEN_RE.findall(str(value or "").lower())
+    text = str(value or "").lower()
+    tokens = {
+        token for token in _TOKEN_RE.findall(text)
         if len(token) > 1 and token not in _STOP_WORDS
     }
+    # Korean/CJK text often has little or no whitespace.  Add character
+    # bigrams so related phrases still share stable local relevance signals.
+    for run in _CJK_RUN_RE.findall(text):
+        tokens.update(run[i:i + 2] for i in range(max(0, len(run) - 1)))
+    return tokens
 
 
 def _jaccard(left: set[str], right: set[str]) -> float:
@@ -325,16 +336,24 @@ class MemoryStore:
     def upsert_core_profile_fact(self, section: str, attribute: str, value: str, *,
                                  priority: int = 50, source_kind: str = "manual",
                                  source_id: str | None = None,
+                                 preserve_newlines: bool = False,
                                  commit: bool = True) -> int:
         """Store one always-relevant self fact.
 
         Core profile facts are prompt context, not fuzzy retrieval candidates:
         they represent stable basics/constraints the user explicitly wants
-        Faerie to consider broadly.
+        Faerie to consider broadly. Long-form callers may preserve intentional
+        line breaks while horizontal whitespace remains normalized.
         """
         section = " ".join(str(section or "").split())
         attribute = " ".join(str(attribute or "").split())
-        value = " ".join(str(value or "").split())
+        raw_value = str(value or "")
+        if preserve_newlines:
+            raw_value = raw_value.replace("\r\n", "\n").replace("\r", "\n")
+            value = "\n".join(" ".join(line.split())
+                              for line in raw_value.split("\n")).strip()
+        else:
+            value = " ".join(raw_value.split())
         if not section or not attribute:
             raise ValueError("section and attribute are required")
         if not value:
@@ -416,7 +435,7 @@ class MemoryStore:
     def retire_core_profile_facts_by_source(self, source_kind: str, *,
                                             commit: bool = True) -> int:
         """Bulk-retire every active fact from one source (e.g. resetting Soul
-        Calibration so all 13 questions resurface as unanswered)."""
+        Calibration so every question resurfaces as unanswered)."""
         cur = self.conn.execute(
             "UPDATE core_profile_fact SET status='retired',updated_at=? "
             "WHERE status='active' AND source_kind=?",

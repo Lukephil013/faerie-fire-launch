@@ -1,0 +1,142 @@
+"""Encrypted document context for Soul Calibration and Investigations."""
+import os
+import sqlite3
+import tempfile
+
+from livingpc import crypto, soul_calibration
+from livingpc.companion.brain import Companion, StubChat
+from livingpc.config import Config
+from livingpc.context_attachment import ContextAttachmentStore, extract_document
+from livingpc.curiosity import CuriosityStore, answer_item, _build_context
+from livingpc.inference import InferenceStore
+from livingpc.memory import MemoryStore
+from gui import GuiApi
+
+
+class ResolveCapture:
+    def __init__(self):
+        self.answer = ""
+
+    def resolve(self, directive, question, answer):
+        self.answer = answer
+        return {"attribute": "note", "value": answer}
+
+
+def config(directory):
+    return Config(db_path=os.path.join(directory, "events.db"),
+                  memory_db_path=os.path.join(directory, "memory.db"),
+                  inference_backend="stub", companion_backend="stub")
+
+
+def test_attachment_text_and_filename_are_encrypted_at_rest(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIVINGPC_DB_KEY", "context-attachment-test-key")
+    monkeypatch.setenv("LIVINGPC_SALT_FILE", str(tmp_path / "salt"))
+    store = ContextAttachmentStore(str(tmp_path / "memory.db"))
+    try:
+        saved = store.add_text("curiosity", 7, "private-journal.txt",
+                               "A private journal passage about an old fear.")
+        assert store.list("curiosity", 7)[0]["name"] == "private-journal.txt"
+        raw = store.conn.execute(
+            "SELECT filename,content_text FROM context_attachment WHERE id=?",
+            (saved["id"],)).fetchone()
+        assert "private-journal" not in raw["filename"]
+        assert "old fear" not in raw["content_text"]
+    finally:
+        store.close()
+
+
+def test_owner_scope_deduplication_relevant_excerpt_and_hard_remove(tmp_path):
+    store = ContextAttachmentStore(str(tmp_path / "memory.db"))
+    try:
+        text = "Opening background.\n\nMusic practice felt joyful.\n\nWork handoffs caused an energy crash."
+        first = store.add_text("curiosity", 1, "journal.md", text)
+        again = store.add_text("curiosity", 1, "renamed.md", text)
+        store.add_text("curiosity", 2, "other.txt", "Unrelated private context")
+        assert first["id"] == again["id"] and again["deduped"]
+        block = store.context_block([("curiosity", 1)], query="energy handoff", max_chars=200)
+        assert "energy crash" in block and "Unrelated" not in block
+        assert store.remove(first["id"], "curiosity", 1)
+        assert store.list("curiosity", 1) == []
+    finally:
+        store.close()
+
+
+def test_supported_text_document_is_extracted_locally(tmp_path):
+    path = tmp_path / "past.md"
+    path.write_text("# Earlier journal\n\nWhat I remember.", encoding="utf-8")
+    extracted = extract_document(str(path))
+    assert extracted["name"] == "past.md"
+    assert "Earlier journal" in extracted["text"]
+
+
+def test_calibration_status_exposes_metadata_and_reset_deletes_documents(tmp_path):
+    cfg = config(str(tmp_path))
+    field = soul_calibration.FIELDS[0]
+    key = soul_calibration.field_key(field)
+    documents = ContextAttachmentStore(cfg.memory_db_path)
+    documents.add_text("soul_calibration", key, "history.docx", "Past journal context")
+    documents.close()
+    companion = Companion(cfg=cfg, chat=StubChat())
+    try:
+        status = companion.calibration_status()
+        first = status["sections"][0]["attributes"][0]
+        assert first["attachment_key"] == key
+        assert first["attachments"][0]["name"] == "history.docx"
+        companion.calibration_reset()
+    finally:
+        companion.close()
+    documents = ContextAttachmentStore(cfg.memory_db_path)
+    try:
+        assert documents.list("soul_calibration", key) == []
+    finally:
+        documents.close()
+
+
+def test_investigation_and_question_documents_reach_prompts_but_not_exact_memory(tmp_path):
+    cfg = config(str(tmp_path))
+    mem = MemoryStore(cfg.memory_db_path)
+    inf = InferenceStore(cfg.memory_db_path)
+    curiosities = CuriosityStore(cfg.memory_db_path)
+    documents = ContextAttachmentStore(cfg.memory_db_path)
+    try:
+        cid = curiosities.add_curiosity("Understand energy crashes", "Energy")
+        item_id = curiosities.add_item(
+            cid, "question", "What happens before the crash?", confidence=.9)
+        documents.add_text("curiosity", cid, "past-journal.md", "Meals were often delayed.")
+        documents.add_text("curiosity_item", item_id, "today.txt", "Today the handoff began at noon.")
+        context = _build_context(mem, inf, curiosities, cid)
+        assert "Meals were often delayed" in context.attachment_block
+        assert "handoff began at noon" in context.attachment_block
+        model = ResolveCapture()
+        result = answer_item(mem, curiosities, item_id,
+                             "Please see the attached documents; today I felt steadier.", model)
+        assert "past-journal.md" in model.answer and "today.txt" in model.answer
+        fact = mem.get(result["resulting_memory_id"])
+        assert fact["value"] == "Please see the attached documents; today I felt steadier."
+        assert "Meals were often delayed" not in fact["value"]
+    finally:
+        documents.close(); curiosities.close(); inf.close(); mem.close()
+
+
+def test_gui_picker_persists_and_removes_investigation_document(tmp_path):
+    cfg = config(str(tmp_path))
+    curiosities = CuriosityStore(cfg.memory_db_path)
+    cid = curiosities.add_curiosity("Understand transitions", "Transitions")
+    curiosities.close()
+    document = tmp_path / "transition-notes.txt"
+    document.write_text("Handoffs feel easier after a clear ending.", encoding="utf-8")
+
+    class Window:
+        def create_file_dialog(self, *_args, **_kwargs):
+            return [str(document)]
+
+    api = GuiApi(cfg=cfg)
+    api._window = Window()
+    added = api.context_attachment_add("curiosity", cid)
+    assert added["ok"] and added["attachment"]["name"] == document.name
+    state = api.curiosity_state()
+    row = next(item for item in state["curiosities"] if item["id"] == cid)
+    assert row["context_attachments"][0]["id"] == added["attachment"]["id"]
+    removed = api.context_attachment_remove(
+        added["attachment"]["id"], "curiosity", cid)
+    assert removed == {"ok": True, "removed": True}

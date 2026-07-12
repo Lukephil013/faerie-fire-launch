@@ -752,7 +752,7 @@ class TestUiPages(unittest.TestCase):
         self.assertIn("self-database-rescue", html)
         self.assertIn("database_unlock", html)
         self.assertIn("cur-quick-answer", html)
-        self.assertIn("reflection_gate", html)
+        self.assertIn("curiosity_answer(item.id, text, rating?parseFloat(rating.value):null,", html)
         self.assertIn("withDbRetry", html)
         self.assertIn("bindConstellationPanZoom", html)
 

@@ -199,6 +199,15 @@ navy radial gradient, glassy cards, cyan glow. Two views:
   Preview (dry run) / Import buttons that run the full chronological importer
   in-window. Nothing leaves the machine until you click import.
 - Architecture: `gui.py` is now just the js_api bridge (`GuiApi`). Bridge calls
+- **Owner-scoped document context**: Soul Calibration questions and
+  Investigations can attach PDF, DOCX, Markdown, text, CSV, TSV, JSON, and log
+  files. Text is extracted locally, encrypted in `memory.db`, and scoped to the
+  exact calibration question, Investigation, or Investigation question. The raw
+  file is not copied. Attachment chips can insert a filename reference into the
+  answer box; removing a chip hard-deletes its extracted context. Long files are
+  locally excerpted by relevance before model use, while the user's typed answer
+  remains the exact text saved to memory.
+- Architecture: `gui.py` is now just the js_api bridge (`GuiApi`). Bridge calls
   open their own stores per call (pywebview invokes js_api on worker threads;
   SQLite is thread-bound) and long calls block + return — Python never pushes
   into the page from a thread. Tkinter is gone.

@@ -11,9 +11,12 @@ from livingpc import crypto
 from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goal_ai import (
-    AgentProposal, AgentReport, ChatResult, GoalAgentStore, StubGoalAgentModel,
+    AgentProposal, AgentReport, ChatResult, GardeningProposal, GoalAgentStore,
+    RelevanceReview, StubGoalAgentModel,
     build_agent_context, chat_with_goal_agent, decide_proposal, due_goal_nodes,
-    generate_goal_description, parse_report, start_goal_harvest, summarize_goal_answer,
+    decide_gardening_proposal, generate_goal_description, goal_relevance_view,
+    parse_report, relevance_due_nodes, review_goal_relevance, start_goal_harvest,
+    summarize_goal_answer,
 )
 from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
@@ -51,6 +54,33 @@ def world():
             "task_a": task_a, "over_b": over_b, "task_b": task_b,
         }
         agents.close(); goals.close(); curiosities.close()
+
+
+class StaticRelevanceModel:
+    model_name = "static-relevance"
+
+    def __init__(self, review):
+        self.review = review
+        self.context = None
+        self.evidence = None
+
+    def review_relevance(self, context, evidence):
+        self.context = context
+        self.evidence = evidence
+        return self.review
+
+
+def gardening_review(node_id, proposal_type, payload=None, *, evidence_refs=None,
+                     state="questionable"):
+    refs = list(evidence_refs or [f"node:{node_id}"])
+    return RelevanceReview(
+        state, .42 if state != "current" else .9, .84,
+        "New evidence suggests this node deserves a deliberate relevance check.",
+        "The current framing may no longer match what is being learned.",
+        "The original direction still contains something useful.", refs,
+        [GardeningProposal(
+            proposal_type, node_id, dict(payload or {}),
+            "This is a proposal only; the user should decide.", refs)])
 
 
 def test_task_context_has_ancestor_intent_but_no_siblings(world):
@@ -283,6 +313,168 @@ def test_approve_proposal_applies_only_after_user_action(world):
     assert result["ok"]
     sub = next(x for x in goals.tree()["children"] if x["id"] == ids["over_a"])["children"][0]
     assert any(c["title"] == "Review examples" for c in sub["children"])
+
+
+def test_relevance_review_is_versioned_and_tree_mutation_needs_second_approval(world):
+    cfg, goals, agents, _, ids = world
+    original = goals.get(ids["sub_a"])
+    model = StaticRelevanceModel(gardening_review(
+        ids["sub_a"], "rewrite",
+        {"title": "Use grammar in conversation",
+         "description": "Practice grammar through real exchanges."}))
+    result = review_goal_relevance(cfg, ids["sub_a"], model=model)
+    assert result["proposals_created"] == 1
+    assert goals.get(ids["sub_a"])["title"] == original["title"]
+    view = goal_relevance_view(goals, agents, ids["sub_a"])
+    assert view["state"]["relevance_state"] == "questionable"
+    assert len(view["reviews"]) == 1
+    proposal = view["proposals"][0]
+    assert proposal["payload"]["title"] == "Use grammar in conversation"
+
+    applied = decide_gardening_proposal(cfg, proposal["id"], "approve")
+    assert applied["ok"]
+    assert goals.get(ids["sub_a"])["title"] == "Use grammar in conversation"
+    history = agents.gardening_proposals(ids["sub_a"], status=None)
+    assert history[0]["status"] == "approved"
+    assert original["title"] == "Grammar"
+
+
+def test_gardening_discards_mutation_with_fabricated_evidence_reference(world):
+    cfg, goals, agents, _, ids = world
+    review = gardening_review(
+        ids["task_a"], "archive", {}, evidence_refs=["invented:999"],
+        state="outgrown")
+    result = review_goal_relevance(
+        cfg, ids["task_a"], model=StaticRelevanceModel(review))
+    assert result["proposals_created"] == 0
+    assert goals.get(ids["task_a"])["status"] == "active"
+    assert agents.relevance_reviews(ids["task_a"])[0]["relevance_state"] == "outgrown"
+
+
+def test_stale_gardening_proposal_cannot_overwrite_newer_user_change(world):
+    cfg, goals, agents, _, ids = world
+    review = gardening_review(
+        ids["sub_a"], "rewrite", {"title": "Model wording"})
+    result = review_goal_relevance(cfg, ids["sub_a"], model=StaticRelevanceModel(review))
+    proposal_id = result["proposal_ids"][0]
+    goals.update(ids["sub_a"], title="User changed this first")
+    with pytest.raises(ValueError, match="changed since"):
+        decide_gardening_proposal(cfg, proposal_id, "approve")
+    assert goals.get(ids["sub_a"])["title"] == "User changed this first"
+    assert agents.get_gardening_proposal(proposal_id)["status"] == "stale"
+
+
+def test_relevance_becomes_due_only_after_new_evidence(world):
+    cfg, goals, agents, _, ids = world
+    first = review_goal_relevance(cfg, ids["sub_a"], model=StubGoalAgentModel())
+    assert first["view"]["due"] is False
+    assert ids["sub_a"] not in {item["node_id"] for item in relevance_due_nodes(goals, agents)}
+    goals.add_evidence(ids["sub_a"], "manual_note", "new-1",
+                       "I no longer want grammar drills by themselves.")
+    due = goal_relevance_view(goals, agents, ids["sub_a"])
+    assert due["due"] is True
+    assert due["new_evidence"][0]["ref"].startswith("goal_evidence:")
+    assert "newer evidence" in due["due_reason"]
+    reviewed = review_goal_relevance(cfg, ids["sub_a"], model=StubGoalAgentModel())
+    assert reviewed["view"]["due"] is False
+
+
+def test_active_goal_gets_a_gentle_monthly_check_after_no_meaningful_movement(world):
+    _, goals, agents, _, ids = world
+    now = datetime(2026, 7, 11, tzinfo=timezone.utc)
+    old = (now - timedelta(days=40)).isoformat()
+    goals.conn.execute(
+        "UPDATE goal_node SET created_at=?,updated_at=? WHERE id IN (?,?)",
+        (old, old, ids["sub_a"], ids["task_a"]))
+    goals.conn.commit()
+    view = goal_relevance_view(
+        goals, agents, ids["sub_a"], stale_days=30, now=now)
+    assert view["due"] is True and view["due_kind"] == "quiet"
+    assert "may still matter" in view["due_reason"]
+
+    goals.conn.execute(
+        "UPDATE goal_node SET updated_at=? WHERE id=?",
+        ((now - timedelta(days=2)).isoformat(), ids["task_a"]))
+    goals.conn.commit()
+    assert goal_relevance_view(
+        goals, agents, ids["sub_a"], stale_days=30, now=now)["due"] is False
+
+    goals.conn.execute(
+        "UPDATE goal_node SET status='paused',updated_at=? WHERE id=?",
+        (old, ids["sub_a"]))
+    goals.conn.execute("UPDATE goal_node SET updated_at=? WHERE id=?", (old, ids["task_a"]))
+    goals.conn.commit()
+    assert goal_relevance_view(
+        goals, agents, ids["sub_a"], stale_days=30, now=now)["due"] is False
+
+
+def test_split_proposal_rewrites_first_part_and_creates_sibling(world):
+    cfg, goals, agents, _, ids = world
+    review = gardening_review(ids["sub_a"], "split", {"parts": [
+        {"title": "Grammar recognition", "description": "Notice patterns."},
+        {"title": "Grammar production", "description": "Use patterns aloud."},
+    ]})
+    result = review_goal_relevance(cfg, ids["sub_a"], model=StaticRelevanceModel(review))
+    proposal_id = result["proposal_ids"][0]
+    assert not any(node["title"] == "Grammar production" for node in goals.catalog())
+    decide_gardening_proposal(cfg, proposal_id, "approve")
+    assert goals.get(ids["sub_a"])["title"] == "Grammar recognition"
+    assert any(node["title"] == "Grammar production" for node in goals.catalog())
+    assert goal_relevance_view(goals, agents, ids["sub_a"])["due"] is False
+
+
+def test_merge_moves_children_and_archives_source_without_deleting_history(world):
+    cfg, goals, _, _, ids = world
+    review = gardening_review(ids["over_a"], "merge", {
+        "source_node_ids": [ids["over_b"]],
+        "title": "Language and embodied confidence",
+        "description": "One current direction that absorbs both roots.",
+    })
+    result = review_goal_relevance(cfg, ids["over_a"], model=StaticRelevanceModel(review))
+    proposal_id = result["proposal_ids"][0]
+    assert goals.get(ids["over_b"])["status"] == "active"
+    decide_gardening_proposal(cfg, proposal_id, "approve")
+    assert goals.get(ids["over_b"])["status"] == "archived"
+    assert goals.get(ids["task_b"])["parent_id"] == ids["over_a"]
+    assert goals.get(ids["over_b"])["title"] == "Fitness"
+    assert goals.get(ids["over_a"])["title"] == "Language and embodied confidence"
+
+
+@pytest.mark.parametrize("proposal_type,expected_status", [
+    ("pause", "paused"), ("archive", "archived")])
+def test_pause_and_archive_are_inert_until_gardening_approval(
+        world, proposal_type, expected_status):
+    cfg, goals, _, _, ids = world
+    node_id = goals.create("task", f"Maybe {proposal_type}", parent_id=ids["sub_a"])
+    review = gardening_review(node_id, proposal_type, {},
+                              state="outgrown" if proposal_type == "archive" else "questionable")
+    result = review_goal_relevance(cfg, node_id, model=StaticRelevanceModel(review))
+    assert goals.get(node_id)["status"] == "active"
+    decide_gardening_proposal(cfg, result["proposal_ids"][0], "approve")
+    assert goals.get(node_id)["status"] == expected_status
+
+
+def test_attach_evidence_and_leave_unchanged_are_reviewable_proposals(world):
+    cfg, goals, agents, _, ids = world
+    attach = gardening_review(ids["sub_a"], "attach_evidence", {
+        "source_kind": "curiosity_synthesis", "source_id": "44",
+        "label": "Approved synthesis about conversational practice",
+    })
+    result = review_goal_relevance(cfg, ids["sub_a"], model=StaticRelevanceModel(attach))
+    decide_gardening_proposal(cfg, result["proposal_ids"][0], "approve")
+    linked = goals.conn.execute(
+        "SELECT source_kind,source_id FROM goal_evidence_link WHERE goal_id=?",
+        (ids["sub_a"],)).fetchall()
+    assert any(row["source_kind"] == "curiosity_synthesis" and row["source_id"] == "44"
+               for row in linked)
+
+    unchanged = gardening_review(ids["sub_a"], "leave_unchanged", {}, state="current")
+    result = review_goal_relevance(cfg, ids["sub_a"], model=StaticRelevanceModel(unchanged))
+    before = goals.get(ids["sub_a"])
+    decide_gardening_proposal(cfg, result["proposal_ids"][0], "approve")
+    after = goals.get(ids["sub_a"])
+    assert before["title"] == after["title"] and before["status"] == after["status"]
+    assert agents.gardening_proposals(ids["sub_a"], status=None)[0]["status"] == "approved"
 
 
 def test_medium_priority_and_soul_names_are_normalized_before_commit(world):
@@ -530,6 +722,24 @@ def test_goal_ai_bridge_round_trip(world):
     assert chatted["ok"]
 
 
+def test_tree_gardening_bridge_round_trip(world):
+    cfg, _, _, _, ids = world
+    api = GuiApi(cfg)
+    state = api.goal_state()
+    node = next(child for root in state["tree"]["children"]
+                for child in root.get("children", []) if child["id"] == ids["sub_a"])
+    assert "relevance" in node
+    reviewed = api.goal_relevance_review(ids["sub_a"])
+    assert reviewed["ok"]
+    state = api.goal_state()
+    node = next(child for root in state["tree"]["children"]
+                for child in root.get("children", []) if child["id"] == ids["sub_a"])
+    proposals = node["relevance"]["proposals"]
+    assert len(proposals) == 1 and proposals[0]["type"] == "leave_unchanged"
+    decided = api.goal_gardening_proposal(proposals[0]["id"], "approve")
+    assert decided["ok"] and decided["proposal_type"] == "leave_unchanged"
+
+
 def test_goal_ai_state_read_does_not_require_or_create_agent_row():
     with tempfile.TemporaryDirectory() as folder:
         cfg = Config(memory_db_path=os.path.join(folder, "memory.db"),
@@ -571,6 +781,14 @@ def test_sensitive_goal_ai_fields_are_encrypted(tmp_path, monkeypatch):
     agents.add_memory_candidate(node, {
         "category": "Private category", "attribute": "Private attribute",
         "value": "Private accomplishment", "source_text": "Private source"})
+    agents.save_relevance_review(
+        node, RelevanceReview(
+            "questionable", .4, .8, "Private relevance rationale",
+            "Private change", "Private useful remainder", [f"node:{node}"],
+            [GardeningProposal(
+                "rewrite", node, {"title": "Private rewritten goal"},
+                "Private proposal rationale", [f"node:{node}"])]),
+        "private-hash", "stub", allowed_evidence_refs={f"node:{node}"})
     raw_state = agents.conn.execute(
         "SELECT brief,evidence_summary,blockers,next_focus FROM goal_agent_state WHERE node_id=?",
         (node,)).fetchone()
@@ -580,8 +798,17 @@ def test_sensitive_goal_ai_fields_are_encrypted(tmp_path, monkeypatch):
         "SELECT content FROM goal_agent_message WHERE node_id=?", (node,)).fetchone()[0]
     raw_candidate = agents.conn.execute(
         "SELECT value FROM goal_agent_memory_candidate WHERE node_id=?", (node,)).fetchone()[0]
+    raw_relevance = agents.conn.execute(
+        "SELECT rationale,what_changed,evidence_refs FROM goal_relevance_state WHERE node_id=?",
+        (node,)).fetchone()
+    raw_review = agents.conn.execute(
+        "SELECT review_json FROM goal_relevance_review WHERE node_id=?", (node,)).fetchone()[0]
+    raw_gardening = agents.conn.execute(
+        "SELECT payload_json,rationale,evidence_refs FROM goal_gardening_proposal "
+        "WHERE target_node_id=?", (node,)).fetchone()
     assert all(crypto.is_encrypted(value) for value in [*raw_state, raw_question, raw_message,
-                                                        raw_candidate])
+                                                        raw_candidate, *raw_relevance,
+                                                        raw_review, *raw_gardening])
     agents.close(); goals.close(); curiosities.close()
     crypto._fernet.cache_clear()
 
@@ -608,6 +835,8 @@ def test_scheduler_sends_one_digest_for_blocked_and_proposals(tmp_path, monkeypa
 
     cfg = cfg_for(str(tmp_path))
     cfg.goal_ai_notifications = True
+    cfg.reflection_quiet_start_hour = 0
+    cfg.reflection_quiet_end_hour = 0
     calls = []
     monkeypatch.setattr(goal_ai_module, "run_goal_sweep", lambda _cfg: {
         "reviewed": 4, "failures": 0, "proposals_created": 2,

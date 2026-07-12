@@ -138,11 +138,21 @@ def mark_complete() -> None:
 
 # Evaluated lazily (functions, not constants) because the language is chosen
 # during onboarding itself, in the same process, right before seeding runs.
-def default_investigation_label() -> str:
+def default_investigation_label(soul_title: str = "") -> str:
+    title = str(soul_title or "").strip()
+    if title:
+        return T(f"First step toward {title}", f"{title}을 향한 첫걸음")
     return T("Getting to know Faerie Fire", "페어리 파이어 알아가기")
 
 
-def default_investigation_directive() -> str:
+def default_investigation_directive(soul_title: str = "", soul_purpose: str = "") -> str:
+    title = str(soul_title or "").strip()
+    purpose = str(soul_purpose or "").strip()
+    if purpose:
+        return T(
+            f"What is the smallest meaningful next step toward {title or 'this Soul'}?\n\n{purpose}",
+            f"{title or '이 Soul'}을 향한 가장 작고 의미 있는 다음 단계는 무엇일까요?\n\n{purpose}",
+        )
     return T(
         "This is a seeded starter investigation so there's something to look at on "
         "day one. Investigations are open questions Faerie actively pursues — "
@@ -156,7 +166,8 @@ def default_investigation_directive() -> str:
     )
 
 
-def seed_example_investigation(memory_db_path: str) -> int | None:
+def seed_example_investigation(memory_db_path: str, *, soul_title: str = "",
+                               soul_purpose: str = "") -> int | None:
     """Create the one starter investigation the launch plan calls for.
 
     Best-effort: onboarding should still complete even if this fails for some
@@ -169,7 +180,9 @@ def seed_example_investigation(memory_db_path: str) -> int | None:
         return None
     store = CuriosityStore(memory_db_path)
     try:
-        return store.add_curiosity(default_investigation_directive(), default_investigation_label())
+        return store.add_curiosity(
+            default_investigation_directive(soul_title, soul_purpose),
+            default_investigation_label(soul_title))
     except Exception:
         return None
     finally:

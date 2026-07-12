@@ -31,13 +31,20 @@ _INSIGHT = (
     "i love", "i keep", "my ", "angry", "anger", "fear", "afraid", "grief",
     "shame", "anxious", "anxiety", "goal", "dream", "trapped", "free",
     "because", "why ", "pattern", "trauma", "healing", "energy", "body",
+    # Korean first-person, feeling, motive, and change language.  These are
+    # intentionally stems where Korean conjugation varies.
+    "나는", "내가", "나의", "느낀", "느낌", "원한", "원해", "필요", "생각",
+    "깨달", "배웠", "좋아", "싫어", "불안", "두려", "화가", "목표", "꿈",
+    "왜", "때문", "패턴", "에너지", "몸",
 )
 # second-person coaching = probably pasted advice, not the user's own words
 _ADVICE = ("you should", "your nervous system", "you are allowed",
            "you were", "you might", "you tend", "your body", "you do not",
-           "you can start", "this is not", "that is the anger")
+           "you can start", "this is not", "that is the anger",
+           "해야", "하세요", "당신은", "너는", "신경계", "허용", "치료사")
 
 _URL_ONLY = re.compile(r"^\s*(?:-\s*)?https?://\S+\s*$")
+_CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\uac00-\ud7a3]")
 
 
 def _clean(text: str) -> str:
@@ -80,7 +87,10 @@ def filter_entries(entries: list[dict], *, min_chars: int = 80,
     for entry in entries:
         text = _clean(entry.get("text") or "")
         stats["chars_in"] += len(entry.get("text") or "")
-        if len(text) < min_chars:
+        # Korean/CJK writing carries comparable meaning in fewer characters;
+        # keep the same local quality bar without treating its script as noise.
+        effective_min_chars = max(1, min_chars // 2) if _CJK.search(text) else min_chars
+        if len(text) < effective_min_chars:
             stats["dropped_short"] += 1
             continue
         tokens = _tokens(text)

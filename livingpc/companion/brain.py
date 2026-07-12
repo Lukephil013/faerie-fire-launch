@@ -115,8 +115,12 @@ class Companion:
         self._pending_clarify = False           # a clarify question is open
         self._skills = None                     # lazy {command: Skill}
         self._pending_skill = None              # /teach draft awaiting approval
+        # Workflow skills (skills/<name>/SKILL.md) loaded into this chat's
+        # context — only their menu rides in every prompt; a body is injected
+        # (dynamic block) once the model requests it or the user types /name.
+        self._active_skills: list[str] = []
         # Soul Calibration (see livingpc/soul_calibration.py): a standalone
-        # popout drawer walks the fixed 13-question FIELDS list deterministically
+        # popout drawer walks the fixed FIELDS list deterministically
         # (no model involvement per-question) — see calibration_save/
         # calibration_status/calibration_reset/calibration_synthesis below.
         self._skipped_calibration_keys: set[str] = self._load_skipped_calibration_keys()
@@ -140,7 +144,13 @@ class Companion:
             data = json.loads(raw or "[]")
             if isinstance(data, list):
                 valid = {soul_calibration.field_key(f) for f in soul_calibration.FIELDS}
-                return {str(key) for key in data if str(key) in valid}
+                normalized = set()
+                for raw_key in data:
+                    section, sep, attribute = str(raw_key).partition("::")
+                    key = soul_calibration.canonical_key(section, attribute) if sep else ""
+                    if key in valid:
+                        normalized.add(key)
+                return normalized
         except Exception:
             pass
         return set()
@@ -166,6 +176,7 @@ class Companion:
 
     # --- context builders -------------------------------------------------
     def _memory_block(self, context: str = "") -> str:
+        attachment_context = "  (none attached)"
         try:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
@@ -173,10 +184,21 @@ class Companion:
                 rows = mem.active_as_dicts()
             finally:
                 mem.close()
+            from ..context_attachment import ContextAttachmentStore
+            documents = ContextAttachmentStore(self.cfg.memory_db_path)
+            try:
+                owners = [("soul_calibration", soul_calibration.field_key(field))
+                          for field in soul_calibration.FIELDS]
+                attachment_context = documents.context_block(
+                    owners, query=context, max_chars=8000)
+            finally:
+                documents.close()
         except Exception:
             return "(memory unavailable)"
         if not rows:
-            return "ALWAYS-ON CORE PROFILE:\n" + core + "\n\nRELEVANT MEMORY:\n(nothing learned yet)"
+            return ("ALWAYS-ON CORE PROFILE:\n" + core +
+                    "\n\nSOUL CALIBRATION DOCUMENT CONTEXT:\n" + attachment_context +
+                    "\n\nRELEVANT MEMORY:\n(nothing learned yet)")
         selection = select_memories(
             rows,
             context,
@@ -191,6 +213,7 @@ class Companion:
             f"estimated_memory_tokens={selection.estimated_tokens}",
         )
         return ("ALWAYS-ON CORE PROFILE:\n" + core +
+                "\n\nSOUL CALIBRATION DOCUMENT CONTEXT:\n" + attachment_context +
                 "\n\nRELEVANT MEMORY:\n" + format_memories(selection.memories))
 
     def _inferences_block(self) -> str:
@@ -336,11 +359,11 @@ class Companion:
             "Never claim you cannot write files: filing is the one write you CAN "
             "do. You cannot write anywhere else on their computer."
             "\n\nSOUL CALIBRATION lives in its own popout drawer now, not in this "
-            "chat — you never ask those 13 questions yourself, and you only ever "
+            "chat — you never ask those calibration questions yourself, and you only ever "
             "reflect on what was learned once, right after it finishes (a message "
             "you'll see appear in the history). If the user asks to redo it, or "
             "wants to change an answer, tell them to type `/recalibrate` (resets "
-            "it so all 13 resurface) or reopen it from Settings."
+            "it so every question resurfaces) or reopen it from Settings."
             "\n\nCUSTOM SKILL COMMANDS INSTALLED (also real; suggest them "
             "when relevant, and `/teach <idea>` drafts a new one for the "
             "user's approval):\n" + self._skills_block()
@@ -424,6 +447,7 @@ class Companion:
             + "\n\nTHEIR CURRENT GOALS / CURIOSITIES (things they're actively "
               "working toward, with any open question or suggestion still "
               "sitting with them):\n" + self._curiosities_block()
+            + self._workflow_bodies_block()
         )
         if launch_profile:
             dynamic += (
@@ -588,16 +612,104 @@ class Companion:
                 "memory_db": self.cfg.memory_db_path}
 
     def _skills_block(self) -> str:
-        """Custom commands, listed in the system prompt for discoverability."""
+        """Custom commands + the workflow-skill menu, listed in the (cached)
+        static prompt for discoverability. Workflow bodies are deliberately
+        NOT here — only their one-line descriptions; see _workflow_bodies_block."""
         try:
+            from .. import skills
             registry = self._skill_registry()
         except Exception:
             return "(no custom skills)"
-        working = [s for s in registry.values() if not s.error]
-        if not working:
-            return "(no custom skills installed yet — /teach can draft one)"
-        return "\n".join(f"- /{s.command} — {s.description or '(no description)'}"
-                         for s in working)
+        working = [s for s in registry.values()
+                   if not s.error and s.kind != "workflow"]
+        commands = ("\n".join(f"- /{s.command} — {s.description or '(no description)'}"
+                              for s in working)
+                    if working else
+                    "(no custom skills installed yet — /teach can draft one)")
+        menu = skills.workflow_menu(registry)
+        if not menu:
+            return commands
+        return commands + (
+            "\n\nWORKFLOW SKILLS (on-demand expertise; only this menu is in "
+            "your context right now):\n" + menu + "\n"
+            "When the CURRENT turn is genuinely inside one of these domains "
+            "and you need its full instructions, emit exactly this block "
+            "(the app parses and silently removes it, loads the skill's full "
+            "instructions, and re-invokes you with them in context — never "
+            "describe or explain this syntax to the user, and never wrap it "
+            "in a markdown code fence):\n"
+            "<<<faerie_skill\n"
+            "{\"load\": \"the-skill-name\"}\n"
+            "faerie_skill>>>\n"
+            "Emit the block alone, without answering the request in the same "
+            "reply — you are re-invoked immediately with the instructions "
+            "loaded. A loaded skill stays loaded for the rest of this chat "
+            "(shown under LOADED WORKFLOW SKILLS); never re-request one of "
+            "those. The user can also invoke any of them directly as /name."
+        )
+
+    def _workflow_bodies_block(self) -> str:
+        """Full SKILL.md bodies for workflow skills active in this chat —
+        injected into the dynamic block so loading one never busts the cached
+        static prefix. Stale names (skill deleted or reloaded away) drop out
+        here rather than erroring."""
+        if not self._active_skills:
+            return ""
+        try:
+            registry = self._skill_registry()
+        except Exception:
+            return ""
+        sections = []
+        for name in self._active_skills:
+            skill = registry.get(name)
+            if skill is None or skill.error or skill.kind != "workflow":
+                continue
+            sections.append(f"=== ACTIVE SKILL: {name} ===\n{skill.body}")
+        if not sections:
+            return ""
+        return ("\n\nLOADED WORKFLOW SKILLS (follow these instructions when "
+                "the conversation is inside their domain):\n"
+                + "\n\n".join(sections))
+
+    _SKILL_BLOCK_RE = re.compile(
+        r"<<<faerie_skill\s*(\{.*?\})\s*faerie_skill>>>", re.DOTALL)
+
+    def _extract_skill_loads(self, text: str) -> tuple[str, list[str]]:
+        """Pulls every <<<faerie_skill ...>>> block out of the model's raw
+        reply. Returns (text with all blocks stripped, newly valid skill
+        names). Unknown, broken, menu-hidden, and already-active names strip
+        silently — they never trigger a re-call."""
+        matches = self._SKILL_BLOCK_RE.findall(text)
+        if not matches:
+            return text, []
+        try:
+            registry = self._skill_registry()
+        except Exception:
+            registry = {}
+        loads: list[str] = []
+        for raw in matches:
+            try:
+                payload = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            name = str(payload.get("load") or "").strip().lower()
+            skill = registry.get(name)
+            if (skill is not None and skill.kind == "workflow"
+                    and not skill.error and skill.model_invocable
+                    and name not in self._active_skills and name not in loads):
+                loads.append(name)
+        return self._SKILL_BLOCK_RE.sub("", text).strip(), loads
+
+    def _activate_skill(self, name: str) -> None:
+        if name in self._active_skills:
+            return
+        self._active_skills.append(name)
+        cap = getattr(self.cfg, "workflow_max_active", 3)
+        while len(self._active_skills) > cap:
+            evicted = self._active_skills.pop(0)
+            log_diag("skills", f"workflow evicted={evicted} cap={cap}")
 
     def _skill_reply(self, user_text: str) -> str | None:
         """Handle /skills, /teach, and any installed skill command. Returns
@@ -612,6 +724,9 @@ class Companion:
             from .. import skills
             if command == "skills":
                 registry = self._skill_registry(reload=(args.lower() == "reload"))
+                if args.lower() == "reload":
+                    self._active_skills = [n for n in self._active_skills
+                                           if n in registry and not registry[n].error]
                 if not registry:
                     return ("No skills installed. Drop a .py into the skills "
                             "folder, or describe one with `/teach <what it should do>`.")
@@ -619,6 +734,13 @@ class Companion:
                 for s in sorted(registry.values(), key=lambda s: s.command):
                     if s.error:
                         lines.append(f"- /{s.command} — BROKEN: {s.error}")
+                    elif s.kind == "workflow":
+                        status = ("loaded in this chat"
+                                  if s.command in self._active_skills
+                                  else "loads on demand")
+                        lines.append(f"- /{s.command} — "
+                                     f"{s.description or '(no description)'} "
+                                     f"[workflow — {status}]")
                     else:
                         lines.append(f"- /{s.command} — {s.description or '(no description)'}")
                 return "Installed skills:\n" + "\n".join(lines) + \
@@ -632,6 +754,14 @@ class Companion:
                         return "No draft waiting. `/teach <describe the tool>` first."
                     draft = self._pending_skill
                     self._pending_skill = None
+                    if draft.get("type") in ("workflow", "reference"):
+                        path = skills.install_workflow_skill(
+                            self.cfg, draft["name"], draft["skill_md"])
+                        self._skill_registry(reload=True)
+                        return (f"Installed **{draft['name']}** ({path}). I load "
+                                f"it when the conversation calls for it; "
+                                f"`/{draft['name']}` invokes it directly, and "
+                                f"`/skills` lists everything.")
                     path = skills.install_skill(self.cfg, draft["filename"],
                                                 draft["code"])
                     self._skill_registry(reload=True)
@@ -639,18 +769,40 @@ class Companion:
                     return (f"Installed **/{name}** ({path}). Try it — and "
                             f"`/skills` lists everything.")
                 if not args:
-                    return "Describe the tool: `/teach a command that rolls dice`"
-                draft = skills.draft_skill(args, self._skill_ctx()["llm"])
+                    return ("Describe the tool: `/teach a command that rolls "
+                            "dice`. I'll pick the shape — force one with "
+                            "`/teach command|workflow|reference <idea>`.")
+                force_type = None
+                first, _, rest = args.partition(" ")
+                if first.lower() in ("command", "workflow", "reference") and rest.strip():
+                    force_type, args = first.lower(), rest.strip()
+                draft = skills.draft_skill(args, self._skill_ctx()["llm"],
+                                           force_type=force_type)
                 if draft.get("error"):
                     return f"Couldn't draft that: {draft['error']}"
                 self._pending_skill = draft
-                return ("Here's the draft — **read it before approving**; it "
-                        "runs as ordinary Python on your machine.\n\n"
-                        f"`{draft['filename']}`\n```python\n{draft['code']}\n```\n"
+                if draft["type"] == "command":
+                    return ("Here's the draft — **read it before approving**; it "
+                            "runs as ordinary Python on your machine.\n\n"
+                            f"`{draft['filename']}`\n```python\n{draft['code']}\n```\n"
+                            "`/teach approve` to install · `/teach cancel` to discard")
+                return (f"I read this as a **{draft['type']}** skill — "
+                        "instructions I follow, not code that runs. (Force a "
+                        "different shape with `/teach command <idea>`, "
+                        "`/teach workflow <idea>`, or `/teach reference <idea>`.)\n\n"
+                        f"`skills/{draft['name']}/SKILL.md`\n```markdown\n"
+                        f"{draft['skill_md']}\n```\n"
                         "`/teach approve` to install · `/teach cancel` to discard")
             registry = self._skill_registry()
             if command in registry:
-                return skills.dispatch(registry[command], args, self._skill_ctx())
+                skill = registry[command]
+                if skill.kind == "workflow" and not skill.error:
+                    # Explicit /name loads the skill, then falls through to
+                    # the normal model call, which now sees the body. This is
+                    # also how disable-model-invocation skills are reached.
+                    self._activate_skill(command)
+                    return None
+                return skills.dispatch(skill, args, self._skill_ctx())
             return None
         except Exception as e:
             log_diag("skills", f"companion skill failed error={type(e).__name__}")
@@ -658,14 +810,23 @@ class Companion:
 
     # --- Soul Calibration (standalone popout; see livingpc/soul_calibration.py) ---
     # This is deliberately NOT model-driven anymore: a drawer in the UI walks
-    # the fixed 13-question FIELDS list one at a time, in order, and saves
+    # the fixed FIELDS list one at a time, in order, and saves
     # each answer directly (calibration_save) with no LLM call in between —
     # that's what keeps the question wording, numbering, and pacing exact.
     # The model is only ever invoked once, at the end, for a single warm
     # synthesis message (calibration_synthesis) posted into the active chat.
     def _calibration_answered_values(self, mem: MemoryStore) -> dict[str, str]:
-        return {f["section"] + "::" + f["attribute"]: f["value"]
-                for f in mem.core_profile_facts(limit=200)}
+        candidates = {}
+        for fact in mem.core_profile_facts(limit=None):
+            if fact.get("source_kind") != "soul_calibration":
+                continue
+            field = soul_calibration.resolve_field(fact["section"], fact["attribute"])
+            if field:
+                key = soul_calibration.field_key(field)
+                rank = (str(fact.get("updated_at") or ""), int(fact["id"]))
+                if key not in candidates or rank > candidates[key][0]:
+                    candidates[key] = (rank, fact["value"])
+        return {key: candidate[1] for key, candidate in candidates.items()}
 
     def calibration_status(self) -> dict:
         """Full snapshot for the popout: every section/attribute with its
@@ -698,7 +859,8 @@ class Companion:
                     state = "remaining"
                 attrs.append({"attribute": field["attribute"], "label": field["label"],
                               "prompt": field["prompt"], "state": state,
-                              "value": answered.get(key, "")})
+                              "value": answered.get(key, ""), "attachment_key": key,
+                              "attachments": self._calibration_attachments(key)})
             sections.append({"section": section, "attributes": attrs})
         total = len(soul_calibration.FIELDS)
         covered_count = done_count + skipped_count
@@ -711,7 +873,10 @@ class Companion:
         attribute = str(payload.get("attribute") or "").strip()
         if not section or not attribute:
             return
-        key = section + "::" + attribute
+        field = soul_calibration.resolve_field(section, attribute)
+        if not field:
+            return
+        key = soul_calibration.field_key(field)
         value = str(payload.get("value") or "").strip()
         if payload.get("skip") or not value:
             self._skipped_calibration_keys.add(key)
@@ -720,13 +885,27 @@ class Companion:
         if key in self._skipped_calibration_keys:
             self._skipped_calibration_keys.discard(key)
             self._save_skipped_calibration_keys()
-        priority = next((f["priority"] for f in soul_calibration.FIELDS
-                          if soul_calibration.field_key(f) == key), 50)
+        priority = field["priority"]
         try:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
-                mem.upsert_core_profile_fact(section, attribute, value,
-                                              priority=priority, source_kind="soul_calibration")
+                # New writes use the stable English section. Existing Korean
+                # answers remain recognized through canonical_key(), so a
+                # language switch never re-asks them.
+                mem.upsert_core_profile_fact(field["storage_section"], attribute, value,
+                                              priority=priority, source_kind="soul_calibration",
+                                              preserve_newlines=True, commit=False)
+                # Once the stable row is safely staged, retire any legacy
+                # localized copy so ordinary prompt context cannot contain
+                # both the stale and edited versions of the same answer.
+                for fact in mem.core_profile_facts(limit=None):
+                    if (fact.get("source_kind") != "soul_calibration" or
+                            fact["section"] == field["storage_section"]):
+                        continue
+                    if soul_calibration.canonical_key(
+                            fact["section"], fact["attribute"]) == key:
+                        mem.retire_core_profile_fact(fact["id"], commit=False)
+                mem.conn.commit()
             finally:
                 mem.close()
         except Exception:
@@ -740,9 +919,20 @@ class Companion:
                                       "value": value, "skip": bool(skip)})
         return self.calibration_status()
 
+    def _calibration_attachments(self, key: str) -> list[dict]:
+        try:
+            from ..context_attachment import ContextAttachmentStore
+            store = ContextAttachmentStore(self.cfg.memory_db_path)
+            try:
+                return store.list("soul_calibration", key)
+            finally:
+                store.close()
+        except Exception:
+            return []
+
     def calibration_reset(self) -> dict:
         """Retire every saved Soul Calibration fact and clear this session's
-        skips, so all 13 questions resurface as unanswered. Reachable from the
+        skips, so every question resurfaces as unanswered. Reachable from the
         popout or by typing /recalibrate in chat."""
         self._skipped_calibration_keys.clear()
         try:
@@ -752,6 +942,15 @@ class Companion:
                 mem.retire_core_profile_facts_by_source("soul_calibration")
             finally:
                 mem.close()
+        except Exception:
+            pass
+        try:
+            from ..context_attachment import ContextAttachmentStore
+            attachments = ContextAttachmentStore(self.cfg.memory_db_path)
+            try:
+                attachments.clear_kind("soul_calibration")
+            finally:
+                attachments.close()
         except Exception:
             pass
         return self.calibration_status()
@@ -765,15 +964,45 @@ class Companion:
         try:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
-                facts = [f for f in mem.core_profile_facts(limit=200)
-                         if f.get("source_kind") == "soul_calibration"]
+                by_key = {}
+                for fact in mem.core_profile_facts(limit=None):
+                    if fact.get("source_kind") != "soul_calibration":
+                        continue
+                    field = soul_calibration.resolve_field(
+                        fact["section"], fact["attribute"])
+                    if field:
+                        key = soul_calibration.field_key(field)
+                        rank = (str(fact.get("updated_at") or ""), int(fact["id"]))
+                        if key not in by_key or rank > by_key[key][0]:
+                            by_key[key] = (rank, fact)
+                facts = [(field, by_key[soul_calibration.field_key(field)][1])
+                         for field in soul_calibration.FIELDS
+                         if soul_calibration.field_key(field) in by_key]
             finally:
                 mem.close()
         except Exception:
             facts = []
         if not facts:
             return {"ok": False, "message": "Nothing to synthesize yet."}
-        lines = [f"- [{f['section']}] {f['attribute']}: {f['value']}" for f in facts]
+        lines = []
+        try:
+            from ..context_attachment import ContextAttachmentStore
+            attachments = ContextAttachmentStore(self.cfg.memory_db_path)
+        except Exception:
+            attachments = None
+        try:
+            for field, fact in facts:
+                line = f"- [{field['section']}] {field['label']}: {fact['value']}"
+                if attachments:
+                    docs = attachments.context_block(
+                        [("soul_calibration", soul_calibration.field_key(field))],
+                        query=fact["value"] + " " + field["prompt"], max_chars=10000)
+                    if docs != "  (none attached)":
+                        line += "\n  DOCUMENT CONTEXT FOR THIS ANSWER:\n" + docs
+                lines.append(line)
+        finally:
+            if attachments:
+                attachments.close()
         system = (
             self.persona.system + "\n\nSoul Calibration just finished in a separate "
             "popout drawer, not in this chat — you did not ask these questions "
@@ -793,9 +1022,44 @@ class Companion:
             log_diag("chat", f"calibration synthesis failed error={type(error).__name__}")
             return {"ok": False, "message": lang_T("Could not generate that synthesis right now.",
                                                    "지금은 종합 메시지를 만들 수 없어요.")}
+        # The calibration answers just landed in memory — generate a fresh
+        # round of investigation questions from them NOW, so when the message
+        # below sends the user to the Investigations tab, the questions are
+        # already sitting there instead of appearing on some later pass.
+        if self._generate_investigation_questions():
+            text += "\n\n" + lang_T(
+                "I've generated questions for you in the Investigations tab — "
+                "please head there to continue.",
+                "탐구 탭에 질문들을 만들어뒀어요 — 이어가려면 그곳으로 가주세요.")
         self.history.append({"role": "assistant", "content": text})
         self.chats.append(self.chat_id, "assistant", text)
         return {"ok": True, "text": text}
+
+    def _generate_investigation_questions(self) -> int:
+        """Best-effort: one generation round for every active investigation
+        (same knobs as the GUI's 'Generate more'). Returns items created."""
+        try:
+            from ..curiosity import CuriosityStore, get_curiosity_model, run_all_active
+            from ..inference import InferenceStore
+            mem = MemoryStore(self.cfg.memory_db_path)
+            inf = InferenceStore(self.cfg.memory_db_path)
+            store = CuriosityStore(self.cfg.memory_db_path)
+            try:
+                return run_all_active(
+                    mem, inf, store, get_curiosity_model(self.cfg),
+                    greatest_limit=int(getattr(self.cfg, "curiosity_scan_limit_greatest", 5)),
+                    background_limit=int(getattr(self.cfg, "curiosity_scan_limit_background", 2)),
+                    question_min_confidence=float(getattr(self.cfg, "curiosity_question_min_confidence", 0.70)),
+                    suggestion_min_confidence=float(getattr(self.cfg, "curiosity_suggestion_min_confidence", 0.80)),
+                    max_open=int(getattr(self.cfg, "curiosity_max_open_per_curiosity", 6)))
+            finally:
+                mem.close()
+                inf.close()
+                store.close()
+        except Exception as error:
+            log_diag("chat", f"post-calibration question generation failed "
+                             f"error={type(error).__name__}")
+            return 0
 
     def _calibration_command_reply(self, user_text: str) -> str | None:
         """Handle /recalibrate — a chat-visible way to reset Soul Calibration
@@ -804,10 +1068,11 @@ class Companion:
         if lower not in {"/recalibrate", "/reset calibration", "/calibration reset"}:
             return None
         self.calibration_reset()
-        return lang_T("Soul Calibration has been reset — open it from the Command Center "
-                      "(or Settings) to go through all 13 questions again.",
-                      "Soul Calibration이 초기화됐어요. 본부나 설정에서 다시 열면 "
-                      "13개 질문을 처음부터 다시 진행할 수 있어요.")
+        total = len(soul_calibration.FIELDS)
+        return lang_T(f"Soul Calibration has been reset — open it from the Command Center "
+                      f"(or Settings) to go through all {total} questions again.",
+                      f"Soul Calibration이 초기화됐어요. 본부나 설정에서 다시 열면 "
+                      f"{total}개 질문을 처음부터 다시 진행할 수 있어요.")
 
     # --- chat-driven tree management (replaces the old Investigations tab) -
     # The model is always quietly considering whether something in the
@@ -821,6 +1086,7 @@ class Companion:
     _PROPOSAL_APPROVAL_WORDS = {
         "approve", "approved", "yes", "yes please", "do it", "add it",
         "start it", "go ahead", "sounds good", "sure", "please do",
+        "네", "넵", "응", "그래", "그래요", "좋아요", "좋아", "승인", "진행해줘", "진행",
     }
     _PLACEMENT_ACTIONS = {"attach_existing", "create_branch", "create_root_branch", "create_leaf"}
     _STRUCTURAL_ACTIONS = {"rename_node", "delete_node", "move_node"}
@@ -855,54 +1121,78 @@ class Companion:
         return next((n for n in self._goal_catalog() if n["id"] == node_id), None)
 
     def _describe_target(self, proposal: dict) -> str:
+        # Root/Branch/Leaf/Soul stay English loanwords in Korean too (house
+        # style — see KO_TERM_SUBS in memory.html, which already substitutes
+        # these words wherever they land, including inside this dynamic text).
         action = proposal.get("action")
+        ko = lang_is_ko()
         if action in {"attach_existing", "create_branch", "create_leaf"}:
             node = self._catalog_lookup(proposal.get("target_node_id"))
             if not node:
-                return "(target node not found)"
+                return lang_T("(target node not found)", "(대상 노드를 찾을 수 없어요)")
+            if ko:
+                kind = {"attach_existing": "에 연결돼요",
+                        "create_branch": " 아래에 새로운 Branch로 추가돼요",
+                        "create_leaf": " 아래에 새로운 Leaf로 추가돼요"}[action]
+                return f"**{node['title']}** ({node['type']}){kind}"
             kind = {"attach_existing": "here", "create_branch": "as a new Branch under",
                     "create_leaf": "as a new Leaf under"}[action]
             return f"{kind} **{node['title']}** ({node['type']})"
         if action == "create_root_branch":
-            return "as a new Root"
+            return lang_T("as a new Root", "새로운 Root로 추가돼요")
         if action in {"rename_node", "delete_node", "move_node"}:
             node = self._catalog_lookup(proposal.get("target_node_id"))
             if not node:
-                return "(target node not found)"
+                return lang_T("(target node not found)", "(대상 노드를 찾을 수 없어요)")
             if action == "rename_node":
                 new_title = str(proposal.get("new_title") or "").strip()
-                return f"rename **{node['title']}** ({node['type']}) to **{new_title}**"
+                return lang_T(
+                    f"rename **{node['title']}** ({node['type']}) to **{new_title}**",
+                    f"**{node['title']}** ({node['type']})의 이름을 **{new_title}**(으)로 변경해요")
             if action == "delete_node":
-                return f"delete **{node['title']}** ({node['type']}) and everything under it"
+                return lang_T(
+                    f"delete **{node['title']}** ({node['type']}) and everything under it",
+                    f"**{node['title']}** ({node['type']})와(과) 그 아래 항목을 모두 삭제해요")
             new_parent = self._catalog_lookup(proposal.get("new_parent_id"))
             if not new_parent:
-                return "(new parent not found)"
-            return (f"move **{node['title']}** ({node['type']}) under "
-                    f"**{new_parent['title']}** ({new_parent['type']})")
+                return lang_T("(new parent not found)", "(새 상위 노드를 찾을 수 없어요)")
+            return lang_T(
+                f"move **{node['title']}** ({node['type']}) under "
+                f"**{new_parent['title']}** ({new_parent['type']})",
+                f"**{node['title']}** ({node['type']})을(를) "
+                f"**{new_parent['title']}** ({new_parent['type']}) 아래로 이동해요")
         return ""
 
     def _render_proposal(self, proposal: dict) -> str:
-        label = str(proposal.get("label") or "(untitled)")
+        ko = lang_is_ko()
+        label = str(proposal.get("label") or lang_T("(untitled)", "(제목 없음)"))
         directive = str(proposal.get("directive") or "")
         reasoning = str(proposal.get("reasoning") or "")
         confidence = proposal.get("confidence")
-        conf_text = f"{round(float(confidence) * 100)}% confidence — " \
-            if isinstance(confidence, (int, float)) else ""
+        if isinstance(confidence, (int, float)):
+            pct = round(float(confidence) * 100)
+            conf_text = f"확신도 {pct}% — " if ko else f"{pct}% confidence — "
+        else:
+            conf_text = ""
         action = proposal.get("action")
-        lines = ["", "— proposed —"]
+        lines = ["", lang_T("— proposed —", "— 제안 —")]
         if action == "start_investigation":
-            lines.append(f"Track as a new investigation: **{label}**")
+            lines.append(lang_T(f"Track as a new investigation: **{label}**",
+                                f"새로운 탐구로 추적해요: **{label}**"))
         elif action in self._STRUCTURAL_ACTIONS:
             lines.append(f"{conf_text}{self._describe_target(proposal)}")
         else:
-            lines.append(f"{conf_text}this belongs {self._describe_target(proposal)}")
+            target = self._describe_target(proposal)
+            lines.append(f"{conf_text}{target}" if ko else f"{conf_text}this belongs {target}")
             lines.append(f"**{label}**")
         if directive:
             lines.append(directive)
         if reasoning:
-            lines.append(f"Why: {reasoning}")
+            lines.append(lang_T(f"Why: {reasoning}", f"이유: {reasoning}"))
         lines.append("")
-        lines.append("Reply “yes” (or click Approve) to do it, or tell me more and I'll refine it.")
+        lines.append(lang_T(
+            "Reply “yes” (or click Approve) to do it, or tell me more and I'll refine it.",
+            "“네”라고 답하거나 승인을 누르면 진행할게요. 더 말씀해 주시면 다듬어볼게요."))
         return "\n".join(lines)
 
     _PROPOSAL_BLOCK_RE = re.compile(
@@ -947,9 +1237,12 @@ class Companion:
 
     def _apply_proposal(self, proposal: dict) -> str:
         action = proposal.get("action")
-        label = str(proposal.get("label") or "New item").strip()
+        label = str(proposal.get("label") or lang_T("New item", "새 항목")).strip()
         directive = str(proposal.get("directive") or label).strip()
         reasoning = str(proposal.get("reasoning") or "").strip()
+        gone = lang_T("That node doesn't seem to exist anymore — let's figure out "
+                     "where this actually belongs.",
+                     "그 노드가 더 이상 없는 것 같아요 — 어디에 둘지 다시 정해볼까요?")
         try:
             from ..goals import GoalStore
             from ..curiosity import CuriosityStore
@@ -961,35 +1254,43 @@ class Companion:
                         store.add_curiosity(directive, label)
                     finally:
                         store.close()
-                    return (f"Started — I'll keep **{label}** as an active "
-                            "investigation and bring it up as it develops.")
+                    return lang_T(
+                        f"Started — I'll keep **{label}** as an active "
+                        "investigation and bring it up as it develops.",
+                        f"시작했어요 — **{label}**을(를) 활성 탐구로 계속 살펴보다가 "
+                        "진전이 있으면 알려드릴게요.")
 
                 if action == "attach_existing":
                     target = goals.get(int(proposal.get("target_node_id")))
                     if not target:
-                        return "That node doesn't seem to exist anymore — let's figure out where this actually belongs."
+                        return gone
                     store = CuriosityStore(self.cfg.memory_db_path)
                     try:
                         curiosity_id = store.add_curiosity(directive, label)
                     finally:
                         store.close()
                     goals.link_curiosity(target["id"], curiosity_id)
-                    return f"Added — **{label}** is now attached to **{target['title']}**."
+                    return lang_T(
+                        f"Added — **{label}** is now attached to **{target['title']}**.",
+                        f"추가했어요 — **{label}**을(를) **{target['title']}**에 연결했어요.")
 
                 if action == "create_branch":
                     parent = goals.get(int(proposal.get("target_node_id")))
                     if not parent:
-                        return "That node doesn't seem to exist anymore — let's figure out where this actually belongs."
+                        return gone
                     node_type = "overgoal" if parent["type"] == "umbrella" else "subgoal"
                     new_id = goals.create(node_type, label, parent_id=parent["id"], description=directive)
                     goals.set_origin(new_id, source_kind="chat", source_label=label,
                                       summary=directive, detail=reasoning)
-                    return f"Created — **{label}** is now a Branch under **{parent['title']}**."
+                    return lang_T(
+                        f"Created — **{label}** is now a Branch under **{parent['title']}**.",
+                        f"만들었어요 — **{label}**을(를) **{parent['title']}** 아래 "
+                        "Branch로 추가했어요.")
 
                 if action == "create_leaf":
                     parent = goals.get(int(proposal.get("target_node_id")))
                     if not parent:
-                        return "That node doesn't seem to exist anymore — let's figure out where this actually belongs."
+                        return gone
                     priority = str(proposal.get("priority") or "normal")
                     if priority not in {"low", "normal", "high"}:
                         priority = "normal"
@@ -997,7 +1298,10 @@ class Companion:
                                           description=directive, priority=priority)
                     goals.set_origin(new_id, source_kind="chat", source_label=label,
                                       summary=directive, detail=reasoning)
-                    return f"Created — **{label}** is now a Leaf under **{parent['title']}**."
+                    return lang_T(
+                        f"Created — **{label}** is now a Leaf under **{parent['title']}**.",
+                        f"만들었어요 — **{label}**을(를) **{parent['title']}** 아래 "
+                        "Leaf로 추가했어요.")
 
                 if action == "create_root_branch":
                     root_title = str(proposal.get("root_title") or label).strip()
@@ -1012,6 +1316,9 @@ class Companion:
                             description=str(proposal.get("branch_description") or "").strip())
                     goals.set_origin(attached_id, source_kind="chat", source_label=label,
                                       summary=directive, detail=reasoning)
+                    if lang_is_ko():
+                        extra = f" (그리고 Branch **{branch_title}**도)" if branch_title else ""
+                        return f"만들었어요 — 새로운 Root **{root_title}**{extra}을(를) 추가했어요."
                     return (f"Created — a new Root **{root_title}**"
                             + (f" with Branch **{branch_title}**" if branch_title else "")
                             + " for this.")
@@ -1019,21 +1326,33 @@ class Companion:
                 if action == "rename_node":
                     target = goals.get(int(proposal.get("target_node_id")))
                     if not target:
-                        return "That node doesn't seem to exist anymore — nothing renamed."
+                        return lang_T("That node doesn't seem to exist anymore — nothing renamed.",
+                                     "그 노드가 더 이상 없는 것 같아요 — 이름을 바꾸지 않았어요.")
                     new_title = str(proposal.get("new_title") or "").strip()
                     if not new_title:
-                        return "I didn't have a new name to give it, so nothing changed."
+                        return lang_T("I didn't have a new name to give it, so nothing changed.",
+                                     "새 이름이 없어서 아무것도 바꾸지 않았어요.")
                     old_title = target["title"]
                     goals.update(target["id"], title=new_title)
-                    return f"Renamed — **{old_title}** is now **{new_title}**."
+                    return lang_T(f"Renamed — **{old_title}** is now **{new_title}**.",
+                                 f"이름을 바꿨어요 — **{old_title}**을(를) **{new_title}**(으)로 바꿨어요.")
 
                 if action == "delete_node":
                     target = goals.get(int(proposal.get("target_node_id")))
                     if not target:
-                        return "That node doesn't seem to exist anymore — nothing to delete."
+                        return lang_T("That node doesn't seem to exist anymore — nothing to delete.",
+                                     "그 노드가 더 이상 없는 것 같아요 — 삭제할 것이 없어요.")
                     if target["type"] == "umbrella":
-                        return "I can't delete your Soul — that's the one node that always exists. Want to rename it instead?"
+                        return lang_T(
+                            "I can't delete your Soul — that's the one node that always "
+                            "exists. Want to rename it instead?",
+                            "Soul은 삭제할 수 없어요 — 항상 존재하는 단 하나의 노드예요. "
+                            "대신 이름을 바꿔드릴까요?")
                     count = goals.delete_subtree(target["id"])
+                    if lang_is_ko():
+                        extra = f" (그 아래 {count - 1}개 노드도 함께)" if count > 1 else ""
+                        return (f"삭제했어요 — **{target['title']}**을(를) 보관 처리했어요{extra}. "
+                                "언제든 되돌릴 수 있어요.")
                     extra = f" ({count - 1} node{'s' if count != 2 else ''} under it too)" if count > 1 else ""
                     return f"Deleted — **{target['title']}** is archived{extra}. It's reversible if you change your mind."
 
@@ -1041,17 +1360,24 @@ class Companion:
                     target = goals.get(int(proposal.get("target_node_id")))
                     new_parent = goals.get(int(proposal.get("new_parent_id")))
                     if not target or not new_parent:
-                        return "One of those nodes doesn't seem to exist anymore — nothing moved."
+                        return lang_T("One of those nodes doesn't seem to exist anymore — nothing moved.",
+                                     "그 노드들 중 하나가 더 이상 없는 것 같아요 — 이동하지 않았어요.")
                     if target["type"] == "umbrella":
-                        return "The Soul is the root of everything — it can't be moved."
+                        return lang_T("The Soul is the root of everything — it can't be moved.",
+                                     "Soul은 모든 것의 뿌리라서 옮길 수 없어요.")
                     goals.move(target["id"], new_parent["id"])
-                    return f"Moved — **{target['title']}** is now under **{new_parent['title']}**."
+                    return lang_T(
+                        f"Moved — **{target['title']}** is now under **{new_parent['title']}**.",
+                        f"이동했어요 — **{target['title']}**을(를) **{new_parent['title']}** "
+                        "아래로 옮겼어요.")
 
-                return "I wasn't sure how to apply that, so nothing changed — want to tell me again?"
+                return lang_T("I wasn't sure how to apply that, so nothing changed — want to tell me again?",
+                             "어떻게 적용할지 확실하지 않아서 아무것도 바꾸지 않았어요 — 다시 한번 말씀해 주시겠어요?")
             finally:
                 goals.close()
         except Exception as e:
-            return f"(I had trouble making that change: {type(e).__name__})"
+            return lang_T(f"(I had trouble making that change: {type(e).__name__})",
+                         f"(그 변경을 적용하는 데 문제가 있었어요: {type(e).__name__})")
 
     def _proposal_approval_reply(self, user_text: str) -> str | None:
         """A clear approval of a pending proposal is handled directly, no
@@ -1145,6 +1471,20 @@ class Companion:
                     f"history_messages={len(messages)} estimated_tokens={estimate_tokens(input_chars)}",
                 )
                 text = self.chat.reply(system, messages)
+                text, loads = self._extract_skill_loads(text)
+                if loads:
+                    for name in loads:
+                        self._activate_skill(name)
+                    log_diag("skills", f"workflow loaded={loads}")
+                    # One re-call with the skill bodies now in the dynamic
+                    # block (the static prefix is a cache hit). Loads emitted
+                    # by the re-call itself still activate but only take
+                    # effect next turn — never a third call.
+                    system = self.system_blocks(retrieval_context)
+                    text = self.chat.reply(system, messages)
+                    text, late = self._extract_skill_loads(text)
+                    for name in late:
+                        self._activate_skill(name)
                 text = self._extract_filing_facts(text)
                 text = self._extract_proposal(text)
                 text = self._offer_filing(user_text, text)
@@ -1162,6 +1502,7 @@ class Companion:
         self.chat_id = self.chats.create()
         self.history = []
         self._turns_since_reflection = 0
+        self._active_skills = []
         return self.chat_id
 
     def switch_chat(self, chat_id: str) -> bool:
@@ -1170,6 +1511,7 @@ class Companion:
         self.chat_id = chat_id
         self.history = self.chats.messages(chat_id)
         self._turns_since_reflection = 0
+        self._active_skills = []
         return True
 
     def delete_chat(self, chat_id: str) -> bool:

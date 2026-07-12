@@ -201,6 +201,88 @@ def test_calibration_skips_persist_across_companion_restarts():
         reopened.close()
 
 
+def test_calibration_field_key_is_stable_across_localized_sections():
+    from livingpc import soul_calibration
+    field = soul_calibration.resolve_field("Favorites & Open Space", "favorite media and creators")
+    korean = soul_calibration.resolve_field("좋아하는 것과 열린 공간", "favorite media and creators")
+    assert field is not None and korean is not None
+    assert soul_calibration.field_key(field) == soul_calibration.field_key(korean)
+
+
+def test_calibration_edit_prefers_stable_storage_over_a_legacy_localized_row():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        mem = MemoryStore(cfg.memory_db_path)
+        mem.upsert_core_profile_fact(
+            "핵심 정체성", "other essential context", "Old localized answer",
+            priority=72, source_kind="soul_calibration")
+        mem.close()
+        c = Companion(cfg=cfg, chat=StubChat())
+        from livingpc import soul_calibration
+        field = soul_calibration.resolve_field("Core Identity", "other essential context")
+
+        status = c.calibration_save(
+            field["section"], field["attribute"], "New edited answer")
+        saved = next(
+            attr for section in status["sections"]
+            for attr in section["attributes"]
+            if attr["attribute"] == "other essential context"
+        )
+
+        assert saved["value"] == "New edited answer"
+        c.close()
+        mem = MemoryStore(cfg.memory_db_path)
+        active = [fact for fact in mem.core_profile_facts(limit=200)
+                  if fact["attribute"] == "other essential context"]
+        mem.close()
+        assert [(fact["section"], fact["value"]) for fact in active] == [
+            ("Core Identity", "New edited answer")
+        ]
+
+
+def test_calibration_uses_latest_pre_migration_localized_answer():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        mem = MemoryStore(cfg.memory_db_path)
+        mem.upsert_core_profile_fact(
+            "Core Identity", "other essential context", "Older English answer",
+            priority=72, source_kind="soul_calibration")
+        mem.upsert_core_profile_fact(
+            "핵심 정체성", "other essential context", "Newer localized answer",
+            priority=72, source_kind="soul_calibration")
+        mem.close()
+
+        c = Companion(cfg=cfg, chat=StubChat())
+        status = c.calibration_status()
+        saved = next(
+            attr for section in status["sections"]
+            for attr in section["attributes"]
+            if attr["attribute"] == "other essential context"
+        )
+
+        assert saved["value"] == "Newer localized answer"
+        c.close()
+
+
+def test_calibration_preserves_multiline_answers():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        from livingpc import soul_calibration
+        field = soul_calibration.FIELDS[0]
+
+        status = c.calibration_save(
+            field["section"], field["attribute"], "First line\n\nSecond line")
+        saved = status["sections"][0]["attributes"][0]
+
+        assert saved["state"] == "done"
+        assert saved["value"] == "First line\n\nSecond line"
+        c.close()
+
+
 def test_persona_switch():
     with tempfile.TemporaryDirectory() as d:
         cfg = Config(db_path=os.path.join(d, "e.db"),

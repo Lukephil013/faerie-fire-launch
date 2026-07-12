@@ -136,6 +136,30 @@ CREATE TABLE IF NOT EXISTS mastery_subject_event (
     created_at TEXT NOT NULL,
     UNIQUE (subject_type, subject_id, source_kind, source_id)
 );
+
+CREATE TABLE IF NOT EXISTS experiment_outcome (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    curiosity_id INTEGER,
+    source_item_id INTEGER,
+    result TEXT NOT NULL,
+    what_happened TEXT NOT NULL,
+    expected_obstacle TEXT,
+    surprise TEXT,
+    helpfulness REAL,
+    changed_understanding TEXT,
+    next_adjustment TEXT,
+    created_at TEXT NOT NULL,
+    CHECK (result IN ('completed','attempted','avoided','abandoned')),
+    CHECK (helpfulness IS NULL OR (helpfulness>=0 AND helpfulness<=10)),
+    FOREIGN KEY (goal_id) REFERENCES goal_node(id),
+    FOREIGN KEY (curiosity_id) REFERENCES curiosity(id),
+    FOREIGN KEY (source_item_id) REFERENCES curiosity_item(id)
+);
+CREATE INDEX IF NOT EXISTS idx_experiment_outcome_goal
+ON experiment_outcome(goal_id,id DESC);
+CREATE INDEX IF NOT EXISTS idx_experiment_outcome_curiosity
+ON experiment_outcome(curiosity_id,id DESC);
 """
 
 
@@ -650,6 +674,111 @@ class GoalStore:
         self.conn.commit()
         return int(cur.lastrowid or 0)
 
+    def _outcome_dict(self, row) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]), "goal_id": int(row["goal_id"]),
+            "curiosity_id": row["curiosity_id"], "source_item_id": row["source_item_id"],
+            "result": row["result"],
+            "what_happened": crypto.dec(row["what_happened"]) or "",
+            "expected_obstacle": crypto.dec(row["expected_obstacle"]) or "",
+            "surprise": crypto.dec(row["surprise"]) or "",
+            "helpfulness": row["helpfulness"],
+            "changed_understanding": crypto.dec(row["changed_understanding"]) or "",
+            "next_adjustment": crypto.dec(row["next_adjustment"]) or "",
+            "created_at": row["created_at"],
+        }
+
+    def outcomes(self, goal_id: int | None = None, *,
+                 curiosity_id: int | None = None, limit: int = 30) -> list[dict]:
+        where, params = [], []
+        if goal_id is not None:
+            where.append("goal_id=?"); params.append(int(goal_id))
+        if curiosity_id is not None:
+            where.append("curiosity_id=?"); params.append(int(curiosity_id))
+        params.append(max(1, min(200, int(limit))))
+        sql = "SELECT * FROM experiment_outcome" + (
+            " WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?"
+        return [self._outcome_dict(row) for row in
+                self.conn.execute(sql, tuple(params)).fetchall()]
+
+    def _outcome_links(self, goal_id: int) -> tuple[int | None, int | None]:
+        source = self.conn.execute(
+            "SELECT id,curiosity_id FROM curiosity_item WHERE implementation_goal_id=? "
+            "ORDER BY id DESC LIMIT 1", (int(goal_id),)).fetchone() if self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='curiosity_item'"
+            ).fetchone() else None
+        source_item_id = int(source["id"]) if source else None
+        curiosity_id = int(source["curiosity_id"]) if source else None
+        current, seen = int(goal_id), set()
+        while curiosity_id is None and current and current not in seen:
+            seen.add(current)
+            link = self.conn.execute(
+                "SELECT curiosity_id FROM goal_curiosity_link WHERE goal_id=? "
+                "ORDER BY created_at DESC LIMIT 1", (current,)).fetchone()
+            if link:
+                curiosity_id = int(link["curiosity_id"])
+                break
+            parent = self.conn.execute(
+                "SELECT parent_id FROM goal_node WHERE id=?", (current,)).fetchone()
+            current = int(parent["parent_id"]) if parent and parent["parent_id"] else 0
+        return curiosity_id, source_item_id
+
+    def add_outcome(self, goal_id: int, result: str, what_happened: str, *,
+                    expected_obstacle: str = "", surprise: str = "",
+                    helpfulness: float | None = None,
+                    changed_understanding: str = "", next_adjustment: str = "",
+                    curiosity_id: int | None = None,
+                    source_item_id: int | None = None) -> dict:
+        node = self.get(goal_id)
+        if not node or node["type"] != "task":
+            raise ValueError("experiment outcomes belong to Leaves")
+        result = str(result or "").strip().lower()
+        if result not in {"completed", "attempted", "avoided", "abandoned"}:
+            raise ValueError("invalid experiment outcome")
+        what_happened = str(what_happened or "").strip()
+        if not what_happened:
+            raise ValueError("say what happened before saving the outcome")
+        if helpfulness is not None:
+            helpfulness = max(0.0, min(10.0, float(helpfulness)))
+        inferred_curiosity, inferred_item = self._outcome_links(goal_id)
+        curiosity_id = int(curiosity_id) if curiosity_id is not None else inferred_curiosity
+        source_item_id = (int(source_item_id) if source_item_id is not None else inferred_item)
+        if curiosity_id is not None and not self.conn.execute(
+            "SELECT 1 FROM curiosity WHERE id=?", (curiosity_id,)).fetchone():
+            raise ValueError("linked Investigation not found")
+        now = _now()
+        cur = self.conn.execute(
+            "INSERT INTO experiment_outcome "
+            "(goal_id,curiosity_id,source_item_id,result,what_happened,expected_obstacle,"
+            "surprise,helpfulness,changed_understanding,next_adjustment,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (int(goal_id), curiosity_id, source_item_id, result,
+             crypto.enc(what_happened), crypto.enc(str(expected_obstacle or "").strip()),
+             crypto.enc(str(surprise or "").strip()), helpfulness,
+             crypto.enc(str(changed_understanding or "").strip()),
+             crypto.enc(str(next_adjustment or "").strip()), now))
+        outcome_id = int(cur.lastrowid)
+        learning = str(changed_understanding or "").strip() or what_happened
+        adjustment = str(next_adjustment or "").strip()
+        label = f"{result.title()}: {learning}"
+        if adjustment:
+            label += f" Next adjustment: {adjustment}"
+        self.conn.execute(
+            "INSERT OR IGNORE INTO goal_evidence_link "
+            "(goal_id,source_kind,source_id,label,created_at) VALUES (?,?,?,?,?)",
+            (int(goal_id), "experiment_outcome", str(outcome_id),
+             crypto.enc(label[:1000]), now))
+        if result == "completed":
+            self.conn.execute(
+                "UPDATE goal_node SET status='completed',completed_at=?,updated_at=? WHERE id=?",
+                (now, now, int(goal_id)))
+        self._mark_goal_ai_dirty(int(goal_id), node["parent_id"])
+        self.conn.commit()
+        return self._outcome_dict(self.conn.execute(
+            "SELECT * FROM experiment_outcome WHERE id=?", (outcome_id,)).fetchone())
+
     def enable_mastery(self, goal_id: int, dimensions: list[dict | str]) -> dict:
         node = self.get(goal_id)
         if not node or node["type"] not in {"overgoal", "subgoal"}:
@@ -728,6 +857,7 @@ class GoalStore:
             node["children"] = []
             node["curiosities"] = []
             node["evidence"] = []
+            node["outcomes"] = []
             node["origin"] = None
             node["mastery"] = self.mastery(node["id"])
         for row in self.conn.execute("SELECT * FROM goal_origin ORDER BY goal_id"):
@@ -746,6 +876,9 @@ class GoalStore:
                     "id": row["id"], "source_kind": row["source_kind"],
                     "source_id": row["source_id"], "label": crypto.dec(row["label"]) or "",
                 })
+        for row in self.conn.execute("SELECT * FROM experiment_outcome ORDER BY id DESC"):
+            if row["goal_id"] in nodes:
+                nodes[row["goal_id"]]["outcomes"].append(self._outcome_dict(row))
         for node in nodes.values():
             if node["parent_id"] in nodes:
                 nodes[node["parent_id"]]["children"].append(node)
@@ -873,14 +1006,30 @@ class GoalStore:
             raise ValueError("draft has no goals to create")
 
         def add(raw: dict, parent_id: int) -> int:
-            node_type = str(raw.get("type") or "subgoal")
+            # Model drafts are user-reviewed JSON, not schema-guaranteed: coerce
+            # the type onto a valid placement instead of failing the whole commit
+            # (e.g. a top-level "umbrella", or a task placed under the Soul).
+            requested = str(raw.get("type") or "").strip().lower()
+            children = raw.get("children") or []
+            parent = self.get(parent_id)
+            if parent and parent["type"] == "umbrella":
+                node_type = "overgoal"
+            elif requested == "task" and not children:
+                node_type = "task"
+            elif requested in {"subgoal", "task", "overgoal", "umbrella"} or children:
+                node_type = "subgoal"
+            else:
+                node_type = "task"
+            priority = str(raw.get("priority") or "normal")
+            if priority not in PRIORITIES:
+                priority = "normal"
             new_id = self.create(
                 node_type, str(raw.get("title") or "").strip(), parent_id=parent_id,
                 description=str(raw.get("description") or ""),
                 notes=str(raw.get("notes") or ""),
-                priority=str(raw.get("priority") or "normal"),
+                priority=priority,
                 due_date=raw.get("due_date"), _commit=False)
-            for child in raw.get("children") or []:
+            for child in children:
                 add(child, new_id)
             return new_id
 
@@ -920,20 +1069,146 @@ class GoalStore:
         self.conn.commit()
 
 
+def record_experiment_outcome(config, goal_id: int, payload: dict) -> dict:
+    """Store a user-reported Leaf outcome and propagate it as bounded evidence."""
+    from .curiosity import CuriosityStore
+    from .inference import InferenceStore, concept_similarity
+    curiosities = CuriosityStore(config.memory_db_path)
+    goals = GoalStore(config.memory_db_path)
+    inferences = InferenceStore(config.memory_db_path)
+    try:
+        helpfulness = payload.get("helpfulness")
+        if helpfulness in {"", None}:
+            helpfulness = None
+        outcome = goals.add_outcome(
+            int(goal_id), str(payload.get("result") or ""),
+            str(payload.get("what_happened") or ""),
+            expected_obstacle=str(payload.get("expected_obstacle") or ""),
+            surprise=str(payload.get("surprise") or ""),
+            helpfulness=float(helpfulness) if helpfulness is not None else None,
+            changed_understanding=str(payload.get("changed_understanding") or ""),
+            next_adjustment=str(payload.get("next_adjustment") or ""),
+            curiosity_id=(int(payload["curiosity_id"])
+                          if payload.get("curiosity_id") is not None else None),
+            source_item_id=(int(payload["source_item_id"])
+                            if payload.get("source_item_id") is not None else None))
+
+        node = goals.get(int(goal_id))
+        observation = (outcome["changed_understanding"] or outcome["what_happened"]).strip()
+        evidence_text = (
+            f"Experiment {node['title'] if node else goal_id} {outcome['result']}: {observation}" +
+            (f" Helpfulness {float(outcome['helpfulness']):g}/10."
+             if outcome["helpfulness"] is not None else "") +
+            (f" Surprise: {outcome['surprise']}" if outcome["surprise"] else ""))
+        matched_themes = []
+        for belief in inferences.confirmed()[:40]:
+            if concept_similarity(
+                    evidence_text, f"{belief['theme']} {belief['statement']}") < .30:
+                continue
+            inferences.add_evidence(
+                belief["theme"], evidence_text, weight=1.2,
+                source_refs=[{"kind": "experiment_outcome", "id": outcome["id"],
+                              "goal_id": int(goal_id)}])
+            matched_themes.append(belief["theme"])
+        if not matched_themes:
+            theme = "experiment:" + _slug(node["title"] if node else "outcome")
+            inferences.add_evidence(
+                theme, evidence_text, weight=1.0,
+                source_refs=[{"kind": "experiment_outcome", "id": outcome["id"],
+                              "goal_id": int(goal_id)}])
+            matched_themes.append(theme)
+
+        from .memory import MemoryStore
+        memories = MemoryStore(config.memory_db_path)
+        try:
+            memory_id = memories.add(
+                "Experiments", "Leaf outcome", evidence_text,
+                confidence=.95,
+                source_refs=[{"kind": "experiment_outcome", "id": outcome["id"],
+                              "goal_id": int(goal_id)}],
+                raw_source=outcome["what_happened"])
+        finally:
+            memories.close()
+
+        synthesis_drafted = False
+        curiosity_id = outcome.get("curiosity_id")
+        if curiosity_id is not None and outcome["helpfulness"] is not None and (
+                float(outcome["helpfulness"]) <= 3):
+            previous = curiosities.latest_synthesis(curiosity_id, status="approved")
+            draft = curiosities.latest_synthesis(curiosity_id, status="draft")
+            if previous and not draft:
+                revised = json.loads(json.dumps(previous["payload"], ensure_ascii=False))
+                old_confidence = float(revised.get("confidence") or 0)
+                revised["confidence"] = round(
+                    0.0 if old_confidence <= 0 else max(.05, old_confidence * .65), 4)
+                counter = list(revised.get("counterevidence") or [])
+                counter.append(
+                    f"Experiment outcome #{outcome['id']} was rated "
+                    f"{float(outcome['helpfulness']):g}/10 helpful: {observation}")
+                revised["counterevidence"] = counter[-8:]
+                revised["changed_since_previous"] = (
+                    "A real-world experiment did not help as expected, so confidence "
+                    "was reduced pending your review.")
+                if outcome["next_adjustment"]:
+                    experiments = list(revised.get("experiments") or [])
+                    revised["experiments"] = [outcome["next_adjustment"], *experiments][:8]
+                evidence = list(revised.get("supporting_evidence") or [])
+                evidence.append({"item_id": None,
+                                 "source_ref": f"experiment_outcome:{outcome['id']}",
+                                 "summary": observation})
+                revised["supporting_evidence"] = evidence[-10:]
+                curiosities.add_synthesis(
+                    curiosity_id, revised,
+                    based_on_item_id=previous.get("based_on_item_id"),
+                    based_on_outcome_id=outcome["id"])
+                synthesis_drafted = True
+
+        next_proposal_id = None
+        if outcome["next_adjustment"] and node and node.get("parent_id"):
+            from .goal_ai import AgentProposal, GoalAgentStore
+            agents = GoalAgentStore(config.memory_db_path)
+            try:
+                title = outcome["next_adjustment"].splitlines()[0].strip()[:160]
+                next_proposal_id = agents.add_proposal(
+                    int(node["parent_id"]), AgentProposal(
+                        "create_child", int(node["parent_id"]),
+                        {"type": "task", "title": title,
+                         "description": (f"Proposed after outcome #{outcome['id']}: "
+                                         f"{observation}")[:1000],
+                         "outcome_id": outcome["id"]},
+                        f"The prior experiment suggested this adjustment: {title}"))
+            finally:
+                agents.close()
+
+        return {"ok": True, "outcome": outcome,
+                "synthesis_drafted": synthesis_drafted,
+                "inference_themes": matched_themes,
+                "memory_id": memory_id,
+                "next_proposal_id": next_proposal_id,
+                "review_due": True}
+    finally:
+        inferences.close(); goals.close(); curiosities.close()
+
+
 PLANNER_SYSTEM = """You help turn one grounded suggestion into an actionable goal plan.
 Ask exactly one decision-bearing question at a time. Briefly recommend a current
 approach, then ask the question. Never activate goals yourself. Return strict JSON:
 {"message": str, "draft": {"rationale": str, "nodes": [goal nodes]}}.
 Goal nodes use type overgoal|subgoal|task, title, description, priority
 low|normal|high, due_date YYYY-MM-DD or null, and children. Tasks have no children.
+Never use type "umbrella". Use TODAY from the prompt for any dates. Keep
+descriptions short so the JSON reply never exceeds ~1500 tokens.
 """
 
 SUMMARY_SYSTEM = """Turn this planning dialogue into one concise editable goal tree.
 Use the user's decisions as authoritative. Return strict JSON:
 {"summary": str, "draft": {"rationale": str, "nodes": [goal nodes]}}.
 The first node must fit below the supplied target: overgoal below umbrella,
-otherwise subgoal below an overgoal/subgoal. Include concrete tasks when known;
-do not invent dates. Nodes use type, title, description, priority, due_date, children.
+otherwise subgoal below an overgoal/subgoal. Never use type "umbrella".
+Include concrete tasks when known; do not invent dates, and derive any dates
+from TODAY in the prompt. Nodes use type, title, description, priority,
+due_date, children. Keep descriptions short so the JSON reply never exceeds
+~1500 tokens.
 """
 
 
@@ -987,30 +1262,41 @@ class ClaudeGoalPlanner:
     def _call(self, system: str, prompt: str) -> dict:
         log_diag("prompt", f"surface=goal-planner model={self.model} input_chars={len(prompt)}")
         msg = self.client.messages.create(
-            model=self.model, max_tokens=1200, system=system,
+            model=self.model, max_tokens=4000, system=system,
             messages=[{"role": "user", "content": prompt}])
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            log_diag("prompt", f"surface=goal-planner model={self.model} "
+                     "reply truncated at max_tokens=4000")
         data = _json_object(text)
         if not data:
-            raise ValueError("planner returned invalid JSON")
+            raise ValueError("the planner reply could not be read — nothing was "
+                             "saved, please try again")
         return data
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now().astimezone().date().isoformat()
 
     def first(self, suggestion: str, target: dict) -> tuple[str, dict]:
         data = self._call(PLANNER_SYSTEM,
-                          f"TARGET TYPE: {target['type']}\nSUGGESTION: {suggestion}")
+                          f"TODAY: {self._today()}\nTARGET TYPE: {target['type']}\n"
+                          f"SUGGESTION: {suggestion}")
         return str(data.get("message") or "What outcome do you want?"), data.get("draft") or {}
 
     def reply(self, session: dict, answer: str, target: dict) -> tuple[str, dict]:
         transcript = "\n".join(f"{m['role']}: {m['content']}" for m in session["messages"])
         data = self._call(PLANNER_SYSTEM,
-                          f"TARGET TYPE: {target['type']}\nDRAFT: {json.dumps(session['draft'])}"
+                          f"TODAY: {self._today()}\nTARGET TYPE: {target['type']}\n"
+                          f"DRAFT: {json.dumps(session['draft'])}"
                           f"\nDIALOGUE:\n{transcript}\nuser: {answer}")
         return str(data.get("message") or "What should we decide next?"), data.get("draft") or session["draft"]
 
     def summarize(self, session: dict, target: dict) -> tuple[str, dict]:
         transcript = "\n".join(f"{m['role']}: {m['content']}" for m in session["messages"])
         data = self._call(SUMMARY_SYSTEM,
-                          f"TARGET TYPE: {target['type']}\nDIALOGUE:\n{transcript}\n"
+                          f"TODAY: {self._today()}\nTARGET TYPE: {target['type']}\n"
+                          f"DIALOGUE:\n{transcript}\n"
                           f"CURRENT DRAFT: {json.dumps(session['draft'])}")
         return str(data.get("summary") or "Review this plan."), data.get("draft") or session["draft"]
 

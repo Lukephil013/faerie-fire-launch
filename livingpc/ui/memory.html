@@ -372,6 +372,24 @@
   .calibration-row[data-cal-key]:hover { background:rgba(255,255,255,.06); }
   .calibration-row.active { background:rgba(83,231,192,.14); color:var(--cyan); }
   .calibration-row.active .cal-mark { color:var(--cyan); }
+  .soul-calibration-sections { display:grid; gap:9px; }
+  .soul-calibration-section { border:1px solid var(--line2); border-radius:12px;
+    background:rgba(255,255,255,.025); overflow:hidden; }
+  .soul-calibration-section[open] { border-color:rgba(83,231,192,.42);
+    background:rgba(83,231,192,.045); }
+  .soul-calibration-section summary { display:flex; align-items:center; gap:10px; padding:10px 12px;
+    cursor:pointer; list-style:none; user-select:none; }
+  .soul-calibration-section summary::-webkit-details-marker { display:none; }
+  .soul-calibration-section summary:hover { background:rgba(255,255,255,.045); }
+  .soul-cal-section-number { display:grid; place-items:center; flex:0 0 24px; height:24px;
+    border:1px solid var(--line2); border-radius:999px; color:var(--cyan); font-size:11px; }
+  .soul-cal-section-title { min-width:0; flex:1; }
+  .soul-cal-section-title .calibration-section { margin:0; color:var(--fg); }
+  .soul-cal-section-count { display:block; margin-top:2px; font-size:10.5px; color:var(--muted); }
+  .soul-cal-section-chevron { color:var(--muted); transition:transform .16s ease; }
+  .soul-calibration-section[open] .soul-cal-section-chevron { transform:rotate(180deg); }
+  .soul-cal-section-body { padding:3px 12px 10px 46px; border-top:1px solid rgba(112,214,158,.12); }
+  .soul-cal-question-number { flex:0 0 20px; color:var(--muted); font-size:10.5px; }
   body.profile-launch .personal-only, body.profile-launch [data-personal-only="true"] { display:none !important; }
   body.profile-launch #view-goals .admin-only, body.profile-launch #goal-add-overgoal,
   body.profile-launch #goal-backfill-origin, body.profile-launch #goal-view-list,
@@ -400,6 +418,7 @@
     letter-spacing:1.4px; text-transform:uppercase; margin-bottom:5px; }
   .soul-calibration-field textarea { width:100%; min-height:86px; }
   .soul-calibration-prompt { font-size:16px; font-weight:600; line-height:1.4; margin-bottom:10px; }
+  .soul-cal-answer-hint { margin-top:5px; font-size:11px; }
   .soul-facts { margin-top:12px; padding-top:10px; border-top:1px solid var(--line2); }
   .soul-fact { padding:7px 0; border-bottom:1px solid rgba(112,214,158,.08);
     font-size:12px; line-height:1.45; }
@@ -532,6 +551,18 @@
   .cur-attach-chip { border:1px solid rgba(83,231,192,.28); border-radius:20px;
     padding:3px 9px; color:var(--muted); font-size:11px; background:rgba(83,231,192,.05); }
   .cur-attach-chip.soul { color:var(--cyan); }
+  .context-documents { margin:9px 0; padding:9px 10px; border:1px dashed rgba(83,231,192,.28);
+    border-radius:11px; background:rgba(83,231,192,.035); }
+  .context-doc-list { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px; }
+  .context-doc-chip { display:inline-flex; align-items:center; gap:5px; max-width:100%;
+    border:1px solid rgba(83,231,192,.3); border-radius:18px; padding:3px 7px;
+    color:var(--cyan); font-size:11px; background:rgba(83,231,192,.06); }
+  .context-doc-chip .context-doc-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    max-width:260px; }
+  .context-doc-chip button { border:0; padding:0 3px; min-width:0; background:transparent;
+    color:var(--muted); font-size:11px; }
+  .context-doc-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .context-doc-actions .hint { margin:0; flex:1; min-width:220px; }
   .cur-star { cursor:pointer; color:var(--grey); font-size:16px; user-select:none; }
   .cur-star.on { color:var(--amber); text-shadow:0 0 10px rgba(255,209,102,.6); }
   .cur-icon-btn { font-family:'Segoe UI Symbol','Segoe UI',sans-serif; font-size:13px;
@@ -555,10 +586,13 @@
   .cur-loop-load i { display:block; height:100%; width:0;
     background:linear-gradient(90deg,#2fe3a0,#53e7c0); animation:cur-loop-fill 1s ease forwards; }
   @keyframes cur-loop-fill { to { width:100%; } }
-  .cur-answer-tools,.goal-answer-tools { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  .cur-answer-tools { display:flex; align-items:center; gap:9px; margin-top:8px; }
+  .goal-answer-tools { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
     gap:7px; margin-top:8px; }
-  .cur-answer-tools label,.goal-answer-tools label { color:var(--muted); font-size:11px; display:grid; gap:4px; }
-  .cur-answer-tools select,.goal-answer-tools select { padding:6px 8px; font-size:12px; }
+  .goal-answer-tools label { color:var(--muted); font-size:11px; display:grid; gap:4px; }
+  .goal-answer-tools select { padding:6px 8px; font-size:12px; }
+  .cur-thumb { padding:5px 12px; border-radius:999px; font-size:16px; line-height:1; }
+  .cur-thumb.active { border-color:var(--green); color:var(--cyan); background:rgba(47,227,160,.14); }
   .choice-pills { display:flex; flex-wrap:wrap; gap:7px; margin:7px 0 4px; }
   .choice-pills button { padding:6px 10px; border-radius:999px; font-size:12px; }
   .choice-pills button.active { border-color:var(--green); color:var(--cyan); background:rgba(47,227,160,.12); }
@@ -603,13 +637,14 @@
   .resolved-row .rr-tag.nh-heavy { color:var(--red); border-color:rgba(255,107,138,.45); }
   .metric-panel { border:1px solid rgba(112,214,158,.18); border-radius:12px;
     padding:12px; margin:12px 0 16px; background:rgba(7,27,17,.55); }
-  .metric-collapsible summary { cursor:pointer; list-style:none; }
-  .metric-collapsible summary::-webkit-details-marker { display:none; }
+  .metric-panel > summary { cursor:pointer; list-style:none; }
+  .metric-panel > summary::-webkit-details-marker { display:none; }
   .metric-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .metric-summary-title { color:var(--cyan); font-size:10px; letter-spacing:1.6px;
     text-transform:uppercase; }
-  .metric-summary-title::before { content:'▸'; color:var(--muted); margin-right:7px; }
-  .metric-collapsible[open] .metric-summary-title::before { content:'▾'; color:var(--cyan); }
+  .metric-summary-title::before { content:'▸'; color:var(--muted); margin-right:8px;
+    font-size:17px; line-height:1; vertical-align:-3px; display:inline-block; }
+  details[open] > summary .metric-summary-title::before { content:'▾'; color:var(--cyan); }
   .metric-summary-stats { display:flex; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:11px; }
   .metric-summary-stats span { border:1px solid var(--line2); border-radius:20px; padding:2px 8px; }
   .metric-body { margin-top:12px; }
@@ -679,6 +714,8 @@
   .planner-msg { padding:9px 11px; border-radius:10px; margin:8px 0; white-space:pre-wrap; line-height:1.5; }
   .planner-msg.assistant { background:rgba(83,231,192,.08); }
   .planner-msg.user { background:rgba(255,255,255,.06); margin-left:28px; }
+  .planner-msg.planner-thinking { color:var(--muted); animation:planner-think 1.4s ease-in-out infinite; }
+  @keyframes planner-think { 0%,100%{opacity:.45} 50%{opacity:1} }
   .goal-chip { display:inline-block; font-size:10px; padding:2px 8px; border:1px solid var(--line2);
     border-radius:20px; color:var(--muted); margin:2px; }
   .goal-add-wrap { position:relative; display:inline-block; }
@@ -761,6 +798,18 @@
   .goal-recap-sources { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
   .goal-recap-card details { margin-top:8px; }
   .goal-recap-card summary { color:var(--muted); cursor:pointer; font-size:12px; }
+  .outcome-form { margin-top:10px; }
+  .outcome-form > summary { padding:4px 0; }
+  .outcome-form > label { display:grid; grid-template-columns:1fr; gap:5px; width:100%;
+    margin:10px 0; color:var(--muted); font-size:11px; line-height:1.35; }
+  .outcome-form textarea,.outcome-form select { display:block; width:100%; min-width:0;
+    box-sizing:border-box; margin:0; border:1px solid var(--line); border-radius:10px;
+    background:rgba(2,12,7,.72); color:var(--fg); padding:9px 10px; font:inherit; }
+  .outcome-form textarea { min-height:68px; resize:vertical; line-height:1.45; }
+  .outcome-form select { min-height:38px; }
+  .outcome-form .actions { margin-top:12px; }
+  .goal-definition-starter { margin-top:12px; }
+  .goal-definition-starter .goal-focus-muted { margin:7px 0 10px; }
   .goal-focus-mini { display:grid; gap:7px; margin:10px 0; }
   .goal-focus-leaf { display:flex; gap:8px; align-items:flex-start; padding:8px 9px;
     border:1px solid rgba(83,231,192,.12); border-radius:10px; background:rgba(83,231,192,.04);
@@ -821,6 +870,15 @@
   .constellation-node.dragging-node circle.core { stroke:white; stroke-width:2.6; }
   .constellation-node.needs-care circle.halo { fill:none; stroke:rgba(255,209,102,.62); stroke-width:2;
     stroke-dasharray:4 5; }
+  .constellation-node.greatest circle.greatest-ring { fill:none; stroke:rgba(255,209,102,.95);
+    stroke-width:2.2; animation:greatest-pulse 2.6s ease-in-out infinite; }
+  .constellation-node.greatest circle.glow { fill:rgba(255,209,102,.16); }
+  .constellation-node.greatest text { fill:#ffd166; }
+  @keyframes greatest-pulse { 0%,100%{opacity:.55} 50%{opacity:1} }
+  .goal-tree-row.greatest { background:rgba(255,209,102,.08); border-left:2px solid rgba(255,209,102,.75); }
+  .goal-tree-row.greatest .goal-title { color:#ffd166; }
+  .goal-tree-row.greatest:hover,.goal-tree-row.greatest.selected { background:rgba(255,209,102,.15); }
+  .goal-greatest-star { color:#ffd166; font-size:12px; flex:none; }
   .constellation-node:hover circle.core { stroke:white; stroke-width:2; }
   .constellation-legend { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; color:var(--muted);
     font-size:11px; }
@@ -1097,8 +1155,8 @@
       <span id="soul-cal-progress" class="hint" style="margin:0 12px"></span>
       <button id="soul-cal-close" style="margin-left:auto">Close</button>
     </div>
-    <p class="hint">13 quick questions, one at a time — these shape how Faerie thinks and
-      talks with you, not just what it knows about you. Skip any time; skipped ones
+    <p class="hint">A reflective inventory, one question at a time. The current section opens
+      automatically, then closes as the next section opens. Skip any question; skipped ones
       stay hidden unless you type <code>/recalibrate</code> in chat to start over.</p>
     <p class="hint">Feeling overwhelmed? Just write whatever basic thing comes to mind first —
       as more thoughts surface, add them too. Faerie will sort it out.</p>
@@ -1244,6 +1302,7 @@
   </div>
 
   <div class="view" id="view-curiosity">
+    <div id="cur-candidates"></div>
     <div id="cur-list"></div>
     <div id="cur-switcher"></div>
   </div>
@@ -1256,7 +1315,7 @@
         <div class="growth-map-stage">
           <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
           <div class="constellation-legend">
-            <span>✦ Soul</span><span>◆ Root</span><span>◇ Branch</span><span>✓ Leaf</span><span>gold halo = needs care</span>
+            <span>✦ Soul</span><span>◆ Root</span><span>◇ Branch</span><span>✓ Leaf</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
           </div>
         </div>
         <aside class="goal-pane goal-focus-panel" id="goal-focus-panel">
@@ -1292,7 +1351,7 @@
       <div id="growth-map-summary" class="growth-map-summary"></div>
       <div id="growth-map-tree" class="growth-map-tree" aria-label="Living constellation map"></div>
       <div class="constellation-legend">
-        <span>✦ Soul</span><span>◆ Root</span><span>◇ Branch</span><span>✓ Leaf</span><span>gold halo = needs care</span>
+        <span>✦ Soul</span><span>◆ Root</span><span>◇ Branch</span><span>✓ Leaf</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
       </div>
     </div>
   </div>
@@ -1488,6 +1547,45 @@ const KO_UI_TEXT = Object.freeze({
   'Dismiss selected':'선택 항목 숨기기',
   'Apply to selected':'선택 항목에 적용',
   'Recently resolved':'최근 해결됨',
+  'Possible next Investigations':'다음 탐구 후보',
+  'Look for worthwhile Investigations':'가치 있는 탐구 찾아보기',
+  'Suggested Investigation':'제안된 탐구',
+  'Never suggest this topic':'이 주제는 다시 제안하지 않기',
+  'Not relevant':'관련 없음',
+  'Not now':'나중에',
+  'Refine':'다듬기',
+  'Start Investigation':'탐구 시작',
+  'Is this still yours?':'이 목표는 아직 당신의 것인가요?',
+  'Review relevance':'관련성 검토',
+  'Gardening proposals':'트리 정리 제안',
+  'Newer evidence behind this prompt':'이 질문을 불러온 새로운 근거',
+  'Prior relevance reviews':'이전 관련성 검토',
+  'Archived history':'보관된 기록',
+  'Proposed title':'제안된 제목',
+  'Proposed description':'제안된 설명',
+  'Keep as is':'그대로 유지',
+  'Approve change':'변경 승인',
+  'Archive — no longer mine':'보관 — 더 이상 내 목표가 아님',
+  'What did this experiment teach?':'이 실험에서 무엇을 배웠나요?',
+  'Record an outcome':'결과 기록',
+  'What happened?':'무슨 일이 있었나요?',
+  'What obstacle did you expect?':'어떤 장애물을 예상했나요?',
+  'What surprised you?':'무엇이 놀라웠나요?',
+  'How helpful was this?':'얼마나 도움이 되었나요?',
+  'What changed in your understanding?':'이해가 어떻게 달라졌나요?',
+  'What should the next experiment adjust?':'다음 실험에서는 무엇을 조정해야 하나요?',
+  'Save outcome and teach Faerie':'결과를 저장하고 페어리에게 알려주기',
+  'Next experiment should reflect this':'다음 실험에 반영할 점',
+  'Person-model reconciliation':'개인 모델 조정',
+  'Suggest person-model updates':'개인 모델 업데이트 제안 보기',
+  'Approve update':'업데이트 승인',
+  'Proposed wording':'제안된 표현',
+  'Evidence':'근거',
+  'Exceptions / counterevidence':'예외 / 반대 근거',
+  'Change over time':'시간에 따른 변화',
+  'Rejected':'거절됨',
+  'approved':'승인됨',
+  'awaiting your decision':'결정을 기다리는 중',
   'Select a star to see what matters now.':'별을 선택하면 지금 중요한 내용을 볼 수 있어요.',
   'Edit Details':'세부 정보 편집',
   'Detailed editing lives here so the main Growth page can stay focused on orientation and action.':'자세한 편집은 이곳에서 하고, 메인 성장 화면은 방향과 행동에 집중하도록 유지해요.',
@@ -1545,6 +1643,7 @@ const KO_UI_TEXT = Object.freeze({
   'Reflection prompt':'성찰 질문',
   'Confidence in your answer':'답변 확신도',
   'Question fit':'질문 적합도',
+  'Was this a good question?':'좋은 질문이었나요?',
   'Dismiss':'숨기기',
   'Answer':'답변',
   'To do:':'할 일:',
@@ -1553,6 +1652,16 @@ const KO_UI_TEXT = Object.freeze({
   'Completion':'완료도',
   'Why this exists':'존재 이유',
   'Soul purpose':'Soul 목적',
+  // Seeded/default content that older installs stored in English (new
+  // installs seed these in Korean via onboarding.py's T() calls).
+  'Getting to know Faerie Fire':'페어리 파이어 알아가기',
+  'This is a seeded starter investigation so there\'s something to look at on day one. Investigations are open questions Faerie actively pursues — asking you things, and once grounded in what you\'ve confirmed, suggesting next moves. Answer a question below whenever you like, or start a real investigation of your own from the Investigations tab and archive this one.':
+    '첫날 바로 살펴볼 수 있도록 미리 심어둔 시작 탐구예요. 탐구는 페어리가 계속 따라가며 질문하고, 당신이 확인해준 내용을 바탕으로 다음 움직임을 제안하는 열린 질문이에요. 원할 때 아래 질문에 답하거나, 채팅에서 새로운 탐구를 시작한 뒤 이 항목을 보관해도 좋아요.',
+  'This app is designed to help you actualize your Soul and become the best version of yourself.':
+    '이 앱은 당신이 소울을 실현하고 가장 나다운 모습으로 자라도록 돕기 위해 만들어졌어요.',
+  'The answers are already inside you — Faerie Fire just helps you extract and build them, across every part of your life.':
+    '답은 이미 당신 안에 있고, 페어리 파이어는 삶의 여러 영역에서 그 답을 꺼내고 쌓아갈 수 있게 도와줄 뿐이에요.',
+  'Edit this if you\'d put it differently.':'다르게 표현하고 싶다면 언제든 수정해도 좋아요.',
   'Where each area stands':'각 영역의 현재 상태',
   'Address these leaves next':'다음으로 다룰 Leaf',
   'Show full original note':'원본 메모 전체 보기',
@@ -1564,6 +1673,7 @@ const KO_UI_TEXT = Object.freeze({
   'Branch':'가지',
   'Leaf':'잎',
   'gold halo = needs care':'금색 후광 = 돌봄 필요',
+  '★ gold ring = greatest curiosity':'★ 금색 고리 = 가장 큰 호기심',
 
   // --- added: full sweep ---
   'Command Center chat':'커맨드 센터 채팅',
@@ -1767,8 +1877,13 @@ const KO_UI_TEXT = Object.freeze({
   'Create Soul':'Soul 만들기',
   'Could not save that.':'그 내용을 저장할 수 없어요.',
   'Completed — click to review or adjust':'완료됨 — 클릭해서 검토하거나 조정하세요',
+  'Completed':'완료됨',
+  'Approve':'승인',
+  'Change API Key':'API 키 변경',
+  "Today's Report":'오늘의 리포트',
+  'Full Report':'전체 리포트',
   'Save & next':'저장하고 다음',
-  '✓ Soul Calibration completed — all 13 covered. Faerie introduced itself in chat with a synthesis of what you shared. You can revisit or change any answer anytime: reopen this from Settings → Soul Calibration, or just click a question below to edit it.':'✓ Soul 조율이 완료됐어요 — 13개 항목을 모두 다뤘어요. 페어리가 채팅에서 당신이 공유한 내용을 종합해 스스로를 소개했어요. 언제든 다시 보거나 답을 바꿀 수 있어요: 설정 → Soul 조율에서 다시 열거나, 아래 질문을 클릭해서 바로 편집하세요.',
+  'Enter adds a new line · Ctrl/⌘ + Enter saves and continues':'Enter는 줄을 바꾸고 · Ctrl/⌘ + Enter는 저장한 뒤 다음으로 넘어가요',
   'New chat':'새 대화',
   'Command Center failed.':'커맨드 센터 실패.',
   'Restart Faerie Fire to load the Command Center bridge.':'커맨드 센터 브리지를 불러오려면 페어리 파이어를 다시 시작하세요.',
@@ -1824,6 +1939,18 @@ const KO_UI_TEXT = Object.freeze({
   'Use simple words. If the question feels wrong, say what it should ask instead.':'쉬운 말로 답하세요. 질문이 이상하게 느껴지면 대신 어떤 질문이어야 할지 말해주세요.',
   'GoalAI generated this from the current node context. Answer with one concrete observation first.':'GoalAI가 현재 노드 맥락에서 만든 질문이에요. 먼저 구체적인 관찰 하나로 답하세요.',
   'Answer in plain words. A short uncertain answer is okay.':'쉬운 말로 답하세요. 짧고 확신 없는 답이어도 괜찮아요.',
+  'Attach document':'문서 첨부',
+  'Attached context documents':'첨부된 맥락 문서',
+  'Insert reference':'참조 삽입',
+  'Remove document':'문서 제거',
+  'PDF, DOCX, Markdown, or text. Text is extracted locally and encrypted for this context.':'PDF, DOCX, Markdown 또는 텍스트 파일. 텍스트는 로컬에서 추출되어 이 맥락에 암호화 저장돼요.',
+  'You can refer to an attachment by name in your answer.':'답변에서 첨부 문서 이름을 언급해 참조할 수 있어요.',
+  'Investigation document context':'탐구 문서 맥락',
+  'These documents inform this Investigation and its future questions.':'이 문서는 이 탐구와 앞으로의 질문에 맥락을 제공해요.',
+  'Document attached.':'문서를 첨부했어요.',
+  'Document removed.':'문서를 제거했어요.',
+  'Could not attach document.':'문서를 첨부할 수 없어요.',
+  'Could not remove document.':'문서를 제거할 수 없어요.',
   'Did you try this yet?':'이걸 시도해봤나요?',
   'Answer yes, no, or partly. If yes, what happened? If no, what stopped you?':'예, 아니오, 또는 부분적으로 답하세요. 예라면 무슨 일이 있었나요? 아니오라면 무엇이 막았나요?',
   'What was the first hard moment?':'처음으로 힘들었던 순간은 언제였나요?',
@@ -1866,6 +1993,10 @@ const KO_UI_TEXT = Object.freeze({
   'This Branch needs a clearer problem statement.':'이 Branch에는 더 명확한 문제 정의가 필요해요.',
   'Where it came from':'어디서 비롯됐는지',
   'What this Leaf asks you to do':'이 Leaf가 요구하는 것',
+  'What this Root asks you to pursue':'이 Root가 추구하는 것',
+  'What this Branch asks you to define':'이 Branch가 정의해야 하는 것',
+  'This Leaf only has a title so far. Define the concrete action before tracking outcomes, completion, or reflection.':'이 Leaf는 아직 제목만 있어요. 결과, 완료도, 성찰을 추적하기 전에 구체적인 행동을 정의하세요.',
+  'Draft steps with GoalAI':'GoalAI로 단계 초안 만들기',
   'This Leaf needs one concrete action.':'이 Leaf에는 구체적인 행동 하나가 필요해요.',
   'What it helps test':'이것이 검증하는 것',
   'Context missing':'맥락 없음',
@@ -2037,15 +2168,23 @@ const KO_UI_PATTERNS = [
   [/^Ready to classify · (\d+)$/,'분류 준비됨 · $1'],
   [/^Active · (\d+)$/,'진행 중 · $1'],
   [/^(\d+) shown$/,'$1개 표시 중'],
+  [/^(\d+) of (\d+) shown$/,'$2개 중 $1개 표시'],
   [/^Show (\d+) more$/,'$1개 더 보기'],
   [/^Show fewer$/,'접기'],
+  [/^Waiting on your decision for “(.+)”\.$/,'"$1"에 대한 결정을 기다리고 있어요.'],
   [/^(\d+) waiting on you$/,'답변 대기 $1개'],
+  [/^(\d+) waiting on you · Unplaced$/,'답변 대기 $1개 · 미배치'],
+  [/^(\d+) waiting on you · (.+)$/,'답변 대기 $1개 · $2'],
+  [/^Nothing waiting · Unplaced$/,'대기 중인 항목 없음 · 미배치'],
+  [/^Nothing waiting · (.+)$/,'대기 중인 항목 없음 · $1'],
   [/^(\d+) question\(s\) waiting for you$/,'답변할 질문 $1개'],
   [/^(\d+) facts$/,'기억 $1개'],
   [/^(\d+) of (\d+) facts$/,'기억 $2개 중 $1개'],
   [/^profile: (.+) · backend: (.+)$/,'프로필: $1 · 백엔드: $2'],
   [/^next (.+)$/,'다음 실행 $1'],
   [/^(\d+)\/(\d+) covered$/,'$2개 중 $1개 완료'],
+  [/^✓ Soul Calibration completed — all (\d+) questions covered\. You can revisit or change any answer anytime: reopen this from Settings → Soul Calibration, or just click a question below to edit it\.$/,
+   '✓ Soul 조율이 완료됐어요 — $1개 질문을 모두 다뤘어요. 언제든 다시 보거나 답을 바꿀 수 있어요: 설정 → Soul 조율에서 다시 열거나, 아래 질문을 클릭해서 바로 편집하세요.'],
   [/^(.+) confident$/,'확신도 $1'],
 
   // --- added: full sweep (corrected) ---
@@ -2136,6 +2275,10 @@ const KO_UI_PATTERNS = [
   [/^cache hit rate: (.*)$/,'캐시 적중률: $1'],
   [/^Let's continue the \"(.*)$/,'"$1 계속 진행할게요'],
 
+  [/^(\d+) items?$/,'$1개 항목'],
+  [/^(\d+)% confidence this question is relevant$/,'이 질문이 적절하다는 확신도 $1%'],
+  [/^(\d+)% confidence this suggestion fits you$/,'이 제안이 잘 맞는다는 확신도 $1%'],
+  [/^Interpretation history \((\d+)\)$/,'해석 기록 ($1)'],
   [/^(\d+) proposal\(s\) waiting for approval$/,'제안 $1개가 승인 대기 중이에요'],
   [/^(\d+) blocked node\(s\) need care$/,'막힌 노드 $1개가 관리가 필요해요'],
   [/^(\d+)\/(\d+) covered so far$/,'$2개 중 $1개 완료(지금까지)'],
@@ -2160,6 +2303,13 @@ const KO_UI_PATTERNS = [
    '페어리 파이어의 모든 것, 즉 뿌리, 가지, 잎은 하나의 소울 아래에서 자라요. 이 지도는 당신이 어떤 삶과 성장을 향해 가고 싶은지 지지하기 위해 존재해요. 나중에 소울 조율에서 언제든 바꿀 수 있어요.'],
   [/^Talk with Faerie here\. This is the single chat surface; it can use memory,\s+investigations, Growth context, attachments, and filing commands\.$/,
    '여기서 페어리와 대화해요. 기억, 탐구, 성장 맥락, 첨부파일, 파일링 명령을 모두 사용할 수 있는 하나의 채팅 공간이에요.'],
+  // Soul Calibration drawer hints — split into fragments by the inline
+  // <code>/recalibrate</code>, so the before/after pieces translate apart.
+  [/^A reflective inventory, one question at a time\. The current section opens\s+automatically, then closes as the next section opens\. Skip any question; skipped ones\s+stay hidden unless you type$/,
+   '성찰 질문을 하나씩 진행해요. 현재 섹션은 자동으로 열리고, 끝내면 닫히면서 다음 섹션이 열려요. 어떤 질문이든 건너뛸 수 있고, 건너뛴 질문을 처음부터 다시 보려면 채팅에'],
+  [/^in chat to start over\.$/,'를 입력하세요.'],
+  [/^Feeling overwhelmed\? Just write whatever basic thing comes to mind first —\s+as more thoughts surface, add them too\. Faerie will sort it out\.$/,
+   '부담스럽다면 일단 떠오르는 것부터 편하게 적어보세요 — 생각이 더 떠오르면 그때 덧붙이면 돼요. 정리는 페어리가 할게요.'],
   [/^Faerie seeded one starter investigation —$/,'페어리가 시작 탐구 하나를 심어두었어요 —'],
   [/^"Getting to know Faerie Fire"$/,'"페어리 파이어 알아가기"'],
   [/^— under\s+Investigations, so there's something to answer on day one\. Everything else grows from here: talk to Faerie\s+in Command Center, or watch the Growth tree fill in as you go\.$/,
@@ -2457,8 +2607,8 @@ new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(
   if(node.nodeType===1){ if(node.tagName==='TEXTAREA') autoGrow(node); autoGrowWithin(node); }
 }))).observe(document.documentElement,{childList:true,subtree:true});
 
-/* Shift+Enter submits via the given callback; plain Enter keeps inserting a
-   newline (default textarea behavior — nothing to do for that case). */
+/* Plain Enter submits via the given callback; Shift+Enter keeps the native
+   textarea newline behavior used by chat and other quick-entry surfaces. */
 function bindShiftEnterSubmit(textarea, onSubmit){
   // Enter sends; Shift+Enter inserts a newline (standard chat-box convention).
   textarea.addEventListener('keydown', e=>{
@@ -2480,6 +2630,57 @@ function toast(msg, isErr, actionLabel, onAction, duration){
   t.className=(isErr?'err ':'')+'show';
   clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>t.classList.remove('show'), duration||3200);
+}
+
+function contextDocumentHtml(attachments,ownerKind,ownerKey,allowReference){
+  attachments=attachments||[];
+  const chips=attachments.map(a=>'<span class="context-doc-chip" data-attachment-id="'+a.id+'">'+
+    '<span aria-hidden="true">▤</span><span class="context-doc-name" title="'+esc(a.name)+'">'+esc(a.name)+'</span>'+
+    (allowReference?'<button type="button" class="context-doc-insert" aria-label="Insert reference" title="Insert reference" data-name="'+esc(a.name)+'">↳</button>':'')+
+    '<button type="button" class="context-doc-remove" aria-label="Remove document" title="Remove document">×</button></span>').join('');
+  return '<div class="context-documents" data-owner-kind="'+esc(ownerKind)+'" data-owner-key="'+esc(ownerKey)+'">'+
+    (chips?'<div class="context-doc-list">'+chips+'</div>':'')+
+    '<div class="context-doc-actions"><button type="button" class="context-doc-add">📎 Attach document</button>'+
+    '<span class="hint">PDF, DOCX, Markdown, or text. Text is extracted locally and encrypted for this context.</span></div>'+
+    (allowReference&&attachments.length?'<div class="hint" style="margin-top:6px">You can refer to an attachment by name in your answer.</div>':'')+
+    '</div>';
+}
+
+function contextDocumentSummaryHtml(attachments){
+  if(!attachments||!attachments.length) return '';
+  return '<div class="context-doc-list" style="margin-top:6px">'+attachments.map(a=>
+    '<span class="context-doc-chip"><span aria-hidden="true">▤</span><span class="context-doc-name">'+
+    esc(a.name)+'</span></span>').join('')+'</div>';
+}
+
+function bindContextDocuments(scope,ownerKind,ownerKey,textarea,refresh){
+  const box=Array.from(scope.querySelectorAll('.context-documents')).find(el=>
+    el.dataset.ownerKind===String(ownerKind)&&el.dataset.ownerKey===String(ownerKey));
+  if(!box) return;
+  const add=box.querySelector('.context-doc-add');
+  if(add) add.onclick=()=>{
+    add.disabled=true;
+    pywebview.api.context_attachment_add(ownerKind,String(ownerKey)).then(r=>{
+      add.disabled=false;
+      if(!r||r.ok===false){if(r&&r.message)toast(r.message,true);return;}
+      toast('Document attached.'); if(refresh) refresh();
+    }).catch(e=>{add.disabled=false;toast('Could not attach document: '+e,true);});
+  };
+  box.querySelectorAll('.context-doc-remove').forEach(button=>button.onclick=()=>{
+    const chip=button.closest('[data-attachment-id]');
+    pywebview.api.context_attachment_remove(parseInt(chip.dataset.attachmentId,10),ownerKind,String(ownerKey)).then(r=>{
+      if(!r||r.ok===false){toast((r&&r.message)||'Could not remove document.',true);return;}
+      toast('Document removed.'); if(refresh) refresh();
+    }).catch(e=>toast('Could not remove document: '+e,true));
+  });
+  box.querySelectorAll('.context-doc-insert').forEach(button=>button.onclick=()=>{
+    if(!textarea) return;
+    const reference=APP_LANG==='ko'?'[첨부 문서: '+button.dataset.name+']':'[Attached document: '+button.dataset.name+']';
+    const start=textarea.selectionStart==null?textarea.value.length:textarea.selectionStart;
+    const end=textarea.selectionEnd==null?start:textarea.selectionEnd;
+    const prefix=start&&textarea.value[start-1]!=='\n'?'\n':'';
+    textarea.setRangeText(prefix+reference,start,end,'end'); textarea.focus(); autoGrow(textarea);
+  });
 }
 
 let lastAutoDbRescueAt=0, autoDbRescuePromise=null;
@@ -2652,25 +2853,50 @@ function soulCalActiveField(state){
 
 function soulCalChecklistHtml(state, activeKey){
   const sections=(state&&state.sections)||[];
-  return sections.map(sec=>{
-    const attrs=(sec.attributes||[]).filter(a=>a.state!=='skipped');
+  const active=soulCalFieldByKey(state,activeKey);
+  const activeSection=active&&active.section;
+  return '<div class="soul-calibration-sections">'+sections.map((sec,sectionIndex)=>{
+    const attrs=(sec.attributes||[]);
     if(!attrs.length) return '';
-    return '<div class="calibration-section">'+esc(sec.section)+'</div>'+
-    attrs.map(a=>{
+    const covered=attrs.filter(a=>a.state==='done'||a.state==='skipped').length;
+    const complete=covered===attrs.length;
+    return '<details class="soul-calibration-section'+(complete?' complete':'')+'" data-cal-section="'+
+      esc(sec.section)+'"'+(sec.section===activeSection?' open':'')+'><summary>'+
+      '<span class="soul-cal-section-number">'+(sectionIndex+1)+'</span>'+
+      '<span class="soul-cal-section-title"><span class="calibration-section">'+esc(sec.section)+'</span>'+
+      '<span class="soul-cal-section-count">'+covered+'/'+attrs.length+' covered</span></span>'+
+      '<span class="soul-cal-section-chevron" aria-hidden="true">⌄</span></summary>'+
+      '<div class="soul-cal-section-body">'+attrs.map((a,questionIndex)=>{
       const key=sec.section+'::'+a.attribute;
-      const mark=a.state==='done'?'✓':'○';
+      const mark=a.state==='done'?'✓':a.state==='skipped'?'↻':'○';
       return '<div class="calibration-row '+a.state+(key===activeKey?' active':'')+
-        '" data-cal-key="'+esc(key)+'" title="Click to review or edit"><span class="cal-mark">'+mark+
+        '" data-cal-key="'+esc(key)+'" title="Click to review or edit"><span class="soul-cal-question-number">'+
+        (questionIndex+1)+'.</span><span class="cal-mark">'+mark+
         '</span><span>'+esc(a.label)+'</span></div>';
-    }).join('')
-  }).join('');
+      }).join('')+'</div></details>';
+  }).join('')+'</div>';
 }
 
 function bindSoulCalDrawer(){
   const textarea=$('soul-cal-answer');
   if(textarea){
     textarea.focus();
-    bindShiftEnterSubmit(textarea, ()=>submitSoulCalField(false));
+    // Calibration answers are reflective and often multiline. Plain Enter
+    // must remain the textarea default; only this explicit chord advances.
+    textarea.addEventListener('keydown',e=>{
+      if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.isComposing){
+        e.preventDefault();
+        submitSoulCalField(false);
+      }
+    });
+  }
+  const active=soulCalActiveField(soulCalState);
+  if(active&&active.attachment_key){
+    bindContextDocuments($('soul-cal-body'),'soul_calibration',active.attachment_key,textarea,()=>{
+      pywebview.api.command_calibration_status().then(r=>{
+        if(r&&r.ok){soulCalState=r;renderSoulCalDrawer();}
+      });
+    });
   }
   const saveBtn=$('soul-cal-save'); if(saveBtn) saveBtn.onclick=()=>submitSoulCalField(false);
   const skipBtn=$('soul-cal-skip'); if(skipBtn) skipBtn.onclick=()=>submitSoulCalField(true);
@@ -2697,22 +2923,26 @@ function renderSoulCalDrawer(){
   let formHtml;
   if(active){
     const isDone=active.state==='done';
+    const activeSection=((state.sections||[]).find(sec=>sec.section===active.section)||{}).attributes||[];
+    const sectionQuestion=Math.max(0,activeSection.findIndex(a=>a.attribute===active.attribute))+1;
     const buttons=[];
     if(jumped) buttons.push('<button type="button" id="soul-cal-back" class="skip">Back to next question</button>');
     if(!isDone) buttons.push('<button type="button" id="soul-cal-skip" class="skip">Skip for now</button>');
     buttons.push('<button type="button" id="soul-cal-save" class="accent" style="margin-left:auto">'+
       (jumped?'Save':'Save &amp; next')+'</button>');
+    const reviewing=jumped?(APP_LANG==='ko'?' · 답변 검토 중':' · reviewing'):'';
     formHtml='<div class="soul-calibration-field">'+
-      '<label>'+esc(active.section)+(jumped?' · reviewing':'')+'</label>'+
+      '<label>'+esc(active.section)+' · '+sectionQuestion+'/'+activeSection.length+reviewing+'</label>'+
       '<div class="soul-calibration-prompt">'+esc(active.prompt)+'</div>'+
-      '<textarea id="soul-cal-answer" placeholder="Type your answer…">'+esc(active.value||'')+'</textarea>'+
+      contextDocumentHtml(active.attachments||[],'soul_calibration',active.attachment_key||'',true)+
+      '<textarea id="soul-cal-answer" rows="6" placeholder="Type your answer…">'+esc(active.value||'')+'</textarea>'+
+      '<div class="hint soul-cal-answer-hint">Enter adds a new line · Ctrl/⌘ + Enter saves and continues</div>'+
       '<div class="actions" style="margin-top:10px">'+buttons.join('')+'</div>'+
     '</div>';
   } else {
     formHtml='<div class="soul-calibration-field">'+
-      '<div class="self-empty">✓ Soul Calibration completed — all 13 covered. Faerie '+
-      'introduced itself in chat with a synthesis of what you shared. You can revisit '+
-      'or change any answer anytime: reopen this from Settings → Soul Calibration, or '+
+      '<div class="self-empty">✓ Soul Calibration completed — all '+(state.total||0)+' questions covered. '+
+      'You can revisit or change any answer anytime: reopen this from Settings → Soul Calibration, or '+
       'just click a question below to edit it.</div></div>';
   }
   body.innerHTML=formHtml+'<div class="soul-facts">'+
@@ -2724,7 +2954,13 @@ function renderSoulCalDrawer(){
     soulCalSynthesisFired=true;
     hideCalibrationSidebar();
     if(api()&&pywebview.api.command_calibration_synthesis){
-      pywebview.api.command_calibration_synthesis().catch(()=>{});
+      // The synthesis (plus the post-calibration investigation questions) is
+      // appended to the chat DB server-side — refresh the chat and the
+      // Investigations board the moment it lands, so the message appears now
+      // rather than after the user's next message.
+      pywebview.api.command_calibration_synthesis()
+        .then(()=>{ loadCommandChat(); loadCuriosity(); })
+        .catch(()=>{});
     }
   }
 }
@@ -2946,15 +3182,20 @@ function renderPendingProposal(){
 function approvePendingProposal(){
   if(!api()||!pywebview.api.command_send) return;
   const btn=$('cc-proposal-approve'); if(btn) btn.disabled=true;
+  // The button sends a real chat message under the hood (same fast-path
+  // Companion._proposal_approval_reply matches for a typed "yes"), so the
+  // word sent here is also what gets stored and shown as the user's own
+  // message — send/display it in the app's current language.
+  const approvalWord=APP_LANG==='ko'?'네':'approve';
   renderCommandChat({ok:true,
     active_chat_id:commandChatState&&commandChatState.active_chat_id,
     chats:commandChatState&&commandChatState.chats,
     pending_proposal:commandChatState&&commandChatState.pending_proposal,
     messages:(commandChatState&&commandChatState.messages||[]).concat([
-      {role:'user',content:'approve'}
+      {role:'user',content:approvalWord}
     ])});
   $('cc-status').innerHTML='<span class="spin"></span>Thinking…';
-  pywebview.api.command_send('approve', []).then(r=>{
+  pywebview.api.command_send(approvalWord, []).then(r=>{
     $('cc-status').textContent='';
     if(!r||r.ok===false){ toast((r&&r.message)||'Command Center failed.',true); return; }
     renderCommandChat({ok:true,active_chat_id:r.active_chat_id,chats:r.chats,
@@ -3332,7 +3573,10 @@ function selfLevelWidgetHtml(data){
   const goals=data.goals||{}, tree=goals.tree||null, curiosities=(data.curiosity&&data.curiosity.curiosities)||[];
   const rootTitle=(tree&&tree.title)||'Actualized Self';
   const snapshots=selfCuriositySnapshots(curiosities);
-  const totalXp=snapshots.reduce((sum,c)=>sum+((c.metric_snapshot&&c.metric_snapshot.total_xp)||0),0);
+  const globalXp=Number(data.curiosity&&data.curiosity.global_xp);
+  const totalXp=Number.isFinite(globalXp)
+    ? globalXp
+    : snapshots.reduce((sum,c)=>sum+((c.metric_snapshot&&c.metric_snapshot.total_xp)||0),0);
   const level=Math.max(1,Math.floor(totalXp/100)+1);
   const rank=level>=50?'S-Rank':level>=35?'A-Rank':level>=25?'B-Rank':level>=12?'C-Rank':'E-Rank';
   const nextXp=100-(totalXp%100||0);
@@ -3383,13 +3627,12 @@ function selfSidebarHtml(data){
   return '<div class="command-widget" id="self-soul-calibration"><h3>Soul Calibration</h3>'+
     '<div class="hint">'+calCovered(calibration)+'/'+(calibration.total||0)+' covered</div>'+
     (calibration.sections||[]).map(sec=>{
-      const attrs=(sec.attributes||[]).filter(a=>a.state!=='skipped');
+      const attrs=(sec.attributes||[]);
       if(!attrs.length) return '';
-      return '<div class="calibration-section">'+esc(sec.section)+'</div>'+
-      attrs.map(a=>{
-        const mark=a.state==='done'?'✓':'○';
-        return '<div class="calibration-row '+a.state+'"><span class="cal-mark">'+mark+'</span><span>'+esc(a.label)+'</span></div>';
-      }).join('')
+      const covered=attrs.filter(a=>a.state==='done'||a.state==='skipped').length;
+      const complete=covered===attrs.length;
+      return '<div class="calibration-row '+(complete?'done':'remaining')+'"><span class="cal-mark">'+
+        (complete?'✓':'○')+'</span><span>'+esc(sec.section)+' · '+covered+'/'+attrs.length+'</span></div>';
     }).join('')+
     '<div class="actions" style="margin-top:10px">'+
       '<button type="button" id="self-open-calibration" class="accent">'+
@@ -3862,8 +4105,8 @@ function handleInquiryResult(r){
 }
 
 function launchAgentWindow(mode,id){
-  if(!api()) return;
-  pywebview.api.open_agent_window(mode,id).then(r=>{
+  if(!api()) return Promise.resolve();
+  return pywebview.api.open_agent_window(mode,id).then(r=>{
     if(!r||r.ok===false) toast((r&&r.message)||'Could not open agent window.',true);
   }).catch(e=>toast('Could not open agent window: '+e,true));
 }
@@ -4193,18 +4436,29 @@ function goalExpandPathTo(node,id){
 function goalIcon(type){ return {umbrella:'✦',overgoal:'◆',subgoal:'◇',task:'✓'}[type]||'•'; }
 function goalTypeLabel(type){ return {umbrella:'Soul',overgoal:'Root',subgoal:'Branch',task:'Leaf'}[type]||type; }
 
+function goalGreatestCuriosityId(){
+  const cur=((goalState&&goalState.curiosities)||[]).find(c=>c.is_greatest&&c.status==='active');
+  return cur?cur.id:null;
+}
+function goalNodeLinkedToGreatest(node){
+  const gid=goalGreatestCuriosityId();
+  return gid!=null&&(node.curiosities||[]).some(c=>c.id===gid);
+}
+
 function goalTreeHtml(node,depth){
   if(!node) return '<div class="empty">No goal tree available.</div>';
   const children=(node.children||[]).filter(x=>x.status!=='archived');
   const collapsed=children.length&&goalCollapsed.has(node.id)&&!goalContains(node,selectedGoalId);
   if(selectedGoalId&&goalContains(node,selectedGoalId)) goalCollapsed.delete(node.id);
   const selected=node.id===selectedGoalId?' selected':'';
+  const greatest=goalNodeLinkedToGreatest(node);
   const progress=node.completion&&node.completion.percent!=null?' · '+Math.round(node.completion.percent)+'%':'';
-  return '<div class="goal-tree-row '+esc(node.status)+selected+(collapsed?' collapsed':'')+'" data-goal-id="'+node.id+'" '+
+  return '<div class="goal-tree-row '+esc(node.status)+selected+(greatest?' greatest':'')+(collapsed?' collapsed':'')+'" data-goal-id="'+node.id+'" '+
     'style="padding-left:'+(8+depth*17)+'px"><span class="twist '+(children.length?'has-children':'')+
     '" data-toggle-id="'+node.id+'">'+(children.length?(collapsed?'▸':'▾'):'')+'</span>'+
     '<span class="goal-icon">'+goalIcon(node.type)+'</span><span class="goal-title">'+esc(node.title)+
-    '</span><span class="cur-conf">'+progress+'</span></div>'+
+    '</span>'+(greatest?'<span class="goal-greatest-star" title="Linked to the greatest curiosity — your #1 investigation · 가장 큰 호기심(1순위 탐구)에 연결됨">★</span>':'')+
+    '<span class="cur-conf">'+progress+'</span></div>'+
     (collapsed?'':children.map(c=>goalTreeHtml(c,depth+1)).join(''));
 }
 
@@ -4434,12 +4688,13 @@ function goalFocusMode(node){
   return 'rollup';
 }
 function goalChildStateText(child){
-  if(child.status==='completed') return 'done';
-  if(child.status==='paused') return 'paused';
-  if(child.type==='task') return 'active Leaf';
+  const ko=APP_LANG==='ko';
+  if(child.status==='completed') return ko?'완료':'done';
+  if(child.status==='paused') return ko?'일시정지':'paused';
+  if(child.type==='task') return ko?'활성 Leaf':'active Leaf';
   const leaves=goalSortedActiveLeaves(child);
-  if(leaves.length) return 'waiting on “'+leaves[0].title+'”';
-  return 'needs rethink';
+  if(leaves.length) return ko?'"'+leaves[0].title+'" 대기 중':'waiting on “'+leaves[0].title+'”';
+  return ko?'재고 필요':'needs rethink';
 }
 function goalRollupHtml(node){
   const kids=(node.children||[]).filter(k=>k.status!=='archived');
@@ -4506,6 +4761,36 @@ function goalLeafStepsHtml(node){
   }).join('');
   return '<div class="cur-sub" id="goal-steps-head">How to do this ('+done+'/'+steps.length+')</div>'+
     '<div class="goal-focus-mini">'+rows+'</div>';
+}
+
+function goalNodeNeedsDefinition(node){
+  if(!node||node.type==='umbrella') return false;
+  if(String(node.description||'').trim()||String(node.notes||'').trim()) return false;
+  if((node.children||[]).length||(node.evidence||[]).length||(node.curiosities||[]).length||
+      (node.outcomes||[]).length) return false;
+  const origin=node.origin||{};
+  return !String(origin.summary||origin.source_label||'').trim();
+}
+
+function goalDefinitionLabel(node){
+  if(node.type==='overgoal') return 'What this Root asks you to pursue';
+  if(node.type==='subgoal') return 'What this Branch asks you to define';
+  return 'What this Leaf asks you to do';
+}
+
+function goalDefinitionStarterHtml(node){
+  const label=goalDefinitionLabel(node);
+  const hint=APP_LANG==='ko'
+    ?(node.type==='task'
+      ?'이 Leaf는 아직 제목만 있어요. 결과, 완료도, 성찰을 추적하기 전에 구체적인 행동을 정의하세요.'
+      :'이 '+goalTypeLabel(node.type)+'는 아직 제목만 있어요. 페어리가 평가하거나 확장하기 전에 의미를 정의하세요.')
+    :(node.type==='task'
+      ?'This Leaf only has a title so far. Define the concrete action before tracking outcomes, completion, or reflection.'
+      :'This '+goalTypeLabel(node.type)+' only has a title so far. Define what it means before Faerie evaluates or expands it.');
+  return '<div class="goal-recap-card goal-definition-starter"><div class="cur-sub">'+esc(label)+'</div>'+
+    '<p class="goal-focus-muted">'+esc(hint)+'</p>'+
+    '<div class="actions"><button id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
+    '<div id="goal-steps-draft"></div></div>';
 }
 
 function goalShortText(text,limit=260){
@@ -4577,14 +4862,119 @@ function goalRecapHtml(node,agentState,curiosities,evidence){
       : '')+'</div>';
 }
 
+function goalArchivedHistoryHtml(node){
+  const archived=(node.children||[]).filter(child=>child.status==='archived');
+  if(!archived.length) return '';
+  return '<details class="goal-full-note"><summary>Archived history · '+archived.length+'</summary>'+
+    '<p class="goal-focus-muted">These remain part of your history without cluttering the current map.</p>'+
+    '<div>'+archived.map(child=>'<span class="goal-chip" data-open="'+child.id+'">'+
+      esc(child.title)+' · '+esc(goalTypeLabel(child.type))+'</span>').join('')+'</div></details>';
+}
+
+function goalGardeningProposalHtml(proposal){
+  const p=proposal.payload||{};
+  const title=proposal.type.replaceAll('_',' ');
+  const editable=proposal.type==='rewrite'
+    ? '<label>Proposed title<input class="garden-title" value="'+esc(p.title||'')+'"></label>'+
+      '<label>Proposed description<textarea class="garden-description" rows="3">'+esc(p.description||'')+'</textarea></label>'
+    : '<pre>'+esc(JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('_'))),null,2))+'</pre>';
+  return '<div class="agent-proposal gardening-proposal" data-gardening-id="'+proposal.id+'">'+
+    '<div class="cur-text"><b>'+esc(title)+'</b></div>'+editable+
+    '<p class="hint">'+esc(proposal.rationale||'')+'</p>'+
+    (proposal.evidence_refs&&proposal.evidence_refs.length?'<p class="hint">Grounded in '+proposal.evidence_refs.length+' newer evidence item(s).</p>':'')+
+    '<div class="actions"><button class="garden-dismiss skip">Dismiss</button>'+
+    '<button class="garden-refine">Refine</button><button class="garden-approve accent">'+
+    (proposal.type==='leave_unchanged'?'Keep as is':proposal.type==='archive'?'Archive — no longer mine':'Approve change')+
+    '</button></div></div>';
+}
+
+const GOAL_RELEVANCE_LABELS_KO={current:'최신',questionable:'의문 있음',outgrown:'벗어남',unclear:'불명확'};
+function goalRelevanceStateText(state){
+  return APP_LANG==='ko'?(GOAL_RELEVANCE_LABELS_KO[state]||'불명확'):(state||'unclear');
+}
+function goalRelevanceHtml(node){
+  const view=node.relevance||{}, state=view.state||{};
+  const proposals=view.proposals||[], history=view.reviews||[], newer=view.new_evidence||[];
+  const score=state.last_reviewed_at
+    ?Math.round(Number(state.relevance_score||0)*100)+(APP_LANG==='ko'?'% 관련':'% relevant')
+    :(APP_LANG==='ko'?'검토 안 됨':'not reviewed');
+  return '<div class="goal-recap-card goal-relevance-card"><div class="cur-sub">Is this still yours?</div>'+
+    '<div><span class="goal-chip">'+esc(goalRelevanceStateText(state.relevance_state))+'</span><span class="goal-chip">'+esc(score)+'</span></div>'+
+    (state.rationale?'<p>'+esc(state.rationale)+'</p>':'<p class="goal-focus-muted">'+
+      (APP_LANG==='ko'?'페어리가 아직 새로운 근거에 비추어 이 노드를 검토하지 않았어요.':
+        'Faerie has not reviewed this node against newer evidence yet.')+'</p>')+
+    (state.what_changed?'<div class="goal-recap-item"><b>What changed</b><span>'+esc(state.what_changed)+'</span></div>':'')+
+    (view.due?'<div class="goal-next-action"><b>Relevance review ready</b><span>'+esc(view.due_reason||'Newer evidence may affect this node.')+'</span></div>':'')+
+    (newer.length?'<details><summary>Newer evidence behind this prompt</summary><ul>'+newer.slice(0,6).map(item=>
+      '<li>'+esc(item.summary||item.kind)+'</li>').join('')+'</ul></details>':'')+
+    (proposals.length?'<div class="cur-sub">Gardening proposals</div>'+proposals.map(goalGardeningProposalHtml).join(''):'')+
+    (history.length>1?'<details><summary>Prior relevance reviews · '+history.length+'</summary>'+history.slice(1).map(review=>
+      '<div class="resolved-row"><div class="rr-body">'+esc(review.payload&&review.payload.rationale||'')+'</div><span class="rr-tag">'+
+      esc(goalRelevanceStateText(review.relevance_state))+'</span></div>').join('')+'</details>':'')+
+    '</div>';
+}
+
+function goalOutcomeHtml(node){
+  if(node.type!=='task') return '';
+  const outcomes=node.outcomes||[];
+  const latest=outcomes[0]||null;
+  const history=outcomes.slice(0,6).map(outcome=>
+    '<div class="resolved-row"><div class="rr-body"><b>'+esc(outcome.result)+'</b> · '+
+    esc(outcome.changed_understanding||outcome.what_happened)+
+    (outcome.surprise?'<div class="hint">Surprise: '+esc(outcome.surprise)+'</div>':'')+
+    (outcome.next_adjustment?'<div class="hint">Next adjustment: '+esc(outcome.next_adjustment)+'</div>':'')+
+    '</div><span class="rr-tag">'+(outcome.helpfulness==null?'—':Number(outcome.helpfulness).toFixed(1)+'/10')+'</span></div>'
+  ).join('');
+  return '<div class="goal-recap-card goal-outcome-card"><div class="cur-sub">What did this experiment teach?</div>'+
+    (latest&&latest.next_adjustment?'<div class="goal-next-action"><b>Next experiment should reflect this</b><span>'+esc(latest.next_adjustment)+'</span></div>':'')+
+    (history?'<details><summary>Outcome history · '+outcomes.length+'</summary>'+history+'</details>':'')+
+    '<details class="outcome-form" '+(outcomes.length?'':'open')+'><summary>Record an outcome</summary>'+
+    '<label>Result<select class="outcome-result"><option value="completed">Completed</option>'+
+      '<option value="attempted">Attempted / partial</option><option value="avoided">Avoided</option><option value="abandoned">Abandoned intentionally</option></select></label>'+
+    '<label>What happened?<textarea class="outcome-happened" rows="3" placeholder="What actually happened, in plain language?"></textarea></label>'+
+    '<label>What obstacle did you expect?<textarea class="outcome-obstacle" rows="2"></textarea></label>'+
+    '<label>What surprised you?<textarea class="outcome-surprise" rows="2"></textarea></label>'+
+    '<label>How helpful was this?<select class="outcome-helpfulness"><option value="">Not rated</option>'+
+      Array.from({length:11},(_,i)=>'<option value="'+i+'">'+i+' / 10</option>').join('')+'</select></label>'+
+    '<label>What changed in your understanding?<textarea class="outcome-changed" rows="2"></textarea></label>'+
+    '<label>What should the next experiment adjust?<textarea class="outcome-next" rows="2"></textarea></label>'+
+    '<div class="actions"><button class="outcome-save accent">Save outcome and teach Faerie</button></div></details></div>';
+}
+
+function bindGoalOutcomeControls(node,root){
+  if(!root||node.type!=='task') return;
+  const save=root.querySelector('.outcome-save'); if(!save) return;
+  save.onclick=()=>{
+    const value=selector=>(root.querySelector(selector)&&root.querySelector(selector).value||'').trim();
+    const happened=value('.outcome-happened');
+    if(!happened){toast('Say what happened before saving the outcome.',true);return;}
+    const helpful=value('.outcome-helpfulness');
+    const payload={result:value('.outcome-result'),what_happened:happened,
+      expected_obstacle:value('.outcome-obstacle'),surprise:value('.outcome-surprise'),
+      helpfulness:helpful===''?null:Number(helpful),changed_understanding:value('.outcome-changed'),
+      next_adjustment:value('.outcome-next')};
+    save.disabled=true;save.textContent='Saving learning…';
+    pywebview.api.goal_experiment_outcome(node.id,payload).then(r=>{
+      if(!r||r.ok===false){save.disabled=false;save.textContent='Save outcome and teach Faerie';toast((r&&r.message)||'Could not save outcome.',true);return;}
+      toast(r.synthesis_drafted?'Outcome saved. A lower-confidence interpretation is ready for review.':'Outcome saved. GoalAI will use it when proposing what comes next.');
+      loadGoals();loadCuriosity();
+    }).catch(e=>{save.disabled=false;save.textContent='Save outcome and teach Faerie';toast('Could not save outcome: '+e,true);});
+  };
+}
+
 function draftLeafSteps(node){
   const btn=$('goal-focus-draft-steps'), out=$('goal-steps-draft');
   if(!btn||!out) return;
   btn.disabled=true;
   out.innerHTML='<p class="goal-focus-muted"><span class="spin"></span> Asking GoalAI for explicit steps…</p>';
-  const ask='Draft 3-5 explicit, physical steps for the Leaf "'+node.title+'". '+
-    'Each step must be one concrete action I can execute in the moment: what to do, when to do it, and for how long. '+
-    'No advice, no theory. Reply with a numbered list only, no preamble.';
+  const type=goalTypeLabel(node.type);
+  const ask=node.type==='task'
+    ?'Draft 3-5 explicit, physical steps for the Leaf "'+node.title+'". '+
+      'Each step must be one concrete action I can execute in the moment: what to do, when to do it, and for how long. '+
+      'No advice, no theory. Reply with a numbered list only, no preamble.'
+    :'Draft 3-5 concrete definition steps for the '+type+' "'+node.title+'". '+
+      'Clarify what this '+type+' means, what real-world change it is meant to produce, and how I would recognize progress. '+
+      'Reply with a numbered list only, no preamble.';
   pywebview.api.goal_ai_chat(node.id,ask).then(r=>{
     btn.disabled=false;
     if(!r||r.ok===false){ out.innerHTML=''; toast((r&&r.message)||'GoalAI could not draft steps.',true); return; }
@@ -4594,7 +4984,9 @@ function draftLeafSteps(node){
     const text=(reply&&reply.content||'').trim();
     if(!text){ out.innerHTML=''; toast('GoalAI returned no reply.',true); return; }
     out.innerHTML='<div class="goal-question-card"><b>Suggested steps</b>'+
-      '<div class="goal-question-hint">Saving appends these to the Leaf description, so they show here as a checklist.</div>'+
+      '<div class="goal-question-hint">'+(APP_LANG==='ko'
+        ?'저장하면 이 '+esc(type)+'가 정의되고 나머지 작업 공간이 열려요.'
+        :'Saving defines this '+esc(type)+' and unlocks the rest of its workspace.')+'</div>'+
       '<div style="white-space:pre-wrap;font-size:12.5px">'+esc(text)+'</div>'+
       '<div class="actions"><button class="accent" id="goal-steps-save">Save to this Leaf</button></div></div>';
     $('goal-steps-save').onclick=()=>{
@@ -4603,7 +4995,8 @@ function draftLeafSteps(node){
       const desc=(node.description?node.description.replace(/\s+$/,'')+'\n\n':'')+'Steps:\n'+block;
       pywebview.api.goal_update(node.id,{description:desc}).then(r2=>{
         if(!r2||r2.ok===false){ toast((r2&&r2.message)||'Could not save steps.',true); return; }
-        applyGoalTreeUpdate(r2); toast('Steps saved to this Leaf.');
+        applyGoalTreeUpdate(r2); toast(APP_LANG==='ko'
+          ?'이 '+type+'에 단계를 저장했어요.':'Steps saved to this '+type+'.');
       }).catch(e=>toast('Could not save steps: '+e,true));
     };
   }).catch(e=>{ btn.disabled=false; out.innerHTML=''; toast('GoalAI could not draft steps: '+e,true); });
@@ -4623,7 +5016,17 @@ function renderGoalFocusPanel(){
   const proposals=(agent&&agent.proposals||[]).slice(0,3);
   const curiosities=(node.curiosities||[]).slice(0,6);
   const evidence=(node.evidence||[]).slice(0,4);
+  if(goalNodeNeedsDefinition(node)){
+    panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
+      '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
+      '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span></div>'+
+      goalDefinitionStarterHtml(node);
+    const draft=$('goal-focus-draft-steps');
+    if(draft) draft.onclick=()=>draftLeafSteps(node);
+    return;
+  }
   const recap=goalRecapHtml(node,agentState,curiosities,evidence);
+  const relevance=goalRelevanceHtml(node);
   const originalNote=node.description||agentState.next_focus||'';
   const mode=goalFocusMode(node);
   const launchReadOnly=appProfile==='launch';
@@ -4661,6 +5064,7 @@ function renderGoalFocusPanel(){
       (mode==='leaf'?'<button id="goal-focus-dismiss">Dismiss & rethink</button>':'')+
       '<button id="goal-focus-edit">Edit details</button>'+
       '<button id="goal-focus-ask">Ask Agent</button><button id="goal-focus-review">Review node</button>'+
+      '<button id="goal-focus-relevance">Review relevance</button>'+
       ((childType||(node.type!=='task'&&node.type!=='umbrella'))
         ? '<span class="goal-add-wrap"><button id="goal-focus-add" title="Add to this node">+</button>'+
           '<div class="goal-add-menu" id="goal-focus-add-menu">'+
@@ -4673,11 +5077,11 @@ function renderGoalFocusPanel(){
     '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
     '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span><span class="goal-chip">'+
     esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>'+
-    recap+
+    recap+relevance+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Completion</span><span>'+
     esc(goalCompletionLabel(node))+'</span></div><div class="metric-progress"><i style="width:'+
     ((node.completion&&node.completion.percent)||0)+'%"></i></div></div>'+
-    (node.type==='task'?goalLeafStepsHtml(node):'')+
+    (node.type==='task'?goalLeafStepsHtml(node)+goalOutcomeHtml(node):'')+
     (mode==='rollup'?'<div class="cur-sub">Where each area stands</div>'+goalRollupHtml(node):'')+
     (mode==='brainstorm'
       ? '<div class="goal-next-action"><b>Brainstorm unlocked</b><span>No active Leaves here. Answer the rethink questions below, then Add Leaf to commit the next experiment.</span></div>'
@@ -4685,6 +5089,7 @@ function renderGoalFocusPanel(){
     (mode==='locked'
       ? '<p class="goal-focus-muted">Questions are asked on each Leaf, not here. Open a Leaf to answer them or mark it complete — dismissing one unlocks this Branch for a rethink.</p>'
       : '')+
+    goalArchivedHistoryHtml(node)+
     pendingCard+
     (questionCards
       ? '<div class="cur-sub">'+(mode==='brainstorm'?'Rethink this Branch':'What are we trying to answer?')+'</div><div id="goal-evidence-questions">'+questionCards+'</div>'
@@ -4701,7 +5106,46 @@ function renderGoalFocusPanel(){
   bindGoalFocusPanel(node,childType);
 }
 
+function bindGoalRelevanceControls(node,root,reviewButton){
+  if(!root) return;
+  const review=reviewButton?root.querySelector('#'+reviewButton):null;
+  if(review) review.onclick=()=>{
+    const btn=review;btn.disabled=true;btn.textContent='Reviewing relevance…';
+    pywebview.api.goal_relevance_review(node.id).then(r=>{
+      if(!r||r.ok===false){btn.disabled=false;btn.textContent='Review relevance';toast((r&&r.message)||'Could not review relevance.',true);return;}
+      toast(r.proposals_created?'Gardening proposals are ready for your review.':'Relevance reviewed; no tree change was proposed.');
+      loadGoals();
+    }).catch(e=>{btn.disabled=false;btn.textContent='Review relevance';toast('Could not review relevance: '+e,true);});
+  };
+  root.querySelectorAll('.gardening-proposal').forEach(box=>{
+    const id=parseInt(box.dataset.gardeningId,10);
+    const proposal=(node.relevance&&node.relevance.proposals||[]).find(item=>item.id===id);
+    const payload=()=>{
+      const data={...(proposal&&proposal.payload||{})};
+      const title=box.querySelector('.garden-title'), description=box.querySelector('.garden-description');
+      if(title) data.title=title.value.trim();
+      if(description) data.description=description.value.trim();
+      return data;
+    };
+    const act=(action,data)=>pywebview.api.goal_gardening_proposal(id,action,data||null,'').then(r=>{
+      if(!r||r.ok===false){toast((r&&r.message)||'Could not update this gardening proposal.',true);return;}
+      toast(action==='approve'?'Tree change approved; history was preserved.':action==='dismiss'?'Gardening proposal dismissed.':'Gardening proposal refined.');
+      loadGoals();
+    }).catch(e=>toast('Could not update this gardening proposal: '+e,true));
+    box.querySelector('.garden-dismiss').onclick=()=>act('dismiss');
+    box.querySelector('.garden-approve').onclick=()=>act('approve',payload());
+    box.querySelector('.garden-refine').onclick=()=>{
+      if(proposal.type==='rewrite'){act('refine',payload());return;}
+      const edited=prompt('Refine the proposal payload as JSON:',JSON.stringify(proposal.payload||{},null,2));
+      if(!edited) return;
+      try{act('refine',JSON.parse(edited));}catch(e){toast('That proposal JSON is invalid.',true);}
+    };
+  });
+}
+
 function bindGoalFocusPanel(node,childType){
+  bindGoalRelevanceControls(node,$('goal-focus-panel'),'goal-focus-relevance');
+  bindGoalOutcomeControls(node,$('goal-focus-panel'));
   if($('goal-focus-ask-command')) $('goal-focus-ask-command').onclick=()=>{
     switchView('self');
     setTimeout(()=>{
@@ -4783,6 +5227,7 @@ function bindGoalFocusPanel(node,childType){
       updateGoalStatusWithUndo(id,next,prev,(r)=>{
         box.disabled=false;
         applyGoalTreeUpdate(r);
+        if(next==='completed') toast('Leaf completed. Record what happened so Faerie can learn from it.');
       },()=>{
         box.checked=!box.checked;
         box.disabled=false;
@@ -4953,17 +5398,20 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const node=item.node;
     const selectedClass=node.id===selected.id?' selected':'';
     const care=goalNeedsMapCare(node)?' needs-care':'';
+    const greatest=goalNodeLinkedToGreatest(node);
     const status=node.status?(' '+node.status):'';
     const radius={umbrella:15,overgoal:11,subgoal:8,task:5}[node.type]||7;
     const glow=radius*(node.id===selected.id?5.7:4.5);
     const label=goalLabelShort(node.title,node.type==='task'?24:30);
     const labelDy=item.depth===0?-25:(node.type==='task'?18:22);
-    return '<g class="constellation-node '+esc(node.type)+status+selectedClass+care+
+    return '<g class="constellation-node '+esc(node.type)+status+selectedClass+care+(greatest?' greatest':'')+
       '" tabindex="0" role="button" data-map-goal-id="'+node.id+'" transform="translate('+
       item.x.toFixed(1)+' '+item.y.toFixed(1)+')">'+
-      '<title>'+esc(goalTypeLabel(node.type)+' · '+node.title+' · '+goalCompletionLabel(node))+'</title>'+
+      '<title>'+esc(goalTypeLabel(node.type)+' · '+node.title+' · '+goalCompletionLabel(node)+
+        (greatest?' · linked to the greatest curiosity':''))+'</title>'+
       '<circle class="glow" r="'+glow+'"></circle>'+
       (care?'<circle class="halo" r="'+(glow+5)+'"></circle>':'')+
+      (greatest?'<circle class="greatest-ring" r="'+(radius+4.5)+'"></circle>':'')+
       '<circle class="core" r="'+radius+'"></circle>'+
       '<text text-anchor="middle" y="'+labelDy+'">'+esc(label)+'</text></g>';
   }).join('');
@@ -5200,6 +5648,7 @@ function renderGoalDetail(){
     '<span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span><span class="goal-chip">'+esc(node.status)+'</span></div>'+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Task completion</span><span>'+pctText+'</span></div>'+
     '<div class="metric-progress"><i style="width:'+(c.percent||0)+'%"></i></div></div>'+
+    goalRelevanceHtml(node)+goalArchivedHistoryHtml(node)+goalOutcomeHtml(node)+
     '<label class="goal-field">Title<input id="goal-title" value="'+esc(node.title)+'"></label>'+
     '<label class="goal-field">Description <span class="hint" id="goal-description-status" style="margin:0"></span><textarea id="goal-description" rows="3">'+esc(node.description||'')+'</textarea></label>'+
     '<label class="goal-field">Notes<textarea id="goal-notes" rows="3">'+esc(node.notes||'')+'</textarea></label>'+
@@ -5214,6 +5663,7 @@ function renderGoalDetail(){
       ((node.position||0)+1)+'"></label></div><div class="actions"><button id="goal-move">Move / reorder</button></div>':'')+
     '<div class="actions"><button class="accent" id="goal-save">Save changes</button>'+
       '<button id="goal-edit-open">Edit Details</button>'+
+      '<button id="goal-detail-relevance">Review relevance</button>'+
       '<button id="goal-rename">Rename</button>'+
       (childType?'<button id="goal-add-child">Add '+goalTypeLabel(childType)+'</button>':'')+
       (node.type!=='task'&&node.type!=='umbrella'?'<button id="goal-add-task">Add Leaf</button>':'')+
@@ -5230,6 +5680,12 @@ function renderGoalDetail(){
       esc(x.source_kind)+'</span></div>').join('')||'<p class="hint">No linked evidence yet.</p>')+
     '<div class="actions"><button id="goal-add-evidence" title="Attach something you directly observed. This informs GoalAI but does not complete a Leaf or change mastery.">Add firsthand evidence</button></div>'+masteryHtml(node)+
     '<div class="agent-panel" id="goal-ai-panel"><span class="spin"></span>Loading GoalAI…</div>';
+
+  bindGoalRelevanceControls(node,$('goal-detail'),'goal-detail-relevance');
+  bindGoalOutcomeControls(node,$('goal-detail'));
+  $('goal-detail').querySelectorAll('[data-open]').forEach(el=>{
+    el.onclick=e=>{e.preventDefault();selectGrowthNode(el.dataset.open);};
+  });
 
   $('goal-save').onclick=()=>{
     const changes={title:$('goal-title').value,description:$('goal-description').value,
@@ -5310,16 +5766,19 @@ function renderGoalAIStatusStrip(o){
   const need=(o.blocked||0)+(o.needs_attention||0);
   const questions=o.open_questions||0;
   const proposals=o.open_proposals||0;
+  const relevance=o.relevance_due||0;
   const next=o.schedule&&o.schedule.next_run_at
     ? new Date(o.schedule.next_run_at).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})
     : '8:00 PM';
-  strip.innerHTML='<div class="strip-copy"><b>To do:</b> '+need+
-    ' need care · '+questions+' questions · '+proposals+' proposals · next '+esc(next)+'</div>'+
+  const stripSummary=APP_LANG==='ko'
+    ?('돌봄 필요 '+need+'개 · 질문 '+questions+'개 · 제안 '+proposals+'개 · 재검토 '+relevance+'개 · 다음 실행 '+esc(next))
+    :(need+' need care · '+questions+' questions · '+proposals+' proposals · '+relevance+' relevance reviews · next '+esc(next));
+  strip.innerHTML='<div class="strip-copy"><b>To do:</b> '+stripSummary+'</div>'+
     '<button id="goal-strip-review">Review next</button>'+
     '<button id="goal-strip-questions">Answer questions</button>';
   const queues=o.queues||{};
   $('goal-strip-review').onclick=()=>{
-    const kind=['blocked','needs_attention','proposals','dirty','stale','deferred']
+    const kind=['blocked','needs_attention','relevance','proposals','dirty','stale','deferred']
       .find(k=>(queues[k]||[]).length);
     if(!kind){ toast('Nothing needs review right now.'); return; }
     navigateGoalAIQueue(kind,queues[kind]);
@@ -5333,6 +5792,7 @@ function renderGoalAIOverview(o){
   renderGoalAIStatusStrip(o);
   const queues=o.queues||{};
   const items=[['blocked','Blocked',o.blocked||0],['needs_attention','Needs attention',o.needs_attention||0],
+    ['relevance','Relevance reviews',o.relevance_due||0],
     ['dirty','Changed for tonight',o.dirty||0],['deferred','Deferred',o.deferred||0],
     ['stale','Stale reports',o.stale||0],['questions','Open questions',o.open_questions||0],
     ['proposals','Proposals',o.open_proposals||0]];
@@ -5350,6 +5810,36 @@ function renderGoalAIOverview(o){
     card.onclick=open;
     card.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){e.preventDefault();open();} };
   });
+  loadReflectionRhythm();
+}
+
+function loadReflectionRhythm(){
+  pywebview.api.reflection_cadence_state().then(r=>{
+    if(!r||r.ok===false) return;
+    const host=$('goal-ai-overview');
+    if(!host) return;
+    const old=$('reflection-rhythm-card'); if(old) old.remove();
+    const event=(r.events||[]).find(x=>x.status==='shown');
+    const card=document.createElement('div');
+    card.id='reflection-rhythm-card'; card.className='goal-ai-stat'+(event?' actionable':'');
+    card.innerHTML='<b>'+(r.pending||0)+'</b><span>Reflection rhythm · weekly max</span>'+
+      (event?'<div class="actions" style="grid-column:1/-1;margin-top:6px">'+
+        '<button data-rhythm="acted">Helpful</button><button data-rhythm="snooze">Snooze</button>'+
+        '<button data-rhythm="ignore">Too much</button><button data-rhythm="never">Stop this kind</button></div>':'');
+    host.appendChild(card);
+    if(event) card.querySelectorAll('[data-rhythm]').forEach(button=>button.onclick=()=>{
+      const action=button.dataset.rhythm;
+      const usefulness=action==='acted'?5:(action==='ignore'||action==='never'?1:null);
+      const burden=action==='acted'?1:(action==='ignore'||action==='never'?5:null);
+      pywebview.api.reflection_cadence_feedback(event.id,action,usefulness,burden).then(result=>{
+        if(!result||result.ok===false){toast((result&&result.message)||'Could not save reflection preference.',true);return;}
+        toast(action==='snooze'?'Snoozed with a longer interval.':
+          action==='acted'?'Thanks - Faerie will learn from that.':
+          action==='never'?'That kind of prompt is off for this topic.':'Faerie will give this topic more space.');
+        loadReflectionRhythm();
+      });
+    });
+  }).catch(()=>{});
 }
 
 function navigateGoalAIQueue(kind,queue){
@@ -5367,6 +5857,7 @@ function focusGoalAIQueueItem(){
   let target=$('goal-ai-panel');
   if(focus.kind==='questions'&&focus.id) target=document.querySelector('[data-qid="'+focus.id+'"]');
   if(focus.kind==='proposals'&&focus.id) target=document.querySelector('[data-pid="'+focus.id+'"]');
+  if(focus.kind==='relevance') target=document.querySelector('.goal-relevance-card');
   if(!target) target=$('goal-ai-panel');
   if(target){ target.scrollIntoView({behavior:'smooth',block:'center'}); target.classList.add('goal-focus');
     setTimeout(()=>target.classList.remove('goal-focus'),1600); }
@@ -5640,26 +6131,64 @@ function renderPlanner(){
   if(ready) $('planner-draft').value=JSON.stringify(plannerSession.draft,null,2);
 }
 
-function openGoalPlanner(itemId){
+function openGoalPlanner(itemId,btn){
   if(!api()) return;
+  // Starting a planning session calls the model and then opens a separate
+  // chat window — grey the trigger out so the wait is visibly acknowledged.
+  const original=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent=(APP_LANG==='ko'?'불러오는 중…':'Loading…'); }
+  const restore=()=>{ if(btn){ btn.disabled=false; btn.textContent=original; } };
   pywebview.api.goal_plan_start(itemId,null).then(r=>{
-    if(!r||r.ok===false){ toast((r&&r.message)||'Could not start planning.',true); return; }
-    plannerSession=r.session; launchAgentWindow('goal-planner',plannerSession.id);
-  }).catch(e=>toast('Could not start planning: '+e,true));
+    if(!r||r.ok===false){ restore(); toast((r&&r.message)||'Could not start planning.',true); return; }
+    plannerSession=r.session;
+    return launchAgentWindow('goal-planner',plannerSession.id).then(restore);
+  }).catch(e=>{ restore(); toast('Could not start planning: '+e,true); });
 }
 
 $('planner-close').onclick=()=>$('goal-planner').classList.remove('open');
+function plannerThinking(text){
+  const box=$('planner-messages');
+  box.insertAdjacentHTML('beforeend','<div class="planner-msg assistant planner-thinking">'+esc(text)+'</div>');
+  box.lastElementChild.scrollIntoView({block:'nearest'});
+}
+function plannerBusy(on){['planner-send','planner-summary','planner-abandon'].forEach(id=>{const b=$(id);if(b)b.disabled=on;});}
 $('planner-send').onclick=()=>{
   const answer=$('planner-answer').value.trim(); if(!answer){ toast('Write an answer first.',true); return; }
+  const box=$('planner-messages');
+  box.insertAdjacentHTML('beforeend','<div class="planner-msg user">'+esc(answer)+'</div>');
+  plannerThinking(APP_LANG==='ko'?'페어리가 답을 쓰는 중…':'Faerie is writing…');
+  $('planner-answer').value=''; plannerBusy(true);
   pywebview.api.goal_plan_reply(plannerSession.id,answer).then(r=>{
-    if(!r||r.ok===false){ toast((r&&r.message)||'Could not continue.',true); return; }
-    plannerSession=r.session; $('planner-answer').value=''; renderPlanner();
+    plannerBusy(false);
+    if(!r||r.ok===false){
+      box.querySelectorAll('.planner-thinking').forEach(x=>x.remove());
+      $('planner-answer').value=answer;
+      toast((r&&r.message)||'Could not continue.',true); return;
+    }
+    plannerSession=r.session; renderPlanner();
+  }).catch(e=>{
+    plannerBusy(false);
+    box.querySelectorAll('.planner-thinking').forEach(x=>x.remove());
+    $('planner-answer').value=answer;
+    toast('Could not continue: '+e,true);
   });
 };
-$('planner-summary').onclick=()=>pywebview.api.goal_plan_summarize(plannerSession.id).then(r=>{
-  if(!r||r.ok===false){ toast((r&&r.message)||'Could not summarize.',true); return; }
-  plannerSession=r.session; renderPlanner();
-});
+$('planner-summary').onclick=()=>{
+  plannerBusy(true);
+  plannerThinking(APP_LANG==='ko'?'페어리가 계획 요약을 작성하는 중…':'Faerie is drafting the plan summary…');
+  pywebview.api.goal_plan_summarize(plannerSession.id).then(r=>{
+    plannerBusy(false);
+    if(!r||r.ok===false){
+      $('planner-messages').querySelectorAll('.planner-thinking').forEach(x=>x.remove());
+      toast((r&&r.message)||'Could not summarize.',true); return;
+    }
+    plannerSession=r.session; renderPlanner();
+  }).catch(e=>{
+    plannerBusy(false);
+    $('planner-messages').querySelectorAll('.planner-thinking').forEach(x=>x.remove());
+    toast('Could not summarize: '+e,true);
+  });
+};
 $('planner-create').onclick=()=>{
   let draft; try{ draft=JSON.parse($('planner-draft').value); }
   catch(e){ toast('Draft JSON is invalid.',true); return; }
@@ -5690,6 +6219,24 @@ let curBoardFilter='all';
 let curBoardQuery='';
 let curBoardExpanded=false;
 const classifyingCuriosityIds=new Set();
+// Collapsible panels re-render (and reset) on every reload/tab switch; keep
+// the user's open/closed choice per panel in localStorage.
+const detailsOpenPref=(function(){
+  try{ return JSON.parse(localStorage.getItem('ffDetailsOpen')||'{}')||{}; }
+  catch(e){ return {}; }
+})();
+function bindCollapsePrefs(root){
+  if(!root) return;
+  root.querySelectorAll('details[data-ckey]').forEach(d=>{
+    const key=d.dataset.ckey;
+    if(Object.prototype.hasOwnProperty.call(detailsOpenPref,key)) d.open=!!detailsOpenPref[key];
+    d.addEventListener('toggle',()=>{
+      detailsOpenPref[key]=d.open;
+      try{ localStorage.setItem('ffDetailsOpen',JSON.stringify(detailsOpenPref)); }catch(e){}
+    });
+  });
+}
+
 const curLoopDismissed=new Set(JSON.parse(localStorage.getItem('curLoopDismissed')||'[]'));
 const curLoopOutcomes=new Map(Object.entries(JSON.parse(localStorage.getItem('curLoopOutcomes')||'{}'))
   .map(([id,value])=>[parseInt(id,10),value]));
@@ -5842,8 +6389,21 @@ function curCounts(cur){
 
 function curAsciiTree(cur){
   const c=curCounts(cur);
+  const ko=APP_LANG==='ko';
   const attach=(cur.attached_goals||[])[0];
-  const placement=attach && attach.path && attach.path.length ? attach.path.join(' > ') : 'Soul-level / unplaced';
+  const placement=attach && attach.path && attach.path.length ? attach.path.join(' > ')
+    : (ko?'소울 단계 / 미배치':'Soul-level / unplaced');
+  if(ko){
+    return [
+      '탐구: '+cur.label,
+      '|',
+      '+-- 배치: '+placement,
+      '+-- 현재 프레이밍: '+(cur.directive||'저널에서 시작된 탐구'),
+      '+-- 모인 근거: 답변 '+c.answered+'개 / 해결 '+c.resolved+'개',
+      '+-- 열린 항목: 질문 '+c.questions+'개, 제안 '+c.suggestions+'개',
+      '+-- 다음: '+(c.questions?'지금 있는 질문에 답하기':'더 정교한 후속 질문 만들기'),
+    ].join('\n');
+  }
   return [
     'Investigation: '+cur.label,
     '|',
@@ -5955,7 +6515,8 @@ function continueCuriosity(curiosityId, button, options={}){
 }
 
 function curQuestionHtml(cur, item){
-  const conf = item.confidence!=null ? ' <span class="cur-conf">'+pct(item.confidence)+' confident</span>' : '';
+  const conf = item.confidence!=null ? ' <span class="cur-conf" title="Faerie\'s own estimate that this question is new, relevant, and worth your time — not about your answer">'+
+    pct(item.confidence)+' confidence this question is relevant</span>' : '';
   const isYesNo=item.response_type==='yes_no';
   const rating = item.response_type==='rating' ?
     '<label class="metric-field" style="margin:8px 0"><span>Assessment rating</span><select class="cur-rating">'+
@@ -5969,17 +6530,14 @@ function curQuestionHtml(cur, item){
       '<button type="button" class="cur-quick-answer" data-answer="No.">No</button>'+
       '<button type="button" class="cur-quick-answer" data-answer="Kind of / it depends: ">Kind of</button>'+
     '</div>':'')+
-    rating+'<div class="editor open"><textarea spellcheck="false" placeholder="'+
+    rating+contextDocumentHtml(item.context_attachments||[],'curiosity_item',item.id,true)+
+    '<div class="editor open"><textarea spellcheck="false" placeholder="'+
     (isYesNo?'Add a sentence if useful…':'Answer in your own words…')+'"></textarea>' +
-    '<div class="cur-answer-tools">'+
-      '<label>Confidence in your answer<select class="cur-answer-confidence">'+
-        '<option value="0.55">unsure</option><option value="0.7" selected>somewhat</option>'+
-        '<option value="0.85">pretty confident</option><option value="0.95">very confident</option>'+
-      '</select></label>'+
-      '<label>Question fit<select class="cur-question-fit">'+
-        '<option value="useful" selected>useful</option><option value="too_broad">too broad</option>'+
-        '<option value="not_relevant">not relevant</option><option value="ask_gently">ask more gently</option>'+
-      '</select></label></div>' +
+    '<div class="cur-answer-tools"><span class="hint" style="margin:0">Was this a good question?</span>'+
+      '<button type="button" class="cur-thumb" data-fit="useful" aria-label="Good question" '+
+        'title="Optional — tells Faerie this style of question works · 선택 사항 — 이런 질문이 유용했다고 페어리에게 알려줘요">👍</button>'+
+      '<button type="button" class="cur-thumb" data-fit="thumbs_down" aria-label="Not a good question" '+
+        'title="Optional — tells Faerie this question was too broad or not relevant · 선택 사항 — 질문이 너무 넓거나 관련이 없었다고 페어리에게 알려줘요">👎</button></div>' +
     '<div class="row">' +
       '<button class="skip cur-dismiss">Dismiss</button>' +
       '<button class="accent cur-answer-save">Answer</button>' +
@@ -5988,22 +6546,39 @@ function curQuestionHtml(cur, item){
 
 function bindCurQuestion(cur, item){
   const el=$('cur-item-'+item.id);
+  const textarea=el.querySelector('textarea');
+  // The whole view re-renders when the window regains focus, which used to
+  // wipe half-written answers. Keep a per-question draft until it is
+  // submitted or the question is dismissed.
+  const draftKey='curDraft:'+item.id;
+  const saveDraft=()=>{ try{
+    if(textarea.value.trim()) localStorage.setItem(draftKey,textarea.value);
+    else localStorage.removeItem(draftKey);
+  }catch(e){} };
+  const clearDraft=()=>{ try{ localStorage.removeItem(draftKey); }catch(e){} };
+  try{
+    const savedDraft=localStorage.getItem(draftKey);
+    if(savedDraft&&!textarea.value){ textarea.value=savedDraft; autoGrow(textarea); }
+  }catch(e){}
+  textarea.addEventListener('input',saveDraft);
   el.querySelector('.cur-dismiss').onclick=()=>{
     if(!api()) return;
     pywebview.api.curiosity_dismiss(item.id).then(r=>{
       if(r && r.ok===false){ toast(r.message||'Could not dismiss.', true); return; }
+      clearDraft();
       toast('Dismissed.');
       if((cur.open_questions||[]).length<=1) showCuriosityLoop(cur.id);
       else loadCuriosity();
     }).catch(e=>toast('Could not dismiss: '+e, true));
   };
-  const textarea=el.querySelector('textarea');
+  bindContextDocuments(el,'curiosity_item',item.id,textarea,loadCuriosity);
   const rating=el.querySelector('.cur-rating');
   el.querySelectorAll('.cur-quick-answer').forEach(btn=>{
     btn.onclick=()=>{
       el.querySelectorAll('.cur-quick-answer').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       textarea.value=btn.dataset.answer;
+      saveDraft();
       textarea.focus();
       autoGrow(textarea);
     };
@@ -6014,21 +6589,25 @@ function bindCurQuestion(cur, item){
       v<5?'Below average':v<5.5?'Average':v<7?'Above average':v<8.5?'Good':
       v<9.5?'Very good':'Excellent';
   };
+  el.querySelectorAll('.cur-thumb').forEach(btn=>{
+    btn.onclick=()=>{
+      const wasActive=btn.classList.contains('active');
+      el.querySelectorAll('.cur-thumb').forEach(b=>b.classList.remove('active'));
+      if(!wasActive) btn.classList.add('active');
+    };
+  });
   const submit=()=>{
     let text=textarea.value.trim();
     if(!text){ toast('Write an answer first.', true); return; }
-    const confidence=el.querySelector('.cur-answer-confidence');
-    const fit=el.querySelector('.cur-question-fit');
-    const meta=[];
-    if(confidence) meta.push('answer_confidence='+confidence.value);
-    if(fit) meta.push('question_fit='+fit.value);
-    if(meta.length) text += '\n\n[reflection_gate: '+meta.join('; ')+']';
+    const thumb=el.querySelector('.cur-thumb.active');
     if(!api()) return;
     const btn=el.querySelector('.cur-answer-save'); btn.disabled=true;
     autoDatabaseRescue('before curiosity answer').then(()=>
-      pywebview.api.curiosity_answer(item.id, text, rating?parseFloat(rating.value):null)).then(r=>{
+      pywebview.api.curiosity_answer(item.id, text, rating?parseFloat(rating.value):null,
+        null, thumb?thumb.dataset.fit:null)).then(r=>{
       btn.disabled=false;
       if(r && r.ok===false){ toast(r.message||'Could not save answer.', true); return; }
+      clearDraft();
       toast('Saved to memory.');
       if((cur.open_questions||[]).length<=1) showCuriosityLoop(cur.id);
       else loadCuriosity();
@@ -6039,7 +6618,8 @@ function bindCurQuestion(cur, item){
 }
 
 function curSuggestionHtml(item){
-  const conf = item.confidence!=null ? ' <span class="cur-conf">'+pct(item.confidence)+' confident</span>' : '';
+  const conf = item.confidence!=null ? ' <span class="cur-conf" title="Faerie\'s own estimate that this suggestion fits what you\'ve confirmed so far">'+
+    pct(item.confidence)+' confidence this suggestion fits you</span>' : '';
   const outcome=item.metric_event_type==='practice'&&item.metric_dimension_slug ?
     '<label class="metric-field" style="margin:8px 0"><span>Measured outcome (optional)</span>'+
     '<select class="cur-outcome"><option value="">XP only</option>'+
@@ -6059,7 +6639,8 @@ function curSuggestionHtml(item){
 
 function bindCurSuggestion(item){
   const el=$('cur-item-'+item.id);
-  el.querySelector('.cur-implement').onclick=()=>openGoalPlanner(item.id);
+  const implementBtn=el.querySelector('.cur-implement');
+  implementBtn.onclick=()=>openGoalPlanner(item.id,implementBtn);
   const outcome=el.querySelector('.cur-outcome');
   if(outcome) outcome.onchange=()=>{
     outcome.nextElementSibling.textContent=outcome.value?'Uses explicit outcome evidence':'No mastery change';
@@ -6090,6 +6671,7 @@ function curResolvedHtml(items){
     '<div class="resolved-row"><div class="rr-body">' +
       '<div class="rr-q">'+esc(x.text)+'</div>' +
       (x.answer ? '<div class="rr-a">'+esc(x.answer)+'</div>' : '') +
+      contextDocumentSummaryHtml(x.context_attachments||[])+
     '</div><span class="rr-tag '+(CUR_TAG_CLASS[x.status]||'')+'">'+
       esc(CUR_TAG_LABEL[x.status]||x.status)+'</span></div>').join('');
 }
@@ -6103,6 +6685,19 @@ function curAttachmentHtml(cur){
     const path=(g.path&&g.path.length)?g.path.join(' › '):g.goal_title;
     return '<span class="cur-attach-chip">'+esc(goalTypeLabel(g.goal_type))+' · '+esc(path)+'</span>';
   }).join('')+'</div>';
+}
+
+function curDocumentContextHtml(cur){
+  return '<div class="cur-sub">Investigation document context</div>'+
+    '<p class="hint">These documents inform this Investigation and its future questions.</p>'+
+    contextDocumentHtml(cur.context_attachments||[],'curiosity',cur.id,false);
+}
+
+function curInteractionPreferencesHtml(cur){
+  const text=String(cur.interaction_preferences||'');
+  if(!text || text.includes('no interaction preferences recorded yet')) return '';
+  return '<div class="cur-attachments"><span class="cur-attach-chip">Question preferences learned</span>'+
+    '<span class="hint">'+esc(text.replace(/^\s*-\s*/gm,'').replace(/\n/g,' '))+'</span></div>';
 }
 
 function curClassificationTitle(p){
@@ -6134,48 +6729,116 @@ function curClassificationHtml(cur){
   }).join('');
 }
 
+function curSynthesisList(title,items){
+  if(!items||!items.length) return '';
+  return '<div class="cur-sub">'+esc(title)+'</div><ul>'+items.map(item=>{
+    const text=(item&&typeof item==='object')?(item.summary||('Evidence item #'+(item.item_id||'?'))):item;
+    return '<li>'+esc(String(text||''))+'</li>';}).join('')+'</ul>';
+}
+
+function curPersonModelHtml(cur,synthesis){
+  const proposals=(cur.person_model_proposals||[]).filter(p=>p.synthesis_id===synthesis.id);
+  const reconciled=(cur.person_model_reconciled_synthesis_ids||[]).includes(synthesis.id);
+  if(reconciled&&!proposals.length) return '<div class="cur-sub">Person-model reconciliation</div>'+
+    '<p class="hint">No change to Faerie’s broader understanding is warranted from this interpretation.</p>';
+  if(!proposals.length) return '<div class="cur-sub">Person-model reconciliation</div>'+
+    '<p class="hint">This interpretation has not changed Faerie’s beliefs. You can ask for separate, reviewable update proposals.</p>'+
+    '<button class="person-reconcile" data-synthesis-id="'+synthesis.id+'">Suggest person-model updates</button>';
+  return '<div class="cur-sub">Person-model reconciliation</div>'+proposals.map(proposal=>{
+    const p=proposal.payload||{}, target=proposal.target;
+    const status=proposal.status==='open'?'awaiting your decision':proposal.status;
+    return '<div class="agent-proposal person-proposal" data-person-proposal-id="'+proposal.id+'">'+
+      '<div class="cur-text"><b>'+esc(proposal.operation.replaceAll('_',' '))+'</b> · '+esc(p.scope||'situational')+
+      (p.sensitivity==='sensitive'?' · sensitive':'')+' · '+Math.round(Number(p.confidence||0)*100)+'%</div>'+
+      (target?'<div class="hint">Existing belief: '+esc(target.statement)+'</div>':'')+
+      (proposal.status==='open'?'<label>Proposed wording<textarea class="person-statement" rows="3">'+esc(p.statement||'')+'</textarea></label>':
+        '<p>'+esc(p.statement||'(no replacement belief)')+'</p>')+
+      '<p class="hint">'+esc(p.rationale||'No rationale supplied.')+'</p>'+
+      curSynthesisList('Evidence',p.evidence)+curSynthesisList('Exceptions / counterevidence',p.counterevidence)+
+      (p.change_over_time?'<div class="cur-sub">Change over time</div><p class="hint">'+esc(p.change_over_time)+'</p>':'')+
+      (proposal.status==='open'?'<div class="actions"><button class="person-reject skip">Reject</button>'+
+        '<button class="person-approve accent">Approve update</button></div>':'<span class="rr-tag">'+esc(status)+'</span>')+
+      '</div>';
+  }).join('');
+}
+
+function curSynthesisHtml(cur){
+  const history=cur.syntheses||[];
+  const readiness=cur.synthesis_due||{};
+  const readyLabel=readiness.new_outcomes
+    ? ('Review '+readiness.new_outcomes+' new experiment outcome'+(readiness.new_outcomes===1?'':'s'))
+    : ('Review '+(readiness.new_answers||0)+' new answers');
+  const draft=history.find(item=>item.status==='draft');
+  const approved=history.filter(item=>item.status==='approved');
+  const current=approved[0]||null, previous=approved[1]||null;
+  if(draft){
+    const p=draft.payload||{};
+    return '<div class="metric-panel cur-synthesis" data-synthesis-id="'+draft.id+'">'+
+      '<div class="cur-sub" style="margin-top:0">Working interpretation · draft v'+draft.version+'</div>'+
+      '<p class="hint">This is a revisable reflection. It cannot change memory or the Growth tree until you approve later proposals.</p>'+
+      (current?'<div class="cur-sub">Previous approved interpretation</div><p class="hint">'+esc(current.payload.interpretation||'')+'</p>':'')+
+      '<label>Current working interpretation<textarea class="synthesis-interpretation" rows="5">'+esc(p.interpretation||'')+'</textarea></label>'+
+      '<p class="hint">Confidence '+Math.round(Number(p.confidence||0)*100)+'% · '+esc(p.changed_since_previous||'No change explanation supplied.')+'</p>'+
+      curSynthesisList('Supporting evidence',p.supporting_evidence)+
+      curSynthesisList('Counterevidence / exceptions',p.counterevidence)+
+      curSynthesisList('Still unknown',p.unknowns)+
+      curSynthesisList('Possible experiments',p.experiments)+
+      '<div class="actions"><button class="synthesis-reject skip">Reject</button>'+
+      '<button class="synthesis-approve accent">Approve edited interpretation</button></div></div>';
+  }
+  if(current){
+    const p=current.payload||{};
+    const older=approved.slice(1);
+    const historyHtml=older.length?'<details class="cur-synthesis-history" data-ckey="synh-'+cur.id+'"><summary class="cur-sub">Interpretation history ('+older.length+')</summary>'+
+      older.map(item=>{const ip=item.payload||{};
+        return '<p class="hint">v'+item.version+' · '+esc(String(item.decided_at||item.created_at||'').slice(0,10))+
+          ' · '+Math.round(Number(ip.confidence||0)*100)+'% confidence<br>'+esc(ip.interpretation||'')+'</p>';}).join('')+
+      '</details>':'';
+    return '<details class="metric-panel cur-synthesis" data-ckey="syn-'+cur.id+'"><summary class="metric-summary">'+
+      '<span class="metric-summary-title">Current working interpretation · v'+current.version+'</span>'+
+      '<span class="metric-summary-stats"><span>'+Math.round(Number(p.confidence||0)*100)+'% confidence</span></span>'+
+      '</summary><div class="metric-body"><p>'+esc(p.interpretation||'')+'</p>'+
+      (previous?'<div class="cur-sub">Prior interpretation</div><p class="hint">'+esc(previous.payload.interpretation||'')+'</p>':'')+
+      (p.changed_since_previous?'<div class="cur-sub">What changed</div><p class="hint">'+esc(p.changed_since_previous)+'</p>':'')+
+      curSynthesisList('Counterevidence / exceptions',p.counterevidence)+
+      curSynthesisList('Still unknown',p.unknowns)+
+      historyHtml+
+      curPersonModelHtml(cur,current)+
+      '<button class="synthesis-create">'+(readiness.due?readyLabel:'Review with new evidence')+'</button></div></details>';
+  }
+  const ko=APP_LANG==='ko';
+  return '<div class="metric-panel cur-synthesis"><div class="cur-sub" style="margin-top:0">'+
+    (ko?'현재 해석':'Working interpretation')+'</div>'+
+    '<p class="hint">'+(ko?'페어리에게 이 탐구가 지금까지 뒷받침하는 내용을 종합해 달라고 요청하세요. 결과는 검토용 비공개 초안이에요.':
+      'Ask Faerie to synthesize what this Investigation currently supports. The result is a private draft for your review.')+'</p>'+
+    (readiness.new_answers?'<p class="hint">'+(ko?'답변된 질문 '+readiness.new_answers+'개를 사용할 준비가 됐어요.':
+      readiness.new_answers+' answered question'+(readiness.new_answers===1?' is':'s are')+' ready to use.')+'</p>':'')+
+    (readiness.new_outcomes?'<p class="hint">'+(ko?'실제 결과 '+readiness.new_outcomes+'개를 사용할 준비가 됐어요.':
+      readiness.new_outcomes+' real-world outcome'+(readiness.new_outcomes===1?' is':'s are')+' ready to use.')+'</p>':'')+
+    '<button class="synthesis-create">'+(ko?'페어리가 이해한 내용 종합하기':'Synthesize what Faerie understands')+'</button></div>';
+}
+
 function curMetricHtml(cur){
   const p=cur.metric_profile;
-  if(!p) return '';
-  if(p.status!=='approved'){
-    const importanceLabel=v=>v<=0?'Excluded':v<3?'Low':v<7?'Average':v<9?'High':'Essential';
-    const options=(selected)=>Array.from({length:21},(_,i)=>i/2).map(v=>
-      '<option value="'+v+'"'+(Math.abs(v-selected)<.01?' selected':'')+'>'+v.toFixed(1)+'</option>').join('');
-    const edit=(d,kind)=>'<div class="metric-edit" data-kind="'+kind+'" data-slug="'+esc(d.slug)+'">'+
-      '<span>'+esc(d.label)+'</span>'+
-      (kind==='growth'?'<span class="metric-importance-wrap"><select class="metric-weight" '+
-        'aria-label="Importance">'+options(Math.max(0,Math.min(10,(d.weight??.2)*25)))+'</select>'+
-        '<span class="metric-importance-label">'+importanceLabel((d.weight??.2)*25)+'</span></span>':'<span>state</span>')+
-      '<input class="metric-prompt" value="" placeholder="'+esc(d.checkin_prompt)+'" '+
-        'data-default="'+esc(d.checkin_prompt)+'"></div>';
-    return '<div class="metric-panel"><div class="cur-sub" style="margin-top:0">Proposed mastery profile</div>'+
-      '<p class="hint">For this investigation: <b>'+esc(cur.label||'')+'</b>'+
-        (p.domain==='custom'
-          ?'. GoalAI drafted these measures from this investigation\'s own framing — review, reword, or re-weight anything before approving.'
-          :'. These are the standard '+(p.domain==='mental_health'?'mental-health':p.domain==='exercise'?'exercise':'general')+
-           ' starter measures, keyword-matched to this investigation — not written specifically for it. '+
-           'Rename or reword anything, or set importance to 0 to drop a row, before approving.')+
-        '</p>'+
-      '<p class="hint">Review these measures before scoring begins. Importance runs from 0 (exclude) to 10 (essential) in 0.5 steps. The check-in wording is a placeholder, so it disappears when you type. State describes today; it never affects mastery or level.</p>'+
-      (p.domain==='mental_health'?'<p class="hint">These measures are reflective and non-diagnostic.</p>':'')+
-      (p.dimensions||[]).map(d=>edit(d,'growth')).join('')+
-      (p.state_metrics||[]).map(d=>edit(d,'state')).join('')+
-      '<button class="accent metric-approve">Approve profile</button></div>';
-  }
+  // Mastery-profile drafting and the proposed-profile review panel are
+  // shelved (launch feedback) — nothing new can be drafted from the UI and
+  // pending drafts stay hidden. Profiles already approved keep their
+  // check-in & mastery UI below.
+  if(!p || p.status!=='approved') return '';
   const s=cur.metric_snapshot;
   const top=s?'<div class="metric-top">'+
     '<div class="metric-stat"><b>'+s.level+'</b><span>Level</span></div>'+
     '<div class="metric-stat"><b>'+s.total_xp+'</b><span>XP</span></div>'+
     '<div class="metric-stat"><b>'+(s.overall_mastery==null?'—':Math.round(s.overall_mastery)+'%')+'</b><span>Mastery</span></div>'+
     '<div class="metric-stat"><b>'+Math.round(s.overall_confidence*100)+'%</b><span>Confidence</span></div></div>':'';
-  const scoreLabel=v=>v===0?'Unable / depleted':v<2?'Very depleted':v<3.5?'Low':
+  const scoreLabel=v=>v===''?'Not observed':v===0?'Unable / depleted':v<2?'Very depleted':v<3.5?'Low':
     v<5?'Below average':v<5.5?'Average':v<7?'Above average':v<8.5?'Good':
     v<9.5?'Very good':'Excellent';
-  const scoreOptions=Array.from({length:21},(_,i)=>i/2).map(v=>
-    '<option value="'+v+'"'+(v===5?' selected':'')+'>'+v.toFixed(1)+'</option>').join('');
+  const scoreOptions='<option value="" selected>Not observed</option>'+Array.from({length:21},(_,i)=>i/2).map(v=>
+    '<option value="'+v+'">'+v.toFixed(1)+'</option>').join('');
   const score=(d,kind)=>'<label class="metric-field"><span>'+esc(d.label)+'</span>'+
     '<select class="metric-score" data-kind="'+kind+'" data-slug="'+esc(d.slug)+'">'+scoreOptions+'</select>'+
-    '<span class="metric-rating">'+scoreLabel(5)+'</span></label>';
+    '<span class="metric-rating">'+scoreLabel('')+'</span></label>';
   const logs=(cur.metric_history||[]).slice(-7).map(x=>esc(x.snapshot_date)+' · '+esc(x.summary)).join('<br>');
   const bar=(label,value,confidence)=>'<div class="metric-bar-row"><div class="metric-bar-head"><span>'+esc(label)+
     '</span><span>'+(value==null?'unknown':Math.round(value)+'%')+
@@ -6203,11 +6866,11 @@ function curMetricHtml(cur){
     'Confidence '+Math.round(s.overall_confidence*100)+'%',
     publishText
   ]:[publishText];
-  return '<details class="metric-panel metric-collapsible"><summary class="metric-summary">'+
+  return '<details class="metric-panel metric-collapsible" data-ckey="metric-'+cur.id+'"><summary class="metric-summary">'+
     '<span class="metric-summary-title">Check-in & mastery</span>'+
     '<span class="metric-summary-stats">'+summaryStats.map(x=>'<span>'+esc(x)+'</span>').join('')+
     '</span></summary><div class="metric-body">'+top+'<div class="cur-sub">Daily check-in</div>'+
-    '<p class="hint">Choose in 0.5 steps: 0 means unable or depleted, 5 is average, and 10 is excellent.</p>'+
+    '<p class="hint">Leave anything unobserved. For values you did observe: 0 means unable or depleted, 5 is average, and 10 is excellent.</p>'+
     '<div class="metric-grid">'+(p.state_metrics||[]).map(d=>score(d,'state')).join('')+
     (p.dimensions||[]).map(d=>score(d,'growth')).join('')+'</div>'+
     '<textarea class="metric-note" rows="2" style="width:100%;margin-top:10px" placeholder="Private note (stays on this computer)"></textarea>'+
@@ -6245,7 +6908,10 @@ function curCardHtml(cur){
       '</div>' +
     '</div>' +
     '<div class="cur-directive">'+esc(cur.directive)+'</div>' +
+    curDocumentContextHtml(cur) +
     curAttachmentHtml(cur) +
+    curInteractionPreferencesHtml(cur) +
+    curSynthesisHtml(cur) +
     curClassificationHtml(cur) +
     curLoopHtml(cur) +
     curMetricHtml(cur) +
@@ -6256,12 +6922,16 @@ function curCardHtml(cur){
     (!openQ.length && !openS.length
       ? '<div class="empty" style="padding:14px">Nothing waiting on you right now — ' +
         'continue the investigation, classify/place it, or add fresh journal context when something changes.</div>' : '') +
-    (resolved.length ? '<div class="cur-sub">Recently resolved</div>' + curResolvedHtml(resolved) : '') +
+    (resolved.length ? '<details class="metric-panel metric-collapsible cur-resolved-panel" data-ckey="res-'+cur.id+'">'+
+      '<summary class="metric-summary"><span class="metric-summary-title">Recently resolved</span>'+
+      '<span class="metric-summary-stats"><span>'+resolved.length+(resolved.length===1?' item':' items')+'</span></span>'+
+      '</summary><div class="metric-body">' + curResolvedHtml(resolved) + '</div></details>' : '') +
   '</div>';
 }
 
 function bindCurCard(cur){
   const card=$('cur-'+cur.id);
+  bindContextDocuments(card,'curiosity',cur.id,null,loadCuriosity);
   card.querySelector('.cur-rename').onclick=()=>renameCuriosity(cur.id,cur.label);
   card.querySelector('.cur-chat').onclick=()=>{
     switchView('self');
@@ -6293,7 +6963,73 @@ function bindCurCard(cur){
     box.querySelector('.cur-class-dismiss').onclick=()=>curClassificationAction(id,'dismiss');
     box.querySelector('.cur-class-approve').onclick=()=>curClassificationAction(id,'approve');
   });
+  const synthesisCreate=card.querySelector('.synthesis-create');
+  if(synthesisCreate) synthesisCreate.onclick=()=>{
+    if(!api()) return;
+    synthesisCreate.disabled=true; synthesisCreate.textContent='Synthesizing…';
+    autoDatabaseRescue('before investigation synthesis').then(()=>
+      pywebview.api.curiosity_synthesize(cur.id)).then(r=>{
+      if(!r||r.ok===false){synthesisCreate.disabled=false;toast((r&&r.message)||'Could not synthesize.',true);return;}
+      toast('Working interpretation drafted for review.');loadCuriosity();
+    }).catch(e=>{synthesisCreate.disabled=false;toast('Could not synthesize: '+e,true);});
+  };
+  const synthesisBox=card.querySelector('.cur-synthesis[data-synthesis-id]');
+  if(synthesisBox){
+    const id=parseInt(synthesisBox.dataset.synthesisId,10);
+    const draft=(cur.syntheses||[]).find(item=>item.id===id);
+    synthesisBox.querySelector('.synthesis-reject').onclick=()=>{
+      pywebview.api.curiosity_synthesis_decide(id,'reject',null,'Rejected during review').then(r=>{
+        if(!r||r.ok===false){toast((r&&r.message)||'Could not reject synthesis.',true);return;}
+        toast('Synthesis rejected.');loadCuriosity();
+      }).catch(e=>toast('Could not reject synthesis: '+e,true));
+    };
+    synthesisBox.querySelector('.synthesis-approve').onclick=()=>{
+      const interpretation=synthesisBox.querySelector('.synthesis-interpretation').value.trim();
+      if(!interpretation){toast('Write or keep an interpretation before approving.',true);return;}
+      const payload={...(draft&&draft.payload||{}),interpretation};
+      pywebview.api.curiosity_synthesis_decide(id,'approve',payload,'Approved after review').then(r=>{
+        if(!r||r.ok===false){toast((r&&r.message)||'Could not approve synthesis.',true);return;}
+        toast('Working interpretation approved.');loadCuriosity();
+      }).catch(e=>toast('Could not approve synthesis: '+e,true));
+    };
+  }
+  const personReconcile=card.querySelector('.person-reconcile');
+  if(personReconcile) personReconcile.onclick=()=>{
+    const synthesisId=parseInt(personReconcile.dataset.synthesisId,10);
+    personReconcile.disabled=true;personReconcile.textContent='Comparing with current beliefs…';
+    pywebview.api.curiosity_person_reconcile(synthesisId).then(r=>{
+      if(!r||r.ok===false){personReconcile.disabled=false;toast((r&&r.message)||'Could not compare beliefs.',true);return;}
+      toast((r.proposals||[]).length?'Person-model updates ready for review.':'No person-model change is warranted yet.');
+      loadCuriosity();
+    }).catch(e=>{personReconcile.disabled=false;toast('Could not compare beliefs: '+e,true);});
+  };
+  card.querySelectorAll('.person-proposal[data-person-proposal-id]').forEach(box=>{
+    const id=parseInt(box.dataset.personProposalId,10);
+    const proposal=(cur.person_model_proposals||[]).find(item=>item.id===id);
+    const decide=action=>{
+      const payload={...(proposal&&proposal.payload||{})};
+      const statement=box.querySelector('.person-statement');
+      if(statement) payload.statement=statement.value.trim();
+      pywebview.api.curiosity_person_proposal(id,action,payload,
+        action==='approve'?'Approved during person-model review':'Rejected during person-model review').then(r=>{
+        if(!r||r.ok===false){toast((r&&r.message)||'Could not update the person model.',true);return;}
+        toast(action==='approve'?'Person model updated; prior wording remains in history.':'Person-model update rejected.');
+        loadCuriosity();loadState();
+      }).catch(e=>toast('Could not update the person model: '+e,true));
+    };
+    box.querySelector('.person-reject').onclick=()=>decide('reject');
+    box.querySelector('.person-approve').onclick=()=>decide('approve');
+  });
   const approve=card.querySelector('.metric-approve');
+  const draft=card.querySelector('.metric-draft');
+  if(draft) draft.onclick=()=>{
+    if(!api()) return;
+    draft.disabled=true; draft.textContent='Drafting profile…';
+    pywebview.api.curiosity_metric_draft(cur.id).then(r=>{
+      if(!r||r.ok===false){draft.disabled=false;draft.textContent='Draft mastery profile';toast((r&&r.message)||'Could not draft a profile.',true);return;}
+      toast('Mastery profile drafted for review.');loadCuriosity();
+    }).catch(e=>{draft.disabled=false;draft.textContent='Draft mastery profile';toast('Could not draft a profile: '+e,true);});
+  };
   if(approve) approve.onclick=()=>{
     if(!api()) return;
     const dims=[], states=[];
@@ -6301,9 +7037,14 @@ function bindCurCard(cur){
       const original=(row.dataset.kind==='growth'?cur.metric_profile.dimensions:cur.metric_profile.state_metrics)
         .find(x=>x.slug===row.dataset.slug);
       const prompt=row.querySelector('.metric-prompt');
-      const item={...original,checkin_prompt:prompt.value.trim()||prompt.dataset.default};
+      const label=row.querySelector('.metric-label'), description=row.querySelector('.metric-description');
+      const item={...original,
+        label:label.value.trim()||original.label,
+        description:description.value.trim()||original.description,
+        checkin_prompt:prompt.value.trim()||prompt.dataset.default};
       if(row.dataset.kind==='growth'){
-        item.weight=parseFloat(row.querySelector('.metric-weight').value||'0'); dims.push(item);
+        item.weight=parseFloat(row.querySelector('.metric-weight').value||'0');
+        if(item.weight>0) dims.push(item);
       } else states.push(item);
     });
     approve.disabled=true;
@@ -6320,8 +7061,8 @@ function bindCurCard(cur){
   });
   card.querySelectorAll('.metric-score').forEach(select=>{
     select.onchange=()=>{
-      const v=parseFloat(select.value), label=select.nextElementSibling;
-      label.textContent=v===0?'Unable / depleted':v<2?'Very depleted':v<3.5?'Low':
+      const v=select.value===''?'':parseFloat(select.value), label=select.nextElementSibling;
+      label.textContent=v===''?'Not observed':v===0?'Unable / depleted':v<2?'Very depleted':v<3.5?'Low':
         v<5?'Below average':v<5.5?'Average':v<7?'Above average':v<8.5?'Good':
         v<9.5?'Very good':'Excellent';
     };
@@ -6331,13 +7072,13 @@ function bindCurCard(cur){
     if(!api()) return;
     const state={}, growth={};
     card.querySelectorAll('.metric-score').forEach(el=>{
-      (el.dataset.kind==='state'?state:growth)[el.dataset.slug]=parseFloat(el.value);
+      if(el.value!=='') (el.dataset.kind==='state'?state:growth)[el.dataset.slug]=parseFloat(el.value);
     });
     checkin.disabled=true;
     pywebview.api.curiosity_metric_checkin(cur.id,state,growth,
       card.querySelector('.metric-note').value).then(r=>{
       if(!r||r.ok===false){checkin.disabled=false;toast((r&&r.message)||'Could not save.',true);return;}
-      toast('Check-in saved. +5 XP'); loadCuriosity();
+      toast('Check-in saved.'); loadCuriosity();
     }).catch(e=>{checkin.disabled=false;toast('Could not save: '+e,true);});
   };
   const publish=card.querySelector('.metric-publish-btn');
@@ -6489,9 +7230,79 @@ function renameCuriosity(id,current){
   }).catch(e=>toast('Could not rename curiosity: '+e,true));
 }
 
+function curCandidatePanelHtml(state){
+  const candidates=state.investigation_candidates||[];
+  const active=(state.curiosities||[]).filter(item=>item.status==='active').length;
+  const cards=candidates.map(candidate=>{
+    const p=candidate.payload||{};
+    return '<div class="agent-proposal investigation-candidate" data-candidate-id="'+candidate.id+'">'+
+      '<div class="cur-text"><b>'+esc(p.title||'Suggested Investigation')+'</b></div>'+
+      '<p>'+esc(p.question||'')+'</p><p class="hint">Why now: '+esc(p.rationale||'')+'</p>'+
+      '<p class="hint"><b>What this could change:</b> '+esc(p.what_could_change||'')+'</p>'+
+      '<div class="metric-summary-stats"><span>'+esc(p.burden||'medium')+' burden</span>'+
+      '<span>'+Math.round(Number(p.expected_usefulness||0)*100)+'% expected usefulness</span>'+
+      (p.sensitivity==='sensitive'?'<span>sensitive — starts only with permission</span>':'')+'</div>'+
+      '<div class="actions"><button class="candidate-never skip">Never suggest this topic</button>'+
+      '<button class="candidate-reject skip">Not relevant</button><button class="candidate-defer">Not now</button>'+
+      '<button class="candidate-refine">Refine</button><button class="candidate-start accent">Start Investigation</button></div></div>';
+  }).join('');
+  return '<details class="metric-panel cur-candidate-panel" data-ckey="candidates" open><summary class="metric-summary">'+
+    '<span class="metric-summary-title">Possible next Investigations</span>'+
+    '<span class="metric-summary-stats"><span>'+candidates.length+' of 2 shown</span></span></summary>'+
+    '<div class="metric-body"><p class="hint">'+(APP_LANG==='ko'
+      ?'페어리가 유용한 학습으로 이어질 만한 질문을 제안할 수 있어요. 아무것도 자동으로 시작되지 않아요.'
+      :'Faerie can suggest questions that may unlock useful learning. Nothing starts automatically.')+'</p>'+
+    (cards||'<p class="hint">'+(APP_LANG==='ko'
+      ?'대기 중인 제안이 없어요. 새로 제안할 게 없다고 페어리가 판단했을 수도 있어요.'
+      :'No suggestion is waiting. Faerie may also decide that nothing new is worthwhile.')+'</p>')+
+    (candidates.length<2&&active<5?'<button class="candidate-suggest">Look for worthwhile Investigations</button>':
+      active>=5?'<p class="hint">Your active Investigation capacity is full. Pause or archive one before adding another.</p>':'')+
+    '</div></details>';
+}
+
+function bindCandidatePanel(state){
+  const panel=$('cur-candidates'); if(!panel) return;
+  const suggest=panel.querySelector('.candidate-suggest');
+  if(suggest) suggest.onclick=()=>{
+    suggest.disabled=true;suggest.textContent='Looking for useful uncertainty…';
+    pywebview.api.curiosity_candidate_suggest().then(r=>{
+      if(!r||r.ok===false){suggest.disabled=false;toast((r&&r.message)||'Could not suggest Investigations.',true);return;}
+      toast((r.candidates||[]).length?'Investigation suggestions are ready.':'Nothing new is useful enough to suggest right now.');
+      loadCuriosity();
+    }).catch(e=>{suggest.disabled=false;toast('Could not suggest Investigations: '+e,true);});
+  };
+  panel.querySelectorAll('.investigation-candidate').forEach(box=>{
+    const id=parseInt(box.dataset.candidateId,10);
+    const candidate=(state.investigation_candidates||[]).find(item=>item.id===id);
+    const act=(action,payload)=>pywebview.api.curiosity_candidate_action(id,action,payload||null).then(r=>{
+      if(!r||r.ok===false){toast((r&&r.message)||'Could not update this suggestion.',true);return;}
+      toast(action==='start'?'Investigation started.':action==='defer'?'Suggestion deferred for two weeks.':
+        action==='reject'?'Faerie will not repeat this rejected topic.':
+        action==='never_ask'?'This topic is permanently blocked from suggestions.':'Suggestion refined.');
+      loadCuriosity();
+    }).catch(e=>toast('Could not update this suggestion: '+e,true));
+    box.querySelector('.candidate-defer').onclick=()=>act('defer');
+    box.querySelector('.candidate-reject').onclick=()=>act('reject');
+    box.querySelector('.candidate-never').onclick=()=>act('never_ask');
+    box.querySelector('.candidate-refine').onclick=()=>{
+      const current=candidate&&candidate.payload||{};
+      const question=prompt('Rewrite the question this Investigation should explore:',current.question||'');
+      if(!question||!question.trim()) return;
+      act('refine',{...current,question:question.trim()});
+    };
+    box.querySelector('.candidate-start').onclick=()=>{
+      const sensitive=candidate&&candidate.payload&&candidate.payload.sensitivity==='sensitive';
+      if(sensitive&&!confirm('This suggestion touches a sensitive topic. Start it only if you want Faerie to explore it now.')) return;
+      act('start',sensitive?{sensitive_permission:true}:null);
+    };
+  });
+}
+
 function renderCuriosity(s, images){
   images=images||backgroundImagesCache||[];
   currentCuriosityState=s;
+  const candidatePanel=$('cur-candidates');
+  if(candidatePanel){candidatePanel.innerHTML=curCandidatePanelHtml(s);bindCandidatePanel(s);bindCollapsePrefs(candidatePanel);}
   const list=$('cur-list');
   const curiosities=dedupeCuriositiesForDisplay(s.curiosities||[]);
   if(!curiosities.length){
@@ -6504,6 +7315,7 @@ function renderCuriosity(s, images){
     if(selected){
       list.innerHTML = curCardHtml(selected);
       bindCurCard(selected);
+      bindCollapsePrefs(list);
     } else {
       list.innerHTML='<div class="card"><div class="empty">No investigations match this view.</div></div>';
     }

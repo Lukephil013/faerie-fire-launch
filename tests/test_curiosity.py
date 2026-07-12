@@ -11,9 +11,12 @@ from livingpc.curiosity import (CuriosityContext, CuriosityStore, GeneratedItem,
                                 StubCuriosityModel, answer_item, archive_curiosity,
                                 dismiss_item, generate_items, pause_curiosity,
                                 parse_items, reactivate_curiosity, respond_suggestion,
-                                run_all_active, set_curiosity,
+                                reconcile_synthesis, run_all_active, set_curiosity,
                                 set_curiosity_from_journal, set_greatest,
-                                _classification_origin)
+                                start_investigation_candidate,
+                                suggest_investigation_candidates,
+                                synthesize_curiosity, _classification_origin)
+from livingpc.goals import GoalStore
 from livingpc.inference import InferenceStore
 from livingpc.memory import MemoryStore
 from livingpc import crypto
@@ -46,6 +49,30 @@ class _ContextCapturingModel(_FakeModel):
 def _empty_context() -> CuriosityContext:
     return CuriosityContext("(none yet)", "(none)", "(none yet)", "(none)",
                             "(none yet)", "(none yet)")
+
+
+def _candidate_payload(topic="handoff-energy", **changes):
+    payload = {
+        "title": "Explore handoff energy",
+        "question": "When do clear handoffs protect my energy?",
+        "rationale": "An approved synthesis left this uncertainty open.",
+        "what_could_change": "It could clarify which transitions need preparation.",
+        "evidence_refs": ["synthesis:1"],
+        "relevance": .8, "uncertainty": .75, "expected_usefulness": .78,
+        "burden": "low", "sensitivity": "normal", "topic_key": topic,
+    }
+    payload.update(changes)
+    return payload
+
+
+class _CandidateModel(StubCuriosityModel):
+    def __init__(self, candidates):
+        self.candidates = candidates
+        self.context = None
+
+    def suggest_investigations(self, context):
+        self.context = context
+        return list(self.candidates)
 
 
 class TestCuriosityStore(unittest.TestCase):
@@ -152,6 +179,33 @@ class TestCuriosityStore(unittest.TestCase):
         self.assertEqual(resolved[0]["answer"], "an answer")
         self.assertEqual(resolved[0]["resulting_memory_id"], 42)
 
+    def test_question_feedback_becomes_a_separate_preference_signal(self):
+        cid = self.store.add_curiosity("a", "a")
+        iid = self.store.add_item(cid, "question", "what now?")
+        self.store.record_interaction_feedback(
+            iid, answer_confidence=0.7, question_fit="too_broad")
+        preference = self.store.interaction_preference_block(cid)
+        self.assertIn("narrower, concrete questions", preference)
+        row = self.store.conn.execute(
+            "SELECT answer_confidence,question_fit FROM curiosity_interaction_feedback WHERE item_id=?",
+            (iid,)).fetchone()
+        self.assertEqual(row["question_fit"], "too_broad")
+        self.assertEqual(row["answer_confidence"], 0.7)
+
+    def test_question_feedback_is_optional_and_supports_thumbs_down(self):
+        cid = self.store.add_curiosity("a", "a")
+        iid = self.store.add_item(cid, "question", "what now?")
+        # No feedback given -> nothing recorded (feedback is optional).
+        self.store.record_interaction_feedback(iid)
+        rows = self.store.conn.execute(
+            "SELECT * FROM curiosity_interaction_feedback WHERE item_id=?",
+            (iid,)).fetchall()
+        self.assertEqual(rows, [])
+        # Thumbs down maps onto its own preference signal.
+        self.store.record_interaction_feedback(iid, question_fit="thumbs_down")
+        preference = self.store.interaction_preference_block(cid)
+        self.assertIn("narrower, clearly relevant questions", preference)
+
     def test_classification_origin_preserves_more_than_ten_answers_in_detail(self):
         cid = self.store.add_curiosity("understand social dread", "Social dread")
         for idx in range(12):
@@ -209,9 +263,51 @@ class TestCuriosityStore(unittest.TestCase):
             self.assertEqual(item["text"], "q")
             self.assertEqual(item["response_type"], "text")
             self.assertIsNone(item["metric_event_type"])
+            synthesis = migrated.add_synthesis(1, {
+                "interpretation": "Legacy data remains available after migration.",
+                "confidence": .4,
+            }, based_on_item_id=1)
+            self.assertEqual(synthesis["version"], 1)
+            self.assertEqual(migrated._item_dict(migrated.get_item(1))["text"], "q")
         finally:
             migrated.close()
         self.store = CuriosityStore(os.path.join(self.tmp.name, "memory.db"))
+
+    def test_candidate_gates_and_visible_limit_are_deterministic(self):
+        self.assertIsNone(self.store.add_candidate(_candidate_payload(
+            "low-value", expected_usefulness=.4)))
+        self.assertIsNone(self.store.add_candidate(_candidate_payload(
+            "high-burden", burden="high", expected_usefulness=.8)))
+        for index in range(3):
+            self.assertIsNotNone(self.store.add_candidate(_candidate_payload(
+                f"topic-{index}", title=f"Candidate {index}",
+                question=f"What could pattern {index} reveal?")))
+        self.assertEqual(len(self.store.visible_candidates()), 2)
+
+    def test_rejection_and_never_ask_are_durable_topic_blocks(self):
+        rejected = self.store.add_candidate(_candidate_payload("blocked-topic"))
+        self.store.decide_candidate(rejected["id"], "reject", note="Not relevant")
+        self.assertTrue(self.store.candidate_topic_blocked("blocked-topic"))
+        self.assertIsNone(self.store.add_candidate(_candidate_payload(
+            "blocked-topic", question="A differently worded repeat?")))
+        never = self.store.add_candidate(_candidate_payload("private-topic"))
+        self.store.decide_candidate(never["id"], "never_ask")
+        self.assertTrue(self.store.candidate_topic_blocked("private-topic"))
+
+    def test_candidate_can_be_refined_or_deferred_without_starting(self):
+        candidate = self.store.add_candidate(_candidate_payload())
+        revised = dict(candidate["payload"])
+        revised["question"] = "Which handoffs actually feel supportive?"
+        refined = self.store.decide_candidate(
+            candidate["id"], "refine", payload=revised)
+        self.assertEqual(refined["payload"]["question"], revised["question"])
+        deferred = self.store.decide_candidate(
+            candidate["id"], "defer", defer_until="2999-01-01T00:00:00+00:00")
+        self.assertEqual(deferred["status"], "deferred")
+        self.assertEqual(self.store.visible_candidates(), [])
+        self.assertIsNone(self.store.add_candidate(_candidate_payload(
+            question="Do not resurface a deferred topic with new wording.")))
+        self.assertEqual(self.store.list_curiosities(status="active"), [])
 
 
 class TestGeneration(unittest.TestCase):
@@ -387,6 +483,192 @@ class TestGeneration(unittest.TestCase):
         kinds = {i["kind"] for i in self.store.open_items(cid)}
         self.assertIn("suggestion", kinds)
         self.assertGreater(created1 + created2, 0)
+
+    def test_synthesis_versions_are_reviewed_and_preserved(self):
+        cid = self.store.add_curiosity("understand my energy", "Energy")
+        for number in range(2):
+            item_id = self.store.add_item(
+                cid, "question", f"question {number}", confidence=.9)
+            self.store.mark_answered(item_id, f"answer {number}", None)
+
+        readiness = self.store.synthesis_due(cid)
+        self.assertTrue(readiness["due"])
+        first = synthesize_curiosity(
+            self.mem, self.inf, self.store, cid, StubCuriosityModel())
+        self.assertEqual(first["version"], 1)
+        self.assertEqual(first["status"], "draft")
+        self.assertFalse(self.store.synthesis_due(cid)["due"])
+        self.assertIsNone(self.store.latest_synthesis(cid, status="approved"))
+
+        edited = dict(first["payload"])
+        edited["interpretation"] = "Energy appears steadier after earlier fuel."
+        approved = self.store.decide_synthesis(
+            first["id"], "approve", payload=edited, note="This feels accurate")
+        self.assertEqual(approved["status"], "approved")
+        self.assertEqual(approved["payload"]["interpretation"], edited["interpretation"])
+
+        for number in range(2, 4):
+            item_id = self.store.add_item(
+                cid, "question", f"question {number}", confidence=.9)
+            self.store.mark_answered(item_id, f"answer {number}", None)
+        self.assertTrue(self.store.synthesis_due(cid)["due"])
+        second = synthesize_curiosity(
+            self.mem, self.inf, self.store, cid, StubCuriosityModel())
+        self.assertEqual(second["version"], 2)
+        self.store.decide_synthesis(second["id"], "approve")
+
+        history = self.store.synthesis_history(cid)
+        self.assertEqual([item["version"] for item in history], [2, 1])
+        self.assertEqual([item["status"] for item in history],
+                         ["approved", "approved"])
+        self.assertEqual(history[1]["payload"]["interpretation"],
+                         edited["interpretation"])
+
+    def test_unparseable_synthesis_with_evidence_raises_instead_of_zero_draft(self):
+        """A truncated/unparseable model reply must not become a misleading
+        0%-confidence 'not enough evidence' draft when answers exist."""
+        class _EmptyModel(StubCuriosityModel):
+            def synthesize(self, curiosity, context, answered_items, previous):
+                return {}
+
+        cid = self.store.add_curiosity("understand a pattern", "Pattern")
+        item_id = self.store.add_item(cid, "question", "a question", confidence=.9)
+        self.store.mark_answered(item_id, "a real answer", None)
+        with self.assertRaises(ValueError):
+            synthesize_curiosity(
+                self.mem, self.inf, self.store, cid, _EmptyModel())
+        self.assertEqual(self.store.synthesis_history(cid), [])
+        # With no answered evidence the honest low-confidence fallback remains.
+        empty_cid = self.store.add_curiosity("another pattern", "Pattern 2")
+        draft = synthesize_curiosity(
+            self.mem, self.inf, self.store, empty_cid, _EmptyModel())
+        self.assertEqual(draft["status"], "draft")
+        self.assertIn("not enough evidence", draft["payload"]["interpretation"])
+
+    def test_synthesis_can_lower_confidence_and_report_insufficient_evidence(self):
+        cid = self.store.add_curiosity("understand a pattern", "Pattern")
+        first = self.store.add_synthesis(cid, {
+            "interpretation": "A tentative pattern.", "confidence": .8,
+        })
+        self.store.decide_synthesis(first["id"], "approve")
+        second = self.store.add_synthesis(cid, {
+            "interpretation": "The new evidence is insufficient to support the pattern.",
+            "confidence": .25,
+            "counterevidence": ["The pattern did not recur."],
+            "unknowns": ["Which context matters?"],
+        })
+        approved = self.store.decide_synthesis(second["id"], "approve")
+        self.assertLess(approved["payload"]["confidence"],
+                        first["payload"]["confidence"])
+        self.assertIn("insufficient", approved["payload"]["interpretation"])
+
+    def test_synthesis_requires_decision_before_another_draft(self):
+        cid = self.store.add_curiosity("understand a pattern", "Pattern")
+        draft = self.store.add_synthesis(cid, {"interpretation": "Maybe."})
+        with self.assertRaises(ValueError):
+            self.store.add_synthesis(cid, {"interpretation": "Another."})
+        self.store.decide_synthesis(draft["id"], "reject")
+        next_draft = self.store.add_synthesis(cid, {"interpretation": "Revised."})
+        self.assertEqual(next_draft["version"], 2)
+
+    def test_approved_synthesis_drafts_person_updates_only_on_explicit_request(self):
+        cid = self.store.add_curiosity("understand handoff energy", "Handoff energy")
+        synthesis = self.store.add_synthesis(cid, {
+            "interpretation": "Clear handoffs appear to help my energy stay steadier.",
+            "confidence": .7,
+            "supporting_evidence": [
+                {"item_id": 1, "summary": "A clear plan reduced the dip."},
+                {"item_id": 2, "summary": "An unclear transition preceded a crash."},
+            ],
+            "counterevidence": ["Travel days differ."],
+        })
+        self.store.decide_synthesis(synthesis["id"], "approve")
+        self.assertEqual(self.inf.person_proposals(cid), [])
+
+        proposals = reconcile_synthesis(
+            self.inf, self.store, synthesis["id"], StubCuriosityModel())
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(proposals[0]["status"], "open")
+        self.assertEqual(self.inf.confirmed(), [])
+        self.assertIsNotNone(self.inf.person_reconciliation_run(synthesis["id"]))
+        again = reconcile_synthesis(
+            self.inf, self.store, synthesis["id"], StubCuriosityModel())
+        self.assertEqual([p["id"] for p in again], [p["id"] for p in proposals])
+
+    def test_insufficient_synthesis_records_no_person_model_change(self):
+        cid = self.store.add_curiosity("understand a pattern", "Pattern")
+        synthesis = self.store.add_synthesis(cid, {
+            "interpretation": "There is not enough evidence yet.",
+            "confidence": .1,
+        })
+        self.store.decide_synthesis(synthesis["id"], "approve")
+        proposals = reconcile_synthesis(
+            self.inf, self.store, synthesis["id"], StubCuriosityModel())
+        self.assertEqual(proposals, [])
+        run = self.inf.person_reconciliation_run(synthesis["id"])
+        self.assertEqual(run["result_count"], 0)
+
+    def test_suggested_investigations_are_bounded_grounded_and_inert(self):
+        cid = self.store.add_curiosity("understand handoff energy", "Handoff")
+        synthesis = self.store.add_synthesis(cid, {
+            "interpretation": "Preparation may protect energy.", "confidence": .7,
+            "unknowns": ["Which handoffs benefit most?"],
+        })
+        self.store.decide_synthesis(synthesis["id"], "approve")
+        good = _candidate_payload(
+            evidence_refs=[f"synthesis:{synthesis['id']}", "invented:999"])
+        model = _CandidateModel([good, _candidate_payload(
+            "second", title="Second", question="What makes transitions feel voluntary?"),
+            _candidate_payload("third", title="Third", question="A third candidate?",
+                               relevance=.95, uncertainty=.95,
+                               expected_usefulness=.95)])
+        goals = GoalStore(os.path.join(self.tmp.name, "memory.db"))
+        try:
+            visible = suggest_investigation_candidates(
+                self.store, self.inf, goals, model)
+        finally:
+            goals.close()
+        self.assertLessEqual(len(visible), 2)
+        self.assertEqual(len(self.store.list_curiosities(status="active")), 1)
+        first = next(item for item in visible if item["topic_key"] == "handoff-energy")
+        self.assertIn("third", {item["topic_key"] for item in visible})
+        self.assertNotIn("second", {item["topic_key"] for item in visible})
+        self.assertEqual(first["payload"]["evidence_refs"],
+                         [f"synthesis:{synthesis['id']}"])
+        self.assertEqual(model.context["capacity"]["candidate_slots"], 2)
+
+    def test_candidate_starts_only_after_explicit_action_and_respects_capacity(self):
+        candidate = self.store.add_candidate(_candidate_payload())
+        self.assertEqual(self.store.list_curiosities(status="active"), [])
+        result = start_investigation_candidate(
+            self.mem, self.inf, self.store, candidate["id"], StubCuriosityModel())
+        self.assertEqual(self.store.candidate(candidate["id"])["status"], "started")
+        self.assertEqual(result["curiosity_id"],
+                         self.store.candidate(candidate["id"])["started_curiosity_id"])
+        self.assertGreater(len(self.store.open_items(result["curiosity_id"])), 0)
+
+        full_candidate = self.store.add_candidate(_candidate_payload("capacity-test"))
+        for index in range(4):
+            self.store.add_curiosity(f"active {index}", f"active {index}")
+        with self.assertRaises(ValueError):
+            start_investigation_candidate(
+                self.mem, self.inf, self.store, full_candidate["id"],
+                StubCuriosityModel())
+        self.assertEqual(self.store.candidate(full_candidate["id"])["status"], "open")
+
+    def test_sensitive_candidate_requires_explicit_permission(self):
+        candidate = self.store.add_candidate(_candidate_payload(
+            "sensitive-fear", sensitivity="sensitive",
+            question="When does this fear feel safest to explore?"))
+        with self.assertRaises(ValueError):
+            start_investigation_candidate(
+                self.mem, self.inf, self.store, candidate["id"],
+                StubCuriosityModel())
+        self.assertEqual(self.store.candidate(candidate["id"])["status"], "open")
+        result = start_investigation_candidate(
+            self.mem, self.inf, self.store, candidate["id"], StubCuriosityModel(),
+            sensitive_permission=True)
+        self.assertIn("curiosity_id", result)
 
 
 class TestAnswerDismissRespond(unittest.TestCase):
@@ -599,7 +881,62 @@ class TestGuiBridge(unittest.TestCase):
         self.assertTrue(cur["is_greatest"])
         self.assertIn("open_questions", cur)
         self.assertIn("open_suggestions", cur)
+        self.assertIn("person_model_proposals", cur)
+        self.assertIn("person_model_reconciled_synthesis_ids", cur)
+        self.assertIn("investigation_candidates", state)
         self.assertEqual(state["archived"], [])
+
+    def test_candidate_bridge_never_autostarts_and_honors_user_action(self):
+        store = CuriosityStore(self.api.cfg.memory_db_path)
+        try:
+            candidate = store.add_candidate(_candidate_payload())
+            self.assertEqual(store.list_curiosities(status="active"), [])
+        finally:
+            store.close()
+        started = self.api.curiosity_candidate_action(candidate["id"], "start")
+        self.assertTrue(started["ok"])
+        state = self.api.curiosity_state()
+        self.assertEqual(len(state["curiosities"]), 1)
+        self.assertEqual(state["curiosities"][0]["label"], "Explore handoff energy")
+        self.assertEqual(state["investigation_candidates"], [])
+
+    def test_person_model_reconciliation_bridge_requires_two_explicit_approvals(self):
+        created = self.api.curiosity_set("understand my handoff energy", label="Handoff")
+        cid = created["curiosity_id"]
+        state = self.api.curiosity_state()
+        questions = state["curiosities"][0]["open_questions"]
+        for index, item in enumerate(questions[:2]):
+            self.assertTrue(self.api.curiosity_answer(
+                item["id"], f"answer {index} about clear handoffs")["ok"])
+        drafted = self.api.curiosity_synthesize(cid)
+        self.assertTrue(drafted["ok"])
+        synthesis = drafted["synthesis"]
+        approved = self.api.curiosity_synthesis_decide(
+            synthesis["id"], "approve", synthesis["payload"], "accurate")
+        self.assertTrue(approved["ok"])
+        inf = InferenceStore(self.api.cfg.memory_db_path)
+        try:
+            self.assertEqual(inf.confirmed(), [])
+        finally:
+            inf.close()
+
+        reconciled = self.api.curiosity_person_reconcile(synthesis["id"])
+        self.assertTrue(reconciled["ok"])
+        self.assertEqual(len(reconciled["proposals"]), 1)
+        proposal = reconciled["proposals"][0]
+        inf = InferenceStore(self.api.cfg.memory_db_path)
+        try:
+            self.assertEqual(inf.confirmed(), [])
+        finally:
+            inf.close()
+        applied = self.api.curiosity_person_proposal(
+            proposal["id"], "approve", proposal["payload"], "fits me")
+        self.assertTrue(applied["ok"])
+        inf = InferenceStore(self.api.cfg.memory_db_path)
+        try:
+            self.assertEqual(len(inf.confirmed()), 1)
+        finally:
+            inf.close()
 
     def test_curiosity_answer_bridge(self):
         created = self.api.curiosity_set("help me get fit", label="fitness")

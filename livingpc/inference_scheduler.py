@@ -26,6 +26,13 @@ LAST_CURIOSITY_ATTEMPT_KEY = "curiosity_last_attempt"
 LAST_GOAL_AI_ATTEMPT_KEY = "goal_ai_last_attempt"
 CHECKIN_DATE_KEY = "curiosity_checkin_prompt_date"
 
+REFLECTION_MESSAGES = {
+    "investigation_checkin": ("A reflection is ready", "An active Investigation has a short check-in when you want it."),
+    "inference_review": ("A pattern is ready to review", "Faerie has a tentative interpretation for you to confirm, change, or reject."),
+    "goal_update": ("Your growth tree has an update", "A goal may need attention or a relevance check. Open Growth when it feels useful."),
+    "new_hypothesis": ("A new pattern may be forming", "A claim crossed the evidence gate and is ready for your review."),
+}
+
 
 def due(now: datetime, last_loop: datetime | None, last_nightly_date: str | None,
         *, interval_seconds: float, nightly_hour: int) -> str | None:
@@ -79,6 +86,34 @@ class InferenceScheduler:
             getattr(cfg, "goal_ai_interval_minutes", 240.0)) * 60.0
         self._last_goal_ai: datetime | None = None
         self.checkin_hour = int(getattr(cfg, "curiosity_checkin_hour", 21))
+
+    def _offer_reflection(self, kind: str, subject_key: str, trigger_kind: str,
+                          *, priority: int = 0, now: datetime | None = None,
+                          title: str | None = None, message: str | None = None) -> bool:
+        """Queue metadata and deliver at most one globally eligible reflection."""
+        from .notify import notify
+        from .reflection_cadence import ReflectionCadenceStore
+        local_now = now or datetime.now().astimezone()
+        cadence = ReflectionCadenceStore(self.cfg.memory_db_path)
+        try:
+            offered = cadence.offer(
+                kind, subject_key, trigger_kind, priority=priority, now=local_now,
+                backlog_limit=int(getattr(self.cfg, "reflection_backlog_limit", 3)))
+            event = cadence.claim_next(
+                now=local_now,
+                min_days=int(getattr(self.cfg, "reflection_min_days", 7)),
+                quiet_start_hour=int(getattr(self.cfg, "reflection_quiet_start_hour", 21)),
+                quiet_end_hour=int(getattr(self.cfg, "reflection_quiet_end_hour", 8)))
+        finally:
+            cadence.close()
+        if event:
+            fallback_title, fallback_message = REFLECTION_MESSAGES.get(
+                event["kind"], ("Faerie has a reflection", "Open Faerie Fire when you want to take a look."))
+            is_current = event["id"] == offered.get("event_id")
+            notify(title if is_current and title else fallback_title,
+                   message if is_current and message else fallback_message, cfg=self.cfg)
+            self.log(f"[notify] reflection kind={event['kind']} trigger={event['trigger_kind']}")
+        return bool(offered.get("accepted"))
 
     # persistence for the once-a-day guard (survives restarts) --------------
     def _get_nightly_date(self) -> str | None:
@@ -154,11 +189,11 @@ class InferenceScheduler:
             log_diag("inference", f"scheduled {kind} run created={result.created}")
             self.log(f"[inference] {kind} run: {result.created} new hypothesis(es)")
             if result.created and getattr(self.cfg, "notify_on_graduation", True):
-                from .notify import notify
                 noun = "hypothesis" if result.created == 1 else "hypotheses"
-                notify(f"{result.created} new {noun} about you",
-                       "A claim crossed the confidence gate — review it in the "
-                       "Memory GUI when you have a minute.", cfg=self.cfg)
+                self._offer_reflection(
+                    "new_hypothesis", "graduated-claims", "new_evidence", priority=90,
+                    title=f"{result.created} new {noun} about you",
+                    message="A claim crossed the confidence gate - review it when you have a minute.")
         except Exception as error:
             succeeded = False
             log_diag("inference", f"scheduled {kind} run failed "
@@ -187,10 +222,7 @@ class InferenceScheduler:
         unlinked and their blob_ref columns nulled. This keeps capture useful
         without letting the blob folder grow forever.
         """
-        retention_days = int(getattr(self.cfg, "blob_retention_days", 3) or 0)
-        if retention_days <= 0:
-            log_diag("inference", "blob purge skipped retention_days=0")
-            return True
+        retention_days = max(0, int(getattr(self.cfg, "blob_retention_days", 3) or 0))
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
         store = EventLog(self.cfg.db_path)
         try:
@@ -232,7 +264,10 @@ class InferenceScheduler:
             finalized = 0
             try:
                 for row in curiosities.list_curiosities(status="active"):
-                    profile = metrics.ensure_profile(row)
+                    # Snapshotting must never create a paid/model-generated
+                    # profile as a side effect.  Profiles are drafted only
+                    # from the explicit UI action.
+                    profile = metrics.get_profile(row["id"])
                     if profile and profile.status == "approved":
                         metrics.build_snapshot(row["id"], day)
                         finalized += 1
@@ -248,12 +283,34 @@ class InferenceScheduler:
             return False
 
     def _prompt_for_curiosity_checkin(self) -> bool:
-        """Send a generic reminder; curiosity labels and values stay private."""
+        """Send a generic reminder only when an approved check-in is actionable."""
         try:
-            from .notify import notify
-            notify("Evening curiosity check-in",
-                   "A short check-in is ready in Faerie Fire.", cfg=self.cfg)
-            return True
+            from .curiosity import CuriosityStore
+            from .curiosity_metrics import MetricStore
+            today = datetime.now().astimezone().date().isoformat()
+            curiosities = CuriosityStore(self.cfg.memory_db_path)
+            metrics = MetricStore(self.cfg.memory_db_path)
+            try:
+                actionable = False
+                for curiosity in curiosities.list_curiosities(status="active"):
+                    profile = metrics.get_profile(curiosity["id"])
+                    if not profile or profile.status != "approved":
+                        continue
+                    row = metrics.conn.execute(
+                        "SELECT 1 FROM curiosity_metric_checkin WHERE curiosity_id=? AND checkin_date=?",
+                        (curiosity["id"], today)).fetchone()
+                    if not row:
+                        actionable = True
+                        break
+            finally:
+                metrics.close()
+                curiosities.close()
+            if not actionable:
+                return False
+            return self._offer_reflection(
+                "investigation_checkin", "active-investigations", "actionable_checkin",
+                priority=40, title="Evening curiosity check-in",
+                message="A short check-in is ready in Faerie Fire.")
         except Exception as error:
             log_diag("curiosity", "check-in reminder failed "
                      f"error={type(error).__name__}")
@@ -395,7 +452,6 @@ class InferenceScheduler:
         a Yes/No. Silent when the stack is empty. Best-effort."""
         try:
             from .inference import InferenceStore
-            from .notify import notify, review_reminder
             inf = InferenceStore(self.cfg.memory_db_path)
             try:
                 gate = getattr(self.cfg, "inference_surface_confidence", 0.80)
@@ -403,8 +459,11 @@ class InferenceScheduler:
             finally:
                 inf.close()
             if count:
-                notify(*review_reminder(count), cfg=self.cfg)
-                self.log(f"[notify] {count} inference(s) awaiting review")
+                self._offer_reflection(
+                    "inference_review", "inference-review-stack",
+                    "contradictory_or_new_evidence", priority=80,
+                    title="Patterns awaiting your review",
+                    message=f"{count} tentative interpretation(s) are ready for your decision.")
             log_diag("inference", f"nightly review reminder count={count}")
             return True
         except Exception as error:
@@ -469,12 +528,11 @@ class InferenceScheduler:
                      f"{result['proposals_created']} proposal(s)")
             if (getattr(self.cfg, "goal_ai_notifications", True) and
                     (result["proposals_created"] or result["became_blocked"])):
-                from .notify import notify
-                notify(
-                    "GoalAI has an update",
-                    f"{result['became_blocked']} newly blocked · "
-                    f"{result['proposals_created']} new proposal(s). Open Goals to review.",
-                    cfg=self.cfg)
+                self._offer_reflection(
+                    "goal_update", "goal-ai-review", "goal_change", priority=60,
+                    title="GoalAI has an update",
+                    message=f"{result['became_blocked']} newly blocked · "
+                            f"{result['proposals_created']} new proposal(s). Open Goals to review.")
             return result["failures"] == 0
         except Exception as error:
             log_diag("goal-ai", f"scheduled sweep failed error={type(error).__name__}")

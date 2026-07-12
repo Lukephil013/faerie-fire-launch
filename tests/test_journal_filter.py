@@ -25,6 +25,14 @@ class TestFilter(unittest.TestCase):
     def test_insight_scores_above_pasted_advice(self):
         self.assertGreater(score_entry(INSIGHT), score_entry(ADVICE))
 
+    def test_korean_first_person_insight_is_not_silently_dropped(self):
+        insight = ("나는 요즘 일이 두렵다는 것을 깨달았다. 내 에너지가 떨어지면 "
+                   "사람들과 이야기하는 것이 더 어렵고, 이 패턴을 바꾸고 싶다.")
+        self.assertGreaterEqual(score_entry(insight), 1.0)
+        kept, stats = filter_entries([self._e(insight)])
+        self.assertEqual(stats["kept"], 1)
+        self.assertEqual(kept[0]["text"], insight)
+
     def test_short_and_low_signal_dropped_insight_kept(self):
         kept, stats = filter_entries([
             self._e("ok."), self._e(INSIGHT), self._e(ADVICE + " " + ADVICE)])

@@ -158,7 +158,8 @@ class GuiApi:
             title = str(title or "").strip() or T("Actualized Self", "실현된 나")
             purpose = str(purpose or "").strip()
             store.update(store.root_id, title=title, description=purpose)
-            investigation_id = onboarding.seed_example_investigation(self.cfg.memory_db_path)
+            investigation_id = onboarding.seed_example_investigation(
+                self.cfg.memory_db_path, soul_title=title, soul_purpose=purpose)
             onboarding.mark_complete()
             return {"ok": True, "tree": store.tree(), "investigation_id": investigation_id}
         except Exception as error:
@@ -244,6 +245,62 @@ class GuiApi:
         api = self._command_api()
         api._window = self._window
         return api.attach_file()
+
+    def _validate_context_attachment_owner(self, owner_kind, owner_key) -> tuple[str, str]:
+        kind, key = str(owner_kind or "").strip(), str(owner_key or "").strip()
+        if kind == "soul_calibration":
+            from livingpc import soul_calibration
+            valid = {soul_calibration.field_key(field) for field in soul_calibration.FIELDS}
+            if key not in valid:
+                raise ValueError("Soul Calibration question not found")
+        elif kind in {"curiosity", "curiosity_item"}:
+            from livingpc.curiosity import CuriosityStore
+            store = CuriosityStore(self.cfg.memory_db_path)
+            try:
+                row = (store.get_curiosity(int(key)) if kind == "curiosity"
+                       else store.get_item(int(key)))
+            finally:
+                store.close()
+            if row is None:
+                raise ValueError("Investigation context owner not found")
+            key = str(int(key))
+        else:
+            raise ValueError("unsupported context attachment owner")
+        return kind, key
+
+    def context_attachment_add(self, owner_kind, owner_key) -> dict:
+        """Pick one document, extract it locally, and encrypt it for one owner."""
+        try:
+            kind, key = self._validate_context_attachment_owner(owner_kind, owner_key)
+            if self._window is None:
+                raise ValueError("window not ready")
+            import webview
+            paths = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False)
+            if not paths:
+                return {"ok": False, "message": ""}
+            path = paths[0] if isinstance(paths, (list, tuple)) else paths
+            from livingpc.context_attachment import ContextAttachmentStore
+            store = ContextAttachmentStore(self.cfg.memory_db_path)
+            try:
+                attachment = store.add_document(kind, key, str(path))
+            finally:
+                store.close()
+            return {"ok": True, "attachment": attachment}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def context_attachment_remove(self, attachment_id, owner_kind, owner_key) -> dict:
+        try:
+            kind, key = self._validate_context_attachment_owner(owner_kind, owner_key)
+            from livingpc.context_attachment import ContextAttachmentStore
+            store = ContextAttachmentStore(self.cfg.memory_db_path)
+            try:
+                removed = store.remove(int(attachment_id), kind, key)
+            finally:
+                store.close()
+            return {"ok": True, "removed": removed}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
     # --- self-portrait (image + ambient effect on the Command Center dash) -
     _PORTRAIT_ANIMATIONS = {
@@ -875,8 +932,12 @@ class GuiApi:
         with its open items split by kind, plus a short resolved history."""
         from livingpc.curiosity import CuriosityStore
         from livingpc.curiosity_metrics import MetricStore
+        from livingpc.inference import InferenceStore
+        from livingpc.context_attachment import ContextAttachmentStore
         store = CuriosityStore(self.cfg.memory_db_path)
         metrics = MetricStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        documents = ContextAttachmentStore(self.cfg.memory_db_path)
         try:
             goal_titles = {}
             goal_types = {}
@@ -924,7 +985,18 @@ class GuiApi:
                 if row["status"] == "archived":
                     continue
                 open_items = store.open_items(row["id"])
-                profile = (metrics.ensure_profile(row)
+                for item in open_items:
+                    item["context_attachments"] = documents.list(
+                        "curiosity_item", item["id"])
+                # The Recently-resolved panel is collapsible and shows the full
+                # Q&A history when expanded, so fetch everything practical.
+                resolved_items = store.resolved(row["id"], limit=500)
+                for item in resolved_items:
+                    item["context_attachments"] = documents.list(
+                        "curiosity_item", item["id"])
+                # Reading the board must not trigger a model call or create a
+                # tracking rubric.  Drafting is an explicit user decision.
+                profile = (metrics.get_profile(row["id"])
                            if getattr(self.cfg, "curiosity_metrics_enabled", True) else None)
                 snapshot = metrics.latest_snapshot(row["id"]) if profile else None
                 preview = None
@@ -941,27 +1013,39 @@ class GuiApi:
                     **row,
                     "open_questions": [i for i in open_items if i["kind"] == "question"],
                     "open_suggestions": [i for i in open_items if i["kind"] == "suggestion"],
-                    "resolved": store.resolved(row["id"], limit=10),
+                    "resolved": resolved_items,
                     "item_counts": store.item_counts(row["id"]),
                     "classification_proposals": store.classification_proposals(row["id"]),
                     "classification_history": store.classification_proposals(row["id"], status=None),
                     "classification_contexts": store.classification_contexts(row["id"]),
+                    "syntheses": store.synthesis_history(row["id"], limit=12),
+                    "synthesis_due": store.synthesis_due(row["id"]),
+                    "person_model_proposals": inf.person_proposals(row["id"]),
+                    "person_model_reconciled_synthesis_ids": [
+                        item["id"] for item in store.synthesis_history(row["id"], limit=12)
+                        if inf.person_reconciliation_run(item["id"])],
                     "metric_profile": asdict(profile) if profile else None,
                     "metric_snapshot": asdict(snapshot) if snapshot else None,
                     "metric_history": ([asdict(item) for item in metrics.history(row["id"], 7)]
                                        if profile else []),
                     "metric_preview": preview,
+                    "interaction_preferences": store.interaction_preference_block(row["id"]),
                     "attached_goals": attached_by_curiosity.get(row["id"], []),
+                    "context_attachments": documents.list("curiosity", row["id"]),
                 })
             archived = store.list_curiosities(status="archived")
             return {
                 "curiosities": curiosities,
                 "archived": archived,
+                "investigation_candidates": store.visible_candidates(limit=2),
                 "stats": store.stats(),
+                "global_xp": metrics.global_xp(),
                 "checkin_hour": getattr(self.cfg, "curiosity_checkin_hour", 21),
                 "interval_minutes": getattr(self.cfg, "curiosity_interval_minutes", 720),
             }
         finally:
+            documents.close()
+            inf.close()
             metrics.close()
             store.close()
 
@@ -982,6 +1066,128 @@ class GuiApi:
             store.close()
             inf.close()
             mem.close()
+
+    def curiosity_candidate_suggest(self) -> dict:
+        from livingpc.curiosity import (
+            CuriosityStore, get_curiosity_model, suggest_investigation_candidates,
+        )
+        from livingpc.goals import GoalStore
+        from livingpc.inference import InferenceStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        goals = GoalStore(self.cfg.memory_db_path)
+        try:
+            candidates = suggest_investigation_candidates(
+                store, inf, goals,
+                get_curiosity_model(self.cfg, usage_category="manual"))
+            return {"ok": True, "candidates": candidates}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            goals.close()
+            inf.close()
+            store.close()
+
+    def curiosity_candidate_action(self, candidate_id, action, payload=None) -> dict:
+        from livingpc.curiosity import (
+            CuriosityStore, defer_candidate_until, get_curiosity_model,
+            start_investigation_candidate,
+        )
+        from livingpc.inference import InferenceStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        mem = MemoryStore(self.cfg.memory_db_path)
+        try:
+            action = str(action or "")
+            if action == "start":
+                model = get_curiosity_model(self.cfg, usage_category="manual")
+                result = start_investigation_candidate(
+                    mem, inf, store, int(candidate_id), model,
+                    sensitive_permission=bool(
+                        isinstance(payload, dict) and payload.get("sensitive_permission")))
+                self._sync_curiosity_notion_quietly(
+                    mem, inf, store, result["curiosity_id"], model)
+                return {"ok": True, **result}
+            candidate = store.decide_candidate(
+                int(candidate_id), action,
+                payload=dict(payload) if isinstance(payload, dict) else None,
+                note=f"User chose {action} for this suggested Investigation",
+                defer_until=defer_candidate_until(14) if action == "defer" else None)
+            return {"ok": True, "candidate": candidate}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            mem.close()
+            inf.close()
+            store.close()
+
+    def curiosity_synthesize(self, curiosity_id) -> dict:
+        from livingpc.curiosity import (
+            CuriosityStore, get_curiosity_model, synthesize_curiosity,
+        )
+        from livingpc.inference import InferenceStore
+        mem = MemoryStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            synthesis = synthesize_curiosity(
+                mem, inf, store, int(curiosity_id),
+                get_curiosity_model(self.cfg, usage_category="manual"))
+            return {"ok": True, "synthesis": synthesis}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+            inf.close()
+            mem.close()
+
+    def curiosity_synthesis_decide(self, synthesis_id, action, payload=None,
+                                   note="") -> dict:
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            synthesis = store.decide_synthesis(
+                int(synthesis_id), str(action or ""),
+                payload=dict(payload) if isinstance(payload, dict) else None,
+                note=str(note or ""))
+            return {"ok": True, "synthesis": synthesis}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def curiosity_person_reconcile(self, synthesis_id) -> dict:
+        from livingpc.curiosity import (
+            CuriosityStore, get_curiosity_model, reconcile_synthesis,
+        )
+        from livingpc.inference import InferenceStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        try:
+            proposals = reconcile_synthesis(
+                inf, store, int(synthesis_id),
+                get_curiosity_model(self.cfg, usage_category="manual"))
+            return {"ok": True, "proposals": proposals}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            inf.close()
+            store.close()
+
+    def curiosity_person_proposal(self, proposal_id, action, payload=None,
+                                  note="") -> dict:
+        from livingpc.inference import InferenceStore
+        inf = InferenceStore(self.cfg.memory_db_path)
+        try:
+            proposal = inf.decide_person_proposal(
+                int(proposal_id), str(action or ""),
+                payload=dict(payload) if isinstance(payload, dict) else None,
+                note=str(note or ""))
+            return {"ok": True, "proposal": proposal}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            inf.close()
 
     def curiosity_classification_proposal(self, proposal_id, action) -> dict:
         from livingpc.curiosity import decide_classification_proposal
@@ -1008,6 +1214,36 @@ class GuiApi:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
             metrics.close()
+
+    def curiosity_metric_draft(self, curiosity_id) -> dict:
+        """Explicitly draft one local reviewable mastery profile.
+
+        The bounded Q&A context is sent only because the user asked to create
+        tracking for this Investigation; simply opening the board never does.
+        """
+        from livingpc.curiosity import CuriosityStore
+        from livingpc.curiosity_metrics import MetricStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        metrics = MetricStore(self.cfg.memory_db_path)
+        try:
+            curiosity = store.get_curiosity(int(curiosity_id))
+            if not curiosity:
+                raise ValueError("investigation not found")
+            answered = [item for item in store.items_for_curiosity(int(curiosity_id))
+                        if item.get("status") == "answered"][-8:]
+            context = "\n".join(
+                f"Q: {item.get('text', '')}\nA: {item.get('answer', '')}" for item in answered)
+            profile = metrics.ensure_profile({
+                **curiosity, "allow_model_draft": True, "metric_context": context,
+            })
+            if not profile:
+                raise ValueError("could not draft a mastery profile")
+            return {"ok": True, "profile": asdict(profile)}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            metrics.close()
+            store.close()
 
     def curiosity_metric_checkin(self, curiosity_id, state=None, growth=None,
                                  note="") -> dict:
@@ -1229,7 +1465,8 @@ class GuiApi:
             inf.close()
             store.close()
 
-    def curiosity_answer(self, item_id, text, rating=None) -> dict:
+    def curiosity_answer(self, item_id, text, rating=None, answer_confidence=None,
+                         question_fit=None) -> dict:
         from livingpc.curiosity import CuriosityStore, answer_item, get_curiosity_model
         from livingpc.inference import InferenceStore
         mem = MemoryStore(self.cfg.memory_db_path)
@@ -1239,6 +1476,8 @@ class GuiApi:
             model = get_curiosity_model(self.cfg)
             result = answer_item(mem, store, int(item_id), str(text or ""), model,
                                  rating=None if rating is None else float(rating))
+            store.record_interaction_feedback(
+                int(item_id), answer_confidence=answer_confidence, question_fit=question_fit)
             if (result.get("metric_event_type") == "assessment" and
                     result.get("metric_dimension_slug") and result.get("rating") is not None):
                 from livingpc.curiosity_metrics import MetricStore
@@ -1250,6 +1489,10 @@ class GuiApi:
                         dimension_slug=result["metric_dimension_slug"],
                         observed_score=max(0.0, min(10.0, result["rating"])) * 10.0,
                         confidence=0.8)
+                    profile = metrics.get_profile(result["curiosity_id"])
+                    if profile and profile.status == "approved":
+                        metrics.build_snapshot(
+                            result["curiosity_id"], datetime.now().astimezone().date().isoformat())
                 finally:
                     metrics.close()
             self._sync_curiosity_notion_quietly(mem, inf, store, result["curiosity_id"], model)
@@ -1294,6 +1537,10 @@ class GuiApi:
                         observed_score=(max(0.0, min(10.0, float(outcome_rating))) * 10.0
                                         if outcome_rating is not None else None),
                         confidence=0.6)
+                    profile = metrics.get_profile(curiosity_id)
+                    if profile and profile.status == "approved":
+                        metrics.build_snapshot(
+                            curiosity_id, datetime.now().astimezone().date().isoformat())
                 finally:
                     metrics.close()
             if curiosity_id is not None:
@@ -1310,17 +1557,87 @@ class GuiApi:
     # --- goals / Actualized Self --------------------------------------------
     def goal_state(self) -> dict:
         from livingpc.curiosity import CuriosityStore
+        from livingpc.goal_ai import (
+            GoalAgentStore, goal_relevance_view, relevance_due_nodes,
+        )
         from livingpc.goals import GoalStore
         goals = GoalStore(self.cfg.memory_db_path)
+        agents = GoalAgentStore(self.cfg.memory_db_path, ensure=False)
         curiosities = CuriosityStore(self.cfg.memory_db_path)
         try:
-            return {"ok": True, "tree": goals.tree(),
-                    "curiosities": curiosities.list_curiosities()}
+            tree = goals.tree()
+            stale_days = int(getattr(self.cfg, "goal_relevance_stale_days", 30))
+
+            def enrich(node):
+                node["relevance"] = goal_relevance_view(
+                    goals, agents, node["id"], stale_days=stale_days)
+                for child in node.get("children", []):
+                    enrich(child)
+
+            enrich(tree)
+            return {"ok": True, "tree": tree,
+                    "curiosities": curiosities.list_curiosities(),
+                    "relevance_due": relevance_due_nodes(
+                        goals, agents, stale_days=stale_days)}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
             curiosities.close()
+            agents.close()
             goals.close()
+
+    def goal_relevance_review(self, goal_id) -> dict:
+        from livingpc.goal_ai import review_goal_relevance
+        try:
+            return review_goal_relevance(self.cfg, int(goal_id))
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def reflection_cadence_state(self) -> dict:
+        from livingpc.reflection_cadence import ReflectionCadenceStore
+        store = ReflectionCadenceStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, **store.snapshot()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def reflection_cadence_feedback(self, event_id, action, usefulness=None,
+                                    burden=None) -> dict:
+        from livingpc.reflection_cadence import ReflectionCadenceStore
+        store = ReflectionCadenceStore(self.cfg.memory_db_path)
+        try:
+            return store.feedback(
+                int(event_id), str(action or "acted"), usefulness=usefulness,
+                burden=burden,
+                snooze_base_days=int(getattr(self.cfg, "reflection_snooze_base_days", 3)),
+                ignore_suppress_days=int(getattr(
+                    self.cfg, "reflection_ignore_suppress_days", 30)))
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_gardening_proposal(self, proposal_id, action, payload=None,
+                                rationale="") -> dict:
+        from livingpc.goal_ai import decide_gardening_proposal
+        try:
+            return decide_gardening_proposal(
+                self.cfg, int(proposal_id), str(action or ""),
+                payload=dict(payload) if isinstance(payload, dict) else None,
+                rationale=str(rationale or ""))
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_experiment_outcome(self, goal_id, payload=None) -> dict:
+        from livingpc.goals import record_experiment_outcome
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError("outcome details are required")
+            return record_experiment_outcome(self.cfg, int(goal_id), dict(payload))
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
     def goal_origin_backfill(self) -> dict:
         from livingpc.curiosity import CuriosityStore
@@ -1338,10 +1655,12 @@ class GuiApi:
             goals.close()
 
     def goal_ai_state(self, goal_id=None) -> dict:
-        from livingpc.goal_ai import GoalAgentStore
+        from livingpc.goal_ai import GoalAgentStore, relevance_due_nodes
+        from livingpc.goals import GoalStore
         from livingpc.inference_scheduler import LAST_GOAL_AI_KEY
         from livingpc.storage import EventLog
         store = GoalAgentStore(self.cfg.memory_db_path, ensure=False)
+        goals = GoalStore(self.cfg.memory_db_path)
         try:
             now = datetime.now().astimezone()
             hour = int(getattr(self.cfg, "inference_nightly_hour", 20))
@@ -1354,6 +1673,11 @@ class GuiApi:
             finally:
                 events.close()
             overview = store.overview(1440.0)
+            relevance = relevance_due_nodes(
+                goals, store,
+                stale_days=int(getattr(self.cfg, "goal_relevance_stale_days", 30)))
+            overview["relevance_due"] = len(relevance)
+            overview.setdefault("queues", {})["relevance"] = relevance
             overview["schedule"] = {
                 "mode": "daily_dirty", "hour": hour,
                 "last_run_at": last_run, "next_run_at": next_run.isoformat(),
@@ -1367,6 +1691,7 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
+            goals.close()
             store.close()
 
     def goal_ai_review(self, goal_id, subtree=False) -> dict:

@@ -36,6 +36,15 @@ def test_empty_context_falls_back_to_newest():
     assert selected.memories[0]["id"] == 2
 
 
+def test_korean_relevance_beats_recency():
+    memories = [
+        _memory(1, "공부", "한국어 문법", "조사 연습이 필요하다", "2026-01-01"),
+        _memory(2, "요리", "최근 식사", "라면", "2026-06-01"),
+    ]
+    selected = select_memories(memories, "한국어 문법을 어떻게 공부할까?", max_items=1)
+    assert selected.memories[0]["id"] == 1
+
+
 def test_item_char_and_value_limits_do_not_mutate_source():
     long_value = "x" * 1000
     memories = [

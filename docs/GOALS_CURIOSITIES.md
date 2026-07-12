@@ -103,6 +103,13 @@ question → exploration → proposed placement → approval → goal/action str
 This keeps the user from needing to know upfront whether a question is about
 Mental Health, Social Life, Energy Management, Work/Career, or something else.
 
+Documents can be attached directly to the whole Investigation or to one
+specific question. PDF, DOCX, Markdown, and text-like files are extracted
+locally and stored as encrypted, owner-scoped context. They inform future
+questions and synthesis without being copied into the user's typed answer or
+silently becoming a settled memory fact. The answer box can insert an explicit
+filename reference such as `[Attached document: past-journals.pdf]`.
+
 ## Good patterns
 
 ### Broad domain

@@ -142,6 +142,24 @@ def test_housekeeping_purges_old_blobs_only():
         assert os.path.exists(new_blob)
 
 
+def test_zero_blob_retention_purges_existing_blobs_immediately():
+    from livingpc.inference_scheduler import InferenceScheduler
+    from livingpc.storage import EventLog
+
+    with tempfile.TemporaryDirectory() as d:
+        blob = os.path.join(d, "now.png")
+        with open(blob, "wb") as f:
+            f.write(b"now")
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"), blob_retention_days=0)
+        events = EventLog(cfg.db_path)
+        events.log_event("screenshot", blob_ref=blob, ts=datetime.now(timezone.utc).isoformat())
+        events.close()
+
+        assert InferenceScheduler(cfg)._purge_event_blobs()
+        assert not os.path.exists(blob)
+
+
 def test_resync_active_curiosities_to_notion_covers_every_active_curiosity():
     """The 12h periodic pass is meant as a catch-all so a sync that failed or
     was skipped in real time still gets picked up — it should attempt every

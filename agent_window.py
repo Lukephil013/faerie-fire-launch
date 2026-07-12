@@ -162,6 +162,24 @@ class AgentWindowApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def toggle_expand(self) -> dict:
+        """Toggle between the compact default size and a large working size."""
+        try:
+            if self._window is None:
+                return {"ok": False, "message": "window not ready"}
+            import webview
+            if getattr(self, "_expanded", False):
+                self._window.resize(680, 720)
+                self._expanded = False
+            else:
+                screen = webview.screens[0]
+                self._window.resize(min(1150, screen.width - 60),
+                                    min(1000, screen.height - 60))
+                self._expanded = True
+            return {"ok": True, "expanded": self._expanded}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def close(self) -> bool:
         if self._window is not None:
             self._window.destroy()
