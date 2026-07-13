@@ -12,17 +12,20 @@ from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goal_ai import (
     AgentProposal, AgentReport, ChatResult, GardeningProposal, GoalAgentStore,
-    RelevanceReview, StubGoalAgentModel,
-    build_agent_context, chat_with_goal_agent, decide_proposal, due_goal_nodes,
-    decide_gardening_proposal, generate_goal_description, goal_relevance_view,
-    parse_report, relevance_due_nodes, review_goal_relevance, start_goal_harvest,
+    LeafStepDraft, RelevanceReview, StubGoalAgentModel,
+    StepCoachReply, build_agent_context, build_leaf_step_draft_context, build_step_coach_context,
+    chat_with_goal_agent, confirm_step_coach_completion, decide_proposal,
+    decide_step_coach_revision, due_goal_nodes,
+    decide_gardening_proposal, draft_leaf_steps, generate_goal_description, goal_relevance_view,
+    open_step_coach, parse_leaf_step_draft, parse_report, parse_step_coach, relevance_due_nodes, review_goal_relevance,
+    propose_leaf_boundary_merge, propose_leaf_boundary_rewrite, send_step_coach, set_step_coach_status, start_goal_harvest,
     summarize_goal_answer,
 )
 from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
     run_goal_subtree, run_goal_sweep,
 )
-from livingpc.goals import GoalStore
+from livingpc.goals import GoalStore, propose_goal_restructure, record_experiment_outcome
 from livingpc.inference_scheduler import goal_ai_due
 from livingpc.memory import MemoryStore
 
@@ -70,6 +73,52 @@ class StaticRelevanceModel:
         return self.review
 
 
+class StaticCoachModel:
+    model_name = "static-coach"
+
+    def __init__(self):
+        self.calls = []
+
+    def coach(self, context, messages, *, opening=False):
+        self.calls.append((context, messages, opening))
+        if opening:
+            return StepCoachReply(
+                "Let’s identify the smallest useful starting point.",
+                question="What have you already tried that relates to this step?")
+        completed = any(
+            message["role"] == "user" and "done" in message["payload"].get("text", "").lower()
+            for message in messages[-2:])
+        return StepCoachReply(
+            "You finished this step." if completed else "Use the example you just chose.",
+            "" if completed else "Write one sentence with 은/는.",
+            "What sentence did you write?", ["저는 학생이에요.", "오늘은 바빠요."],
+            blocker="The user needs a concrete example", decision="Start with 은/는",
+            step_completed=completed)
+
+
+class FailingCoachModel:
+    def coach(self, context, messages, *, opening=False):
+        raise RuntimeError("coach unavailable")
+
+
+class StaticStepDraftModel:
+    model_name = "static-step-draft"
+
+    def __init__(self):
+        self.context = None
+
+    def draft_leaf_steps(self, context):
+        self.context = context
+        peer = context["peer_leaves"][0]
+        return LeafStepDraft(
+            "The preceding Leaf's candidate list", "A scored shortlist of two",
+            ["Open the candidate list.", "Score each candidate.", "Keep the top two."],
+            "Do not choose the final candidate here.",
+            [{"node_id": peer["id"], "score": .58,
+              "reason": "Both descriptions currently select a winner.",
+              "recommendation": "narrow"}])
+
+
 def gardening_review(node_id, proposal_type, payload=None, *, evidence_refs=None,
                      state="questionable"):
     refs = list(evidence_refs or [f"node:{node_id}"])
@@ -92,6 +141,232 @@ def test_task_context_has_ancestor_intent_but_no_siblings(world):
     assert "Fitness" not in text
     assert "Lift" not in text
     assert context["subtree"]["children"] == []
+
+
+def test_leaf_step_draft_context_sees_ordered_root_peers_but_not_other_roots(world):
+    _, goals, _, _, ids = world
+    earlier = goals.create("task", "List candidates", parent_id=ids["over_a"],
+                           due_date="2026-07-13", description="Generate three candidates.")
+    goals.update(ids["task_a"], due_date="2026-07-14",
+                 description="Score candidates and choose one.")
+    later = goals.create("task", "Publish result", parent_id=ids["over_a"],
+                         due_date="2026-07-15", description="Publish the chosen result.")
+
+    context = build_leaf_step_draft_context(goals, ids["task_a"])
+    encoded = json.dumps(context)
+
+    assert [item["id"] for item in context["peer_leaves"]] == [earlier, later]
+    assert [item["relation"] for item in context["peer_leaves"]] == ["earlier", "later"]
+    assert "Lift" not in encoded and "Build strength" not in encoded
+    assert "unrelated_roots" in context["jurisdiction"]["excludes"]
+
+
+def test_boundary_aware_step_draft_returns_contracts_and_peer_overlap(world):
+    cfg, goals, _, _, ids = world
+    peer = goals.create("task", "Choose final example", parent_id=ids["sub_a"],
+                        description="Choose one final example.")
+    model = StaticStepDraftModel()
+
+    result = draft_leaf_steps(cfg, ids["task_a"], model=model)
+
+    assert result["input_contract"] == "The preceding Leaf's candidate list"
+    assert result["output_contract"] == "A scored shortlist of two"
+    assert result["text"].startswith("1. Open the candidate list.")
+    assert result["overlaps"][0]["node_id"] == peer
+    assert result["peer_titles"][str(peer)] == "Choose final example"
+
+
+def test_leaf_step_draft_parser_rejects_unknown_peer_overlap():
+    draft = parse_leaf_step_draft(json.dumps({
+        "input_contract": "candidate list", "output_contract": "shortlist",
+        "steps": ["Open it", "Score it", "Keep two"],
+        "overlaps": [
+            {"node_id": 7, "score": .8, "reason": "same output", "recommendation": "merge"},
+            {"node_id": 99, "score": .9, "reason": "outside scope", "recommendation": "merge"},
+        ],
+    }), {7})
+    assert draft and [item["node_id"] for item in draft.overlaps] == [7]
+
+
+def test_leaf_coach_context_is_strictly_leaf_and_ancestor_scoped(world):
+    cfg, goals, agents, curiosities, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.\n2. Write one sentence.")
+    cid = curiosities.add_curiosity("find a particle example", "Particle examples")
+    curiosities.add_item(cid, "question", "Which particle is confusing?")
+    goals.link_curiosity(ids["task_a"], cid)
+    mem = MemoryStore(cfg.memory_db_path)
+    mem.add("private", "global", "must never enter Leaf Coach")
+    mem.close()
+
+    context = build_step_coach_context(goals, agents, ids["task_a"], 0)
+    encoded = json.dumps(context)
+    assert [item["title"] for item in context["ancestor_intent"]] == [
+        "Actualized Self", "Korean", "Grammar"]
+    assert context["focused_step"]["text"] == "Open a practice page."
+    assert "Particle examples" in encoded
+    assert "Fitness" not in encoded and "Lift" not in encoded
+    assert "must never enter Leaf Coach" not in encoded
+    assert "core_profile" not in context and "recent_chat" not in context
+    assert "screen_activity" in context["jurisdiction"]["excludes"]
+
+
+def test_leaf_coach_opening_does_ideation_first_with_suggested_responses():
+    valid = parse_step_coach(json.dumps({
+        "reply": "Common options include reports, inbox sorting, and data entry.", "next_action": "",
+        "question": "Which feels closest?", "examples": ["Reports", "Inbox sorting"],
+        "step_completed": False, "working_update": {"status": "working"}}), opening=True)
+    assert valid and valid.question and not valid.next_action and len(valid.examples) == 2
+    assert parse_step_coach(json.dumps({
+        "reply": "Pick one.", "question": "Which one?", "examples": ["Only one"]
+    }), opening=True) is None
+
+
+def test_leaf_coach_step_revision_is_reviewable_and_changes_steps_only_after_approval(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description=(
+        "Choose an automation opportunity.\n\nSteps:\n"
+        "1. Inventory everything for 10 minutes.\n2. Pick one."))
+
+    class RevisionModel:
+        def coach(self, context, messages, *, opening=False):
+            if opening:
+                return StepCoachReply(
+                    "Here are common admin candidates first.", question="Which fits?",
+                    examples=["Recurring reports", "Inbox triage", "Data entry"])
+            return StepCoachReply(
+                "I agree that the current steps make you do the ideation.",
+                examples=["Recurring reports", "Inbox triage"],
+                step_revision={"steps": [
+                    "Review AI-suggested common admin automation candidates.",
+                    "Choose or revise the candidate that best fits.",
+                    "Define the chosen automation's input and output."],
+                    "rationale": "AI should generate the options before asking for reflection."})
+
+    model = RevisionModel()
+    opened = open_step_coach(cfg, ids["task_a"], 0, model=model)
+    sent = send_step_coach(cfg, ids["task_a"], 0, "This direction is wrong", model=model)
+    proposal = sent["messages"][-1]
+    assert "10 minutes" in goals.get(ids["task_a"])["description"]
+    revised = decide_step_coach_revision(
+        cfg, ids["task_a"], proposal["id"], True,
+        proposal["payload"]["step_revision"]["steps"])
+    assert "10 minutes" not in goals.get(ids["task_a"])["description"]
+    assert revised["steps"][0]["text"].startswith("Review AI-suggested")
+    stored = agents.coach_message(ids["task_a"], proposal["id"])
+    assert stored["payload"]["step_revision_status"] == "approved"
+
+
+def test_leaf_coach_completion_requires_explicit_structured_confirmation():
+    reply = parse_step_coach(json.dumps({
+        "reply": "You finished this step.", "next_action": "", "question": "",
+        "examples": [], "step_completed": True,
+        "working_update": {"status": "working"}}))
+    assert reply and reply.step_completed is True
+
+
+def test_leaf_coach_persists_one_chat_and_does_not_duplicate_same_focus(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.\n2. Write one sentence.")
+    model = StaticCoachModel()
+    first = open_step_coach(cfg, ids["task_a"], 0, model=model)
+    reopened = open_step_coach(cfg, ids["task_a"], 0, model=model)
+    switched = open_step_coach(cfg, ids["task_a"], 1, model=model)
+    assert len(model.calls) == 2
+    assert first["focus_step_index"] == reopened["focus_step_index"] == 0
+    assert switched["focus_step_index"] == 1
+    assert [message["role"] for message in first["messages"]] == ["focus", "assistant"]
+    assert len(switched["messages"]) == 4
+
+
+def test_leaf_coach_updates_flow_to_ancestors_not_siblings(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.\n2. Write one sentence.")
+    model = StaticCoachModel()
+    open_step_coach(cfg, ids["task_a"], 0, model=model)
+    send_step_coach(cfg, ids["task_a"], 0, "I need a concrete example", model=model)
+    state = agents.coach_states(ids["task_a"])[0]
+    assert state["update"]["decision"] == "Start with 은/는"
+    assert agents.state(ids["task_a"])["dirty"] is True
+    assert agents.state(ids["sub_a"])["dirty"] is True
+
+    parent = build_agent_context(goals, agents, ids["sub_a"])
+    child = parent["subtree"]["children"][0]
+    sibling = json.dumps(build_agent_context(goals, agents, ids["over_b"]))
+    assert child["coach_updates"][0]["update"]["decision"] == "Start with 은/는"
+    assert "Start with" not in sibling
+    assert "Leaf Coach conversation" not in json.dumps(parent)
+
+
+def test_leaf_coach_completion_reopen_and_clear_preserve_resolution(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.")
+    model = StaticCoachModel()
+    open_step_coach(cfg, ids["task_a"], 0, model=model)
+    candidate = send_step_coach(cfg, ids["task_a"], 0, "Okay, I'm done", model=model)
+    assert candidate["steps"][0]["status"] == "working"
+    assert candidate["messages"][-1]["payload"]["step_completed"] is True
+    completed = confirm_step_coach_completion(cfg, ids["task_a"], 0, True)
+    assert completed["steps"][0]["status"] == "completed"
+    resolution = agents.coach_states(ids["task_a"])[0]["update"]["resolution"]
+    set_step_coach_status(cfg, ids["task_a"], 0, "reopened")
+    assert agents.coach_states(ids["task_a"])[0]["update"]["resolution"] == resolution
+
+    api = GuiApi(cfg)
+    cleared = api.goal_step_coach_clear(ids["task_a"])
+    assert cleared["ok"] and agents.coach_messages(ids["task_a"]) == []
+    assert agents.coach_states(ids["task_a"])[0]["update"]["resolution"] == resolution
+
+
+def test_leaf_coach_confirmation_can_advance_one_conversation_to_next_step(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.\n2. Write one sentence.")
+    model = StaticCoachModel()
+    open_step_coach(cfg, ids["task_a"], 0, model=model)
+    send_step_coach(cfg, ids["task_a"], 0, "Okay, I'm done", model=model)
+    declined = confirm_step_coach_completion(cfg, ids["task_a"], 0, False)
+    assert declined["steps"][0]["status"] == "working"
+    assert declined["messages"][-1]["payload"]["text"] == "Step 1 left open."
+
+    confirm_step_coach_completion(cfg, ids["task_a"], 0, True)
+    advanced = open_step_coach(cfg, ids["task_a"], 1, model=model)
+    assert advanced["focus_step_index"] == 1
+    assert any(message["payload"].get("text", "").startswith("Beginning step 2 of 2:")
+               for message in advanced["messages"] if message["role"] == "focus")
+    assert len(agents.coach_messages(ids["task_a"])) == len(advanced["messages"])
+
+
+def test_leaf_coach_bridge_rejects_non_leaf_and_invalid_step(world):
+    cfg, goals, _, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.")
+    api = GuiApi(cfg)
+    assert api.goal_step_coach_open(ids["task_a"], 0)["ok"]
+    assert not api.goal_step_coach_open(ids["over_a"], 0)["ok"]
+    assert not api.goal_step_coach_open(ids["task_a"], 9)["ok"]
+
+
+def test_leaf_coach_failure_preserves_existing_messages(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.")
+    model = StaticCoachModel()
+    open_step_coach(cfg, ids["task_a"], 0, model=model)
+    with pytest.raises(RuntimeError, match="coach unavailable"):
+        send_step_coach(cfg, ids["task_a"], 0, "Please help", model=FailingCoachModel())
+    messages = agents.coach_messages(ids["task_a"])
+    assert [message["role"] for message in messages] == ["focus", "assistant", "user"]
+    assert messages[-1]["payload"]["text"] == "Please help"
+    send_step_coach(cfg, ids["task_a"], 0, "Please help", model=StaticCoachModel())
+    assert [message["role"] for message in agents.coach_messages(ids["task_a"])] == [
+        "focus", "assistant", "user", "assistant"]
+
+
+def test_leaf_coach_open_retry_reuses_focus_boundary(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Open a practice page.")
+    with pytest.raises(RuntimeError, match="coach unavailable"):
+        open_step_coach(cfg, ids["task_a"], 0, model=FailingCoachModel())
+    assert [message["role"] for message in agents.coach_messages(ids["task_a"])] == ["focus"]
+    opened = open_step_coach(cfg, ids["task_a"], 0, model=StaticCoachModel())
+    assert [message["role"] for message in opened["messages"]] == ["focus", "assistant"]
 
 
 def test_agent_context_includes_durable_origin_summary(world):
@@ -241,6 +516,30 @@ def test_agent_cannot_propose_into_unrelated_branch(world):
     created = agents.add_proposal(ids["sub_a"], AgentProposal(
         "update_fields", ids["over_b"], {"priority": "high"}, "Wrong branch"))
     assert created is None
+
+
+def test_restructure_proposal_applies_atomically_and_stales_old_context(world):
+    cfg, goals, agents, _, ids = world
+    older = agents.add_proposal(ids["sub_a"], AgentProposal(
+        "update_fields", ids["sub_a"], {"priority": "high"},
+        "This was drafted under the old ancestor path."))
+    staged = propose_goal_restructure(
+        cfg, ids["over_a"], "subgoal", ids["over_b"],
+        rationale="Korean is being moved beneath the selected durable domain for this test.")
+
+    result = decide_proposal(cfg, staged["proposal_id"], "approve")
+
+    moved = goals.get(ids["over_a"])
+    assert result["ok"] and result["restructure"]["node_id_preserved"]
+    assert moved["type"] == "subgoal" and moved["parent_id"] == ids["over_b"]
+    assert goals.get(ids["sub_a"])["parent_id"] == ids["over_a"]
+    assert agents.get_proposal(staged["proposal_id"])["status"] == "approved"
+    assert agents.get_proposal(older)["status"] == "stale"
+    history = goals.conn.execute(
+        "SELECT proposal_id,old_node_type,new_node_type FROM goal_restructure_history "
+        "WHERE goal_id=?", (ids["over_a"],)).fetchone()
+    assert history["proposal_id"] == staged["proposal_id"]
+    assert (history["old_node_type"], history["new_node_type"]) == ("overgoal", "subgoal")
 
 
 def test_promote_insight_is_confidence_gated_and_upward_only(world):
@@ -440,6 +739,50 @@ def test_merge_moves_children_and_archives_source_without_deleting_history(world
     assert goals.get(ids["over_a"])["title"] == "Language and embodied confidence"
 
 
+def test_leaf_boundary_merge_is_approval_only_and_preserves_execution_history(world):
+    cfg, goals, agents, _, ids = world
+    target = goals.create("task", "Evaluate candidates", parent_id=ids["sub_a"],
+                          description="Score and shortlist candidates.")
+    source = goals.create("task", "Choose final candidate", parent_id=ids["sub_a"],
+                          description="Score candidates again and choose one.")
+    agents.add_coach_message(source, 0, "Choose one", "user", {"text": "I chose option A."})
+    agents.update_coach_state(source, 0, "Choose one", "completed",
+                              {"resolution": "Option A selected."})
+    record_experiment_outcome(cfg, source, {
+        "result": "completed", "what_happened": "Option A was selected.",
+        "expected_obstacle": "", "surprise": "", "helpfulness": 7,
+        "changed_understanding": "", "next_adjustment": ""})
+
+    proposal = propose_leaf_boundary_merge(
+        cfg, target, source, title="Evaluate and choose one candidate",
+        description="Score the candidate list once, choose one, and state its value.")
+
+    assert proposal["proposals_created"] == 1
+    assert goals.get(source)["status"] == "completed"
+    decide_gardening_proposal(cfg, proposal["proposal_ids"][0], "approve")
+    assert goals.get(source)["status"] == "archived"
+    assert goals.get(target)["title"] == "Evaluate and choose one candidate"
+    assert len(agents.coach_messages(target, 20)) == 1
+    assert agents.coach_states(target, 20)[0]["status"] == "completed"
+    moved = goals.conn.execute(
+        "SELECT COUNT(*) FROM experiment_outcome WHERE goal_id=?", (target,)).fetchone()[0]
+    assert moved == 1
+
+
+def test_leaf_boundary_rewrite_is_approval_only_and_keeps_coaching(world):
+    cfg, goals, agents, _, ids = world
+    agents.add_coach_message(ids["task_a"], 0, "List examples", "user",
+                             {"text": "I listed three examples."})
+    proposal = propose_leaf_boundary_rewrite(
+        cfg, ids["task_a"], title="List particle examples",
+        description="Output exactly three unranked particle examples.",
+        rationale="Selection belongs to the next Leaf.")
+    assert goals.get(ids["task_a"])["title"] == "Practice particles"
+    decide_gardening_proposal(cfg, proposal["proposal_ids"][0], "approve")
+    assert goals.get(ids["task_a"])["title"] == "List particle examples"
+    assert len(agents.coach_messages(ids["task_a"], 20)) == 1
+
+
 @pytest.mark.parametrize("proposal_type,expected_status", [
     ("pause", "paused"), ("archive", "archived")])
 def test_pause_and_archive_are_inert_until_gardening_approval(
@@ -513,6 +856,62 @@ def test_dismissed_proposal_suppresses_repeat(world):
     proposal_id = agents.add_proposal(ids["sub_a"], proposal)
     decide_proposal(cfg, proposal_id, "dismiss")
     assert agents.add_proposal(ids["sub_a"], proposal) is None
+
+
+def test_dismissed_question_is_not_regenerated_by_the_next_report(world):
+    cfg, _, agents, _, ids = world
+    question_text = "What does a small experiment mean to you?"
+    report = AgentReport("Need scope", "unknown", .5, questions=[question_text])
+    agents.save_report(ids["sub_a"], report, "first", "stub")
+    question = agents.questions(ids["sub_a"])[0]
+    agents.dismiss_question(question["id"])
+
+    agents.save_report(
+        ids["sub_a"], AgentReport(
+            "Need scope", "unknown", .5,
+            questions=["WHAT does a small experiment mean to you !"]),
+        "second", "stub")
+
+    history = agents.questions(ids["sub_a"], include_resolved=True)
+    assert len(history) == 1
+    assert history[0]["status"] == "dismissed"
+
+    # Existing databases may already contain a later duplicate from before this
+    # lifecycle rule existed. Opening the store retires that stale duplicate.
+    agents.conn.execute(
+        "INSERT INTO goal_agent_question (node_id,text,status,created_at) VALUES (?,?, 'open',?)",
+        (ids["sub_a"], crypto.enc(question_text), "2026-01-01T00:00:00+00:00"))
+    agents.conn.commit()
+    reopened_store = GoalAgentStore(cfg.memory_db_path)
+    try:
+        assert reopened_store.questions(ids["sub_a"]) == []
+    finally:
+        reopened_store.close()
+
+
+def test_approved_action_retires_questions_from_the_same_assessment(world):
+    cfg, _, agents, _, ids = world
+    question_text = "What does small mean for this Upwork experiment?"
+    report = AgentReport(
+        "Ready to try it", "unknown", .72, questions=[question_text],
+        proposals=[AgentProposal(
+            "create_child", ids["sub_a"],
+            {"type": "task", "title": "Try a small Upwork automation gig"},
+            "Turn the proposed experiment into an active Leaf")])
+    agents.save_report(ids["sub_a"], report, "before-action", "stub")
+    proposal_id = agents.proposals(ids["sub_a"])[0]["id"]
+
+    result = decide_proposal(cfg, proposal_id, "approve")
+
+    assert result["superseded_questions"] == 1
+    assert agents.questions(ids["sub_a"]) == []
+    history = agents.questions(ids["sub_a"], include_resolved=True)
+    assert len(history) == 1 and history[0]["status"] == "dismissed"
+    agents.save_report(
+        ids["sub_a"], AgentReport("Working on it", "on-track", .8,
+                                  questions=[question_text]),
+        "after-action", "stub")
+    assert len(agents.questions(ids["sub_a"], include_resolved=True)) == 1
 
 
 def test_dismissed_goal_ai_items_can_be_reopened(world):
@@ -778,6 +1177,9 @@ def test_sensitive_goal_ai_fields_are_encrypted(tmp_path, monkeypatch):
         "Private brief", "blocked", .8, ["Private evidence"], ["Private blocker"],
         "Private next focus", ["Private question?"]), "hash", "stub")
     agents.add_message(node, "user", "Private chat")
+    agents.add_coach_message(node, 0, "Private step", "user", {"text": "Private coaching"})
+    agents.update_coach_state(node, 0, "Private step", "blocked",
+                              {"blocker": "Private coach blocker"})
     agents.add_memory_candidate(node, {
         "category": "Private category", "attribute": "Private attribute",
         "value": "Private accomplishment", "source_text": "Private source"})
@@ -796,6 +1198,10 @@ def test_sensitive_goal_ai_fields_are_encrypted(tmp_path, monkeypatch):
         "SELECT text FROM goal_agent_question WHERE node_id=?", (node,)).fetchone()[0]
     raw_message = agents.conn.execute(
         "SELECT content FROM goal_agent_message WHERE node_id=?", (node,)).fetchone()[0]
+    raw_coach_message = agents.conn.execute(
+        "SELECT payload_json FROM goal_step_coach_message WHERE node_id=?", (node,)).fetchone()[0]
+    raw_coach_state = agents.conn.execute(
+        "SELECT step_text,update_json FROM goal_step_coach_state WHERE node_id=?", (node,)).fetchone()
     raw_candidate = agents.conn.execute(
         "SELECT value FROM goal_agent_memory_candidate WHERE node_id=?", (node,)).fetchone()[0]
     raw_relevance = agents.conn.execute(
@@ -807,6 +1213,7 @@ def test_sensitive_goal_ai_fields_are_encrypted(tmp_path, monkeypatch):
         "SELECT payload_json,rationale,evidence_refs FROM goal_gardening_proposal "
         "WHERE target_node_id=?", (node,)).fetchone()
     assert all(crypto.is_encrypted(value) for value in [*raw_state, raw_question, raw_message,
+                                                        raw_coach_message, *raw_coach_state,
                                                         raw_candidate, *raw_relevance,
                                                         raw_review, *raw_gardening])
     agents.close(); goals.close(); curiosities.close()

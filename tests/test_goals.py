@@ -8,8 +8,12 @@ from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goals import (
     GoalStore, StubGoalPlanner, continue_planning, record_experiment_outcome,
-    start_planning, summarize_plan,
+    propose_goal_tree_restructure, propose_suggestion_leaf_update,
+    recommend_goal_restructure, recommend_goal_tree_restructure,
+    recommend_suggestion_placement, start_planning,
+    suggestion_leaf_overlaps, summarize_plan,
 )
+from livingpc.goal_ai import decide_proposal
 from livingpc.inference import InferenceStore
 from livingpc.memory import MemoryStore
 
@@ -72,6 +76,143 @@ class TestGoalGraph(GoalTestCase):
         self.goals.move(second, over, 0)
         parent = next(x for x in self.goals.tree()["children"] if x["id"] == over)
         self.assertEqual([x["id"] for x in parent["children"]], [second, first])
+
+    def test_restructure_preview_and_apply_preserve_identity_and_attached_data(self):
+        life = self.goals.create("overgoal", "Luke's Life")
+        career = self.goals.create("subgoal", "Career & Building Things", parent_id=life)
+        project = self.goals.create("overgoal", "Run Upwork automation micro-test")
+        branch = self.goals.create("subgoal", "Evaluate and validate", parent_id=project)
+        leaf = self.goals.create("task", "Post listing", parent_id=project, status="completed")
+        cid = self.curiosities.add_curiosity("test freelance automation", "Upwork experiment")
+        self.goals.link_curiosity(project, cid)
+        self.goals.add_evidence(leaf, "manual_note", "proof-1", "Listing was drafted.")
+
+        preview = self.goals.restructure_preview(project, "subgoal", career)
+        applied = self.goals.restructure(project, "subgoal", career,
+                                         rationale="Career owns this experiment.")
+
+        self.assertTrue(preview["node_id_preserved"])
+        self.assertEqual(preview["retained_counts"]["nodes"], 3)
+        self.assertEqual(preview["retained_counts"]["investigation_links"], 1)
+        self.assertEqual(preview["retained_counts"]["evidence_links"], 1)
+        self.assertEqual(preview["retained_counts"]["completed_nodes"], 1)
+        self.assertEqual(applied["goal_id"], project)
+        self.assertEqual(self.goals.get(project)["type"], "subgoal")
+        self.assertEqual(self.goals.get(project)["parent_id"], career)
+        self.assertEqual(self.goals.get(branch)["parent_id"], project)
+        self.assertEqual(self.goals.get(leaf)["parent_id"], project)
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_restructure_history WHERE goal_id=?", (project,)
+        ).fetchone()[0], 1)
+
+    def test_invalid_restructure_rolls_back_without_partial_move(self):
+        root = self.goals.create("overgoal", "Career")
+        branch = self.goals.create("subgoal", "Client experiment", parent_id=root)
+        self.goals.create("task", "Post listing", parent_id=branch)
+        before = self.goals.get(branch)
+
+        with self.assertRaisesRegex(ValueError, "cannot contain"):
+            self.goals.restructure(branch, "task", root)
+
+        after = self.goals.get(branch)
+        self.assertEqual((after["type"], after["parent_id"]),
+                         (before["type"], before["parent_id"]))
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_restructure_history WHERE goal_id=?", (branch,)
+        ).fetchone()[0], 0)
+
+    def test_ai_restructure_recommends_temporary_upwork_root_under_career(self):
+        life = self.goals.create("overgoal", "Luke's Life")
+        career = self.goals.create(
+            "subgoal", "Career & Building Things", parent_id=life,
+            description="Work, clients, products, and professional experiments.")
+        project = self.goals.create(
+            "overgoal", "Run Upwork automation micro-test",
+            description="Post one automation service to test freelance client demand.")
+        self.goals.create("task", "Post listing", parent_id=project)
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db,
+                     curiosity_backend="stub")
+
+        result = recommend_goal_restructure(cfg, StubGoalPlanner(), project)
+
+        self.assertEqual(result["action"], "restructure")
+        self.assertEqual(result["recommendation"]["new_type"], "subgoal")
+        self.assertEqual(result["recommendation"]["parent_id"], career)
+        self.assertIn("Career & Building Things", result["recommendation"]["preview"]["proposed"]["path"])
+
+    def test_nested_branches_render_as_area_project_and_stage(self):
+        life = self.goals.create("overgoal", "Luke's Life")
+        career = self.goals.create("subgoal", "Career & Building Things", parent_id=life)
+        project = self.goals.create("subgoal", "Upwork automation experiment", parent_id=career)
+        stage = self.goals.create("subgoal", "Evaluate and validate", parent_id=project)
+        self.goals.create("task", "Choose one offer", parent_id=stage)
+
+        tree = self.goals.tree()
+        life_node = next(node for node in tree["children"] if node["id"] == life)
+        career_node = next(node for node in life_node["children"] if node["id"] == career)
+        project_node = next(node for node in career_node["children"] if node["id"] == project)
+        stage_node = next(node for node in project_node["children"] if node["id"] == stage)
+
+        self.assertEqual(career_node["semantic_role"], "area")
+        self.assertEqual(project_node["semantic_role"], "project")
+        self.assertEqual(stage_node["semantic_role"], "stage")
+        self.assertTrue(all(node["semantic_role_source"] == "derived"
+                            for node in [career_node, project_node, stage_node]))
+
+    def test_ai_whole_path_restructure_promotes_domain_and_labels_nested_scopes(self):
+        life = self.goals.create("overgoal", "Luke's Life")
+        career = self.goals.create("subgoal", "Career & Building Things", parent_id=life)
+        project = self.goals.create("subgoal", "Run Upwork automation micro-test",
+                                    parent_id=career)
+        stage = self.goals.create("subgoal", "Evaluate and validate", parent_id=project)
+        leaf = self.goals.create("task", "Choose one offer", parent_id=stage)
+        self.goals.add_evidence(leaf, "manual_note", "proof", "Prior work remains attached.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db,
+                     curiosity_backend="stub")
+
+        result = recommend_goal_tree_restructure(cfg, StubGoalPlanner(), project)
+
+        self.assertEqual(result["action"], "restructure")
+        preview = result["recommendation"]["preview"]
+        self.assertEqual(len(preview["structural_changes"]), 1)
+        self.assertEqual(preview["structural_changes"][0]["goal_id"], career)
+        self.assertEqual(preview["structural_changes"][0]["proposed"]["type"], "overgoal")
+        roles = {item["goal_id"]: item["proposed_role"] for item in preview["role_changes"]}
+        self.assertEqual(roles, {project: "project", stage: "stage"})
+        self.assertEqual(preview["retained_counts"]["evidence_links"], 1)
+
+        staged = propose_goal_tree_restructure(
+            cfg, result["scope_id"], result["recommendation"]["changes"],
+            result["recommendation"]["role_updates"], result["rationale"])
+        unchanged = self.goals.get(career)
+        applied = decide_proposal(cfg, staged["proposal_id"], "approve")
+
+        self.assertEqual(unchanged["type"], "subgoal")
+        self.assertTrue(applied["ok"])
+        self.assertEqual(self.goals.get(career)["type"], "overgoal")
+        self.assertEqual(self.goals.get(career)["parent_id"], self.goals.root_id)
+        self.assertEqual(self.goals.get(project)["parent_id"], career)
+        self.assertEqual(self.goals.get(stage)["parent_id"], project)
+        self.assertEqual(self.goals.semantic_role(project)["role"], "project")
+        self.assertEqual(self.goals.semantic_role(stage)["role"], "stage")
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_evidence_link WHERE goal_id=?", (leaf,)
+        ).fetchone()[0], 1)
+
+    def test_invalid_whole_path_restructure_is_atomic(self):
+        root = self.goals.create("overgoal", "Career")
+        project = self.goals.create("subgoal", "Client project", parent_id=root)
+        stage = self.goals.create("subgoal", "Delivery stage", parent_id=project)
+        before = (self.goals.get(project)["parent_id"], self.goals.get(stage)["parent_id"])
+
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            self.goals.restructure_batch([
+                {"goal_id": project, "new_type": "subgoal", "parent_id": stage},
+                {"goal_id": stage, "new_type": "subgoal", "parent_id": project},
+            ], [])
+
+        self.assertEqual((self.goals.get(project)["parent_id"],
+                          self.goals.get(stage)["parent_id"]), before)
 
     def test_completion_excludes_paused_and_archived_tasks(self):
         over = self.goals.create("overgoal", "Korean")
@@ -236,10 +377,21 @@ class TestGoalPlanner(GoalTestCase):
         cid = self.curiosities.add_curiosity("learn Korean", "Korean")
         return self.curiosities.add_item(cid, "suggestion", "Master one grammar pattern")
 
+    def _new_root_placement(self):
+        return {"mode": "new_root", "root_eligible": True,
+                "root_title": "Learning & Education",
+                "root_description": "An enduring domain for learning and skill development.",
+                "user_confirmed": True}
+
+    def _start_new_root(self, item):
+        return start_planning(self.goals, StubGoalPlanner(), item,
+                              self.goals.root_id, self._new_root_placement())
+
     def test_planner_persists_dialogue_and_only_commits_after_summary(self):
         item = self._suggestion()
         planner = StubGoalPlanner()
-        session = start_planning(self.goals, planner, item)
+        session = start_planning(self.goals, planner, item,
+                                 self.goals.root_id, self._new_root_placement())
         self.assertEqual(session["status"], "active")
         with self.assertRaises(ValueError):
             self.goals.commit_plan(session["id"])
@@ -259,7 +411,7 @@ class TestGoalPlanner(GoalTestCase):
 
     def test_abandon_leaves_suggestion_open(self):
         item = self._suggestion()
-        session = start_planning(self.goals, StubGoalPlanner(), item)
+        session = self._start_new_root(item)
         self.goals.abandon_plan(session["id"])
         item_data = self.curiosities._item_dict(self.curiosities.get_item(item))
         self.assertEqual(item_data["status"], "open")
@@ -273,9 +425,190 @@ class TestGoalPlanner(GoalTestCase):
         session = start_planning(self.goals, StubGoalPlanner(), item)
         self.assertEqual(session["target_parent_id"], over)
 
+    def test_unplaced_suggestion_cannot_silently_default_to_soul(self):
+        item = self._suggestion()
+        with self.assertRaisesRegex(ValueError, "placement review is required"):
+            start_planning(self.goals, StubGoalPlanner(), item)
+
+    def test_semantic_placement_prefers_career_branch_for_upwork_project(self):
+        life = self.goals.create("overgoal", "Luke's Life")
+        career = self.goals.create(
+            "subgoal", "Career & Building Things", parent_id=life,
+            description="Work, independent products, clients, and professional experiments.")
+        self.goals.create("subgoal", "Korean Language", parent_id=life,
+                          description="Language learning and cultural fluency.")
+        cid = self.curiosities.add_curiosity("test freelance work", "Career experiment")
+        item = self.curiosities.add_item(
+            cid, "suggestion", "Post a small Upwork automation gig to test client demand.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db,
+                     curiosity_backend="stub")
+
+        result = recommend_suggestion_placement(cfg, StubGoalPlanner(), item)
+
+        self.assertEqual(result["recommended_parent_id"], career)
+        self.assertIn("Career & Building Things", result["proposed_path"])
+        self.assertFalse(result["new_root"]["eligible"])
+
+    def test_offline_placement_names_a_durable_domain_not_the_project(self):
+        cid = self.curiosities.add_curiosity("test freelance work", "Career experiment")
+        item = self.curiosities.add_item(
+            cid, "suggestion", "Post a small Upwork automation gig to test demand.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db,
+                     curiosity_backend="stub")
+
+        result = recommend_suggestion_placement(cfg, StubGoalPlanner(), item)
+
+        self.assertIsNone(result["recommended_parent_id"])
+        self.assertTrue(result["new_root"]["eligible"])
+        self.assertEqual(result["new_root"]["title"], "Career & Work")
+        self.assertNotIn("Upwork automation gig ›", result["new_root"]["path"])
+
+    def test_new_root_requires_durable_domain_approval_and_wraps_project(self):
+        item = self._suggestion()
+        with self.assertRaisesRegex(ValueError, "durable life-domain"):
+            start_planning(self.goals, StubGoalPlanner(), item, self.goals.root_id, {
+                "mode": "new_root", "root_eligible": False,
+                "root_title": "Master one grammar pattern",
+                "root_description": "A temporary exercise.",
+            })
+        session = self._start_new_root(item)
+        session = continue_planning(
+            self.goals, StubGoalPlanner(), session["id"], "Use it in five sentences")
+        session = summarize_plan(self.goals, StubGoalPlanner(), session["id"])
+        result = self.goals.commit_plan(session["id"])
+        root = self.goals.get(result["goal_id"])
+        self.assertEqual(root["title"], "Learning & Education")
+        children = self.goals.conn.execute(
+            "SELECT node_type FROM goal_node WHERE parent_id=?", (root["id"],)).fetchall()
+        self.assertEqual([row["node_type"] for row in children], ["subgoal"])
+
+    def test_confirming_a_different_parent_replaces_wrong_active_session(self):
+        item = self._suggestion()
+        old = self._start_new_root(item)
+        career = self.goals.create("overgoal", "Career & Work")
+
+        new = start_planning(self.goals, StubGoalPlanner(), item, career, {
+            "mode": "existing", "parent_id": career,
+            "parent_path": "Actualized Self › Career & Work", "user_confirmed": True,
+        })
+
+        self.assertNotEqual(new["id"], old["id"])
+        self.assertEqual(new["target_parent_id"], career)
+        self.assertEqual(self.goals.plan_session(old["id"])["status"], "abandoned")
+
+    def test_overlapping_suggestion_can_propose_adapting_existing_leaf(self):
+        root = self.goals.create("overgoal", "Career experiments")
+        branch = self.goals.create("subgoal", "Test automation freelancing", parent_id=root)
+        leaf = self.goals.create(
+            "task", "Write and post an Upwork automation listing", parent_id=branch,
+            description="Package one automation script and post a small Upwork listing.")
+        cid = self.curiosities.add_curiosity("test paid automation work", "Paid automation")
+        item = self.curiosities.add_item(
+            cid, "suggestion",
+            "Pick one small automation task already solved at work, package it as a reusable "
+            "script, and post a $50-100 micro-gig on Upwork this week.", confidence=.87)
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db)
+
+        overlap = suggestion_leaf_overlaps(cfg, item)
+        self.assertEqual(overlap["matches"][0]["goal_id"], leaf)
+        self.assertGreaterEqual(overlap["matches"][0]["similarity"], .28)
+
+        proposed = propose_suggestion_leaf_update(
+            cfg, item, leaf, "Post one automation micro-gig",
+            "Package a proven work automation and post it as a $50-100 Upwork micro-gig.")
+        self.assertEqual(self.goals.get(leaf)["title"],
+                         "Write and post an Upwork automation listing")
+        result = decide_proposal(cfg, proposed["proposal_id"], "approve")
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.goals.get(leaf)["title"], "Post one automation micro-gig")
+        resolved = self.curiosities.get_item(item)
+        self.assertEqual(resolved["status"], "tried")
+        self.assertEqual(resolved["implementation_goal_id"], leaf)
+
+    def test_overlap_recognizes_the_suggestion_that_created_a_concise_leaf(self):
+        root = self.goals.create("overgoal", "Career experiments")
+        branch = self.goals.create("subgoal", "Test independent automation work", parent_id=root)
+        leaf = self.goals.create(
+            "task", "Run the current market test", parent_id=branch,
+            description="Complete the already-defined experiment.")
+        cid = self.curiosities.add_curiosity("test automation freelancing", "Freelance test")
+        original = self.curiosities.add_item(
+            cid, "suggestion",
+            "Pick one small automation task already solved at work, extract it as a reusable "
+            "tool, and post a low-cost micro-gig on Upwork this week to test demand.",
+            confidence=.86)
+        self.curiosities.conn.execute(
+            "UPDATE curiosity_item SET status='tried',implementation_goal_id=? WHERE id=?",
+            (leaf, original))
+        self.curiosities.conn.commit()
+        refined = self.curiosities.add_item(
+            cid, "suggestion",
+            "Pick one small automation task you already solved at work, extract it as a reusable "
+            "tool or script, and post a $50-100 micro-gig on Upwork this week to test demand and "
+            "whether you enjoy the client-facing work.", confidence=.9)
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db)
+
+        overlap = suggestion_leaf_overlaps(cfg, refined)
+
+        match = next(m for m in overlap["matches"] if m["goal_id"] == leaf)
+        self.assertEqual(match["matched_via"], "originating_suggestion")
+        self.assertGreater(match["origin_similarity"], match["leaf_similarity"])
+
+    def test_plan_origin_matches_its_root_but_is_not_inherited_by_every_leaf(self):
+        root = self.goals.create(
+            "overgoal", "Run a small market experiment",
+            description="Test one independent work idea from selection through results.")
+        unrelated = self.goals.create(
+            "task", "Record emotional reactions", parent_id=root,
+            description="Write a short reflection after the experiment.")
+        cid = self.curiosities.add_curiosity("test automation work", "Market test")
+        original = self.curiosities.add_item(
+            cid, "suggestion",
+            "Pick one automation task already solved at work and post it as a small Upwork gig.")
+        self.curiosities.conn.execute(
+            "UPDATE curiosity_item SET status='tried',implementation_goal_id=? WHERE id=?",
+            (root, original))
+        self.curiosities.conn.commit()
+        refined = self.curiosities.add_item(
+            cid, "suggestion",
+            "Pick one automation task you already solved at work and post it as a small Upwork "
+            "micro-gig to test demand and independent work.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db)
+
+        matches = suggestion_leaf_overlaps(cfg, refined)["matches"]
+
+        root_match = next(m for m in matches if m["goal_id"] == root)
+        self.assertEqual(root_match["type_label"], "Root")
+        self.assertEqual(root_match["matched_via"], "originating_suggestion")
+        inherited = [m for m in matches if m["goal_id"] == unrelated]
+        self.assertFalse(inherited)
+
+    def test_repeated_adapt_replaces_prior_open_update_for_same_suggestion(self):
+        root = self.goals.create("overgoal", "Career experiment")
+        leaf = self.goals.create("task", "Post one listing", parent_id=root)
+        cid = self.curiosities.add_curiosity("test work", "Work test")
+        item = self.curiosities.add_item(
+            cid, "suggestion", "Post one small freelance listing to test demand.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db)
+
+        first = propose_suggestion_leaf_update(
+            cfg, item, leaf, "Post one listing", "First combined direction.")
+        second = propose_suggestion_leaf_update(
+            cfg, item, leaf, "Post one clearer listing", "Revised combined direction.")
+
+        self.assertNotEqual(first["proposal_id"], second["proposal_id"])
+        self.assertEqual(second["replaced_open_proposals"], 1)
+        rows = self.goals.conn.execute(
+            "SELECT id,status FROM goal_agent_proposal WHERE id IN (?,?) ORDER BY id",
+            (first["proposal_id"], second["proposal_id"])).fetchall()
+        self.assertEqual([(r["id"], r["status"]) for r in rows],
+                         [(first["proposal_id"], "stale"),
+                          (second["proposal_id"], "open")])
+
+
     def test_invalid_draft_rolls_back_entire_commit(self):
         item = self._suggestion()
-        session = start_planning(self.goals, StubGoalPlanner(), item)
+        session = self._start_new_root(item)
         bad = {"nodes": [{"type": "overgoal", "title": "Valid parent", "children": [
             {"type": "task", "title": "", "children": []}
         ]}]}
@@ -291,7 +624,7 @@ class TestGoalPlanner(GoalTestCase):
         """A real model draft used type='umbrella' at top level with tasks and a
         nested overgoal under it; commits must coerce instead of erroring."""
         item = self._suggestion()
-        session = start_planning(self.goals, StubGoalPlanner(), item)
+        session = self._start_new_root(item)
         draft = {"nodes": [{
             "type": "umbrella", "title": "Run micro-test", "children": [
                 {"type": "task", "title": "Brainstorm session", "children": []},
@@ -306,9 +639,12 @@ class TestGoalPlanner(GoalTestCase):
         top = self.goals.get(result["goal_id"])
         self.assertEqual(top["type"], "overgoal")
         rows = self.goals.conn.execute(
-            "SELECT node_type FROM goal_node WHERE parent_id=?",
+            "SELECT id,node_type FROM goal_node WHERE parent_id=?",
             (result["goal_id"],)).fetchall()
-        self.assertEqual(sorted(r["node_type"] for r in rows),
+        self.assertEqual([r["node_type"] for r in rows], ["subgoal"])
+        children = self.goals.conn.execute(
+            "SELECT node_type FROM goal_node WHERE parent_id=?", (rows[0]["id"],)).fetchall()
+        self.assertEqual(sorted(r["node_type"] for r in children),
                          ["subgoal", "task", "task"])
 
 
@@ -486,7 +822,11 @@ class TestGoalBridge(unittest.TestCase):
         cid = curiosity.add_curiosity("learn", "learning")
         item = curiosity.add_item(cid, "suggestion", "Practice one concept")
         curiosity.close()
-        started = self.api.goal_plan_start(item)
+        root = self.api.goal_create("overgoal", "Learning", self.api.goal_state()["tree"]["id"])
+        started = self.api.goal_plan_start(item, root["goal_id"], {
+            "mode": "existing", "parent_id": root["goal_id"],
+            "parent_path": "Actualized Self › Learning", "user_confirmed": True,
+        })
         self.assertTrue(started["ok"])
         session_id = started["session"]["id"]
         replied = self.api.goal_plan_reply(session_id, "Explain it without notes")
@@ -495,6 +835,62 @@ class TestGoalBridge(unittest.TestCase):
         self.assertEqual(summarized["session"]["status"], "ready")
         committed = self.api.goal_plan_commit(session_id)
         self.assertTrue(committed["ok"])
+
+    def test_placement_bridge_blocks_soul_fallback_and_recommends_existing_domain(self):
+        state = self.api.goal_state()
+        soul = state["tree"]["id"]
+        life = self.api.goal_create("overgoal", "My Life", soul)["goal_id"]
+        career = self.api.goal_create("subgoal", "Career & Client Work", life)["goal_id"]
+        curiosity = CuriosityStore(self.api.cfg.memory_db_path)
+        cid = curiosity.add_curiosity("test freelance work", "Career experiment")
+        item = curiosity.add_item(
+            cid, "suggestion", "Post an Upwork automation service to test client demand.")
+        curiosity.close()
+
+        blocked = self.api.goal_plan_start(item)
+        placement = self.api.goal_plan_placement(item)
+
+        self.assertFalse(blocked["ok"])
+        self.assertIn("placement review is required", blocked["message"])
+        self.assertTrue(placement["ok"])
+        self.assertEqual(placement["recommended_parent_id"], career)
+        self.assertIn("Career & Client Work", placement["proposed_path"])
+
+    def test_restructure_bridge_previews_then_waits_for_separate_approval(self):
+        soul = self.api.goal_state()["tree"]["id"]
+        life = self.api.goal_create("overgoal", "My Life", soul)["goal_id"]
+        career = self.api.goal_create("subgoal", "Career", life)["goal_id"]
+        project = self.api.goal_create("overgoal", "Temporary client experiment", soul)["goal_id"]
+        self.api.goal_create("task", "Run experiment", project)
+
+        recommended = self.api.goal_restructure_recommend(project)
+        preview = self.api.goal_restructure_preview(project, "subgoal", career, 0)
+        staged = self.api.goal_restructure_propose(
+            project, "subgoal", career, 0, "Career owns this temporary experiment.")
+        unchanged = next(node for node in self.api.goal_state()["tree"]["children"]
+                         if node["id"] == project)
+        applied = self.api.goal_ai_proposal(staged["proposal_id"], "approve", None, "")
+
+        self.assertTrue(recommended["ok"] and preview["ok"] and staged["ok"] and applied["ok"])
+        self.assertEqual(unchanged["type"], "overgoal")
+        moved = next(node for node in applied["tree"]["children"][0]["children"]
+                     if node["id"] == career)["children"][0]
+        self.assertEqual((moved["id"], moved["type"]), (project, "subgoal"))
+
+        whole = self.api.goal_tree_restructure_recommend(project)
+        recommendation = whole["recommendation"]
+        whole_staged = self.api.goal_tree_restructure_propose(
+            whole["scope_id"], recommendation["changes"],
+            recommendation["role_updates"], whole["rationale"])
+        whole_applied = self.api.goal_ai_proposal(
+            whole_staged["proposal_id"], "approve", None, "")
+
+        self.assertTrue(whole["ok"] and whole_staged["ok"] and whole_applied["ok"])
+        career_after = next(node for node in whole_applied["tree"]["children"]
+                            if node["id"] == career)
+        self.assertEqual(career_after["type"], "overgoal")
+        project_after = next(node for node in career_after["children"] if node["id"] == project)
+        self.assertEqual(project_after["semantic_role"], "project")
 
 
 class TestGoalNotionExport(GoalTestCase):

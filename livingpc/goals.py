@@ -160,6 +160,34 @@ CREATE INDEX IF NOT EXISTS idx_experiment_outcome_goal
 ON experiment_outcome(goal_id,id DESC);
 CREATE INDEX IF NOT EXISTS idx_experiment_outcome_curiosity
 ON experiment_outcome(curiosity_id,id DESC);
+
+CREATE TABLE IF NOT EXISTS goal_restructure_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    proposal_id INTEGER,
+    old_parent_id INTEGER NOT NULL,
+    new_parent_id INTEGER NOT NULL,
+    old_node_type TEXT NOT NULL,
+    new_node_type TEXT NOT NULL,
+    retained_counts_json TEXT NOT NULL,
+    rationale TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (goal_id) REFERENCES goal_node(id),
+    FOREIGN KEY (old_parent_id) REFERENCES goal_node(id),
+    FOREIGN KEY (new_parent_id) REFERENCES goal_node(id)
+);
+CREATE INDEX IF NOT EXISTS idx_goal_restructure_history_goal
+ON goal_restructure_history(goal_id,id DESC);
+
+CREATE TABLE IF NOT EXISTS goal_semantic_role (
+    goal_id INTEGER PRIMARY KEY,
+    role TEXT NOT NULL,
+    rationale TEXT,
+    source TEXT NOT NULL DEFAULT 'user',
+    updated_at TEXT NOT NULL,
+    CHECK (role IN ('area','project','stage')),
+    FOREIGN KEY (goal_id) REFERENCES goal_node(id)
+);
 """
 
 
@@ -297,6 +325,32 @@ class GoalStore:
             "position": row["position"], "created_at": row["created_at"],
             "updated_at": row["updated_at"], "completed_at": row["completed_at"],
         }
+
+    def semantic_role(self, goal_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT role,rationale,source,updated_at FROM goal_semantic_role WHERE goal_id=?",
+            (int(goal_id),)).fetchone()
+        if not row:
+            return None
+        return {"role": row["role"], "rationale": crypto.dec(row["rationale"]) or "",
+                "source": row["source"], "updated_at": row["updated_at"]}
+
+    def _set_semantic_role(self, goal_id: int, role: str, *, rationale: str = "",
+                           source: str = "ai", commit: bool = True) -> None:
+        node = self.get(int(goal_id))
+        role = str(role or "").strip().lower()
+        if not node or node["type"] != "subgoal":
+            raise ValueError("semantic roles apply only to Branches")
+        if role not in {"area", "project", "stage"}:
+            raise ValueError("Branch role must be Area, Project, or Stage")
+        self.conn.execute(
+            "INSERT INTO goal_semantic_role (goal_id,role,rationale,source,updated_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(goal_id) DO UPDATE SET role=excluded.role,"
+            "rationale=excluded.rationale,source=excluded.source,updated_at=excluded.updated_at",
+            (int(goal_id), role, crypto.enc(str(rationale or "")), str(source or "ai")[:24], _now()))
+        self._mark_goal_ai_dirty(int(goal_id))
+        if commit:
+            self.conn.commit()
 
     def get(self, goal_id: int) -> dict | None:
         node = self._row(self.conn.execute(
@@ -586,6 +640,362 @@ class GoalStore:
         self._mark_goal_ai_dirty(int(goal_id), old_parent, parent_id)
         self.conn.commit()
 
+    def _subtree_ids(self, goal_id: int) -> list[int]:
+        ids, pending = [int(goal_id)], [int(goal_id)]
+        while pending:
+            placeholders = ",".join("?" for _ in pending)
+            children = [int(row["id"]) for row in self.conn.execute(
+                f"SELECT id FROM goal_node WHERE parent_id IN ({placeholders})",
+                pending).fetchall()]
+            ids.extend(children)
+            pending = children
+        return ids
+
+    def _restructure_retained_counts(self, scope_ids: list[int]) -> dict:
+        tables = {row["name"] for row in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        placeholders = ",".join("?" for _ in scope_ids)
+
+        def count(table: str, column: str, *, extra: str = "", args: tuple = ()) -> int:
+            if table not in tables:
+                return 0
+            return int(self.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} IN ({placeholders}){extra}",
+                [*scope_ids, *args]).fetchone()[0])
+
+        completed = int(self.conn.execute(
+            f"SELECT COUNT(*) FROM goal_node WHERE id IN ({placeholders}) AND status='completed'",
+            scope_ids).fetchone()[0])
+        return {
+            "nodes": len(scope_ids), "descendants": max(0, len(scope_ids) - 1),
+            "completed_nodes": completed,
+            "investigation_links": count("goal_curiosity_link", "goal_id"),
+            "evidence_links": count("goal_evidence_link", "goal_id"),
+            "outcomes": count("experiment_outcome", "goal_id"),
+            "origins": count("goal_origin", "goal_id"),
+            "coaching_messages": count("goal_step_coach_message", "node_id"),
+            "coached_steps": count("goal_step_coach_state", "node_id"),
+            "agent_messages": count("goal_agent_message", "node_id"),
+            "agent_assessments": count("goal_agent_assessment", "node_id"),
+            "agent_questions": count("goal_agent_question", "node_id"),
+            "memory_candidates": count("goal_agent_memory_candidate", "node_id"),
+            "relevance_reviews": count("goal_relevance_review", "node_id"),
+            "mastery_profiles": count(
+                "mastery_subject_profile", "subject_id",
+                extra=" AND subject_type=?", args=("goal",)),
+            "mastery_events": count(
+                "mastery_subject_event", "subject_id",
+                extra=" AND subject_type=?", args=("goal",)),
+            "implemented_suggestions": count("curiosity_item", "implementation_goal_id"),
+            "committed_plans": count("goal_plan_session", "committed_goal_id"),
+        }
+
+    def restructure_preview(self, goal_id: int, new_type: str, parent_id: int,
+                            position: int | None = None) -> dict:
+        node = self.get(int(goal_id))
+        if not node or node["type"] == "umbrella" or node["status"] == "archived":
+            raise ValueError("an active Root, Branch, or Leaf is required")
+        new_type = str(new_type or "").strip().lower()
+        if new_type not in {"overgoal", "subgoal", "task"}:
+            raise ValueError("new type must be Root, Branch, or Leaf")
+        parent = self.get(int(parent_id))
+        if not parent or parent["status"] == "archived":
+            raise ValueError("active destination parent not found")
+        self._validate_parent(new_type, int(parent_id), int(goal_id))
+        child_types = [row["node_type"] for row in self.conn.execute(
+            "SELECT node_type FROM goal_node WHERE parent_id=? AND status!='archived'",
+            (int(goal_id),)).fetchall()]
+        allowed_children = {
+            "overgoal": {"subgoal", "task"},
+            "subgoal": {"subgoal", "task"},
+            "task": set(),
+        }[new_type]
+        invalid_children = [kind for kind in child_types if kind not in allowed_children]
+        if invalid_children:
+            raise ValueError("the selected type cannot contain the node's current children")
+        if node["type"] == new_type and int(node["parent_id"] or 0) == int(parent_id):
+            requested_position = node["position"] if position is None else max(0, int(position))
+            if requested_position == int(node["position"]):
+                raise ValueError("the proposed structure is unchanged")
+        siblings = self.conn.execute(
+            "SELECT COUNT(*) FROM goal_node WHERE parent_id=? AND id!=?",
+            (int(parent_id), int(goal_id))).fetchone()[0]
+        proposed_position = min(int(siblings), max(0, int(position))) if position is not None else (
+            int(node["position"]) if int(node["parent_id"] or 0) == int(parent_id) else int(siblings))
+        scope_ids = self._subtree_ids(int(goal_id))
+        labels = {"umbrella": "Soul", "overgoal": "Root",
+                  "subgoal": "Branch", "task": "Leaf"}
+        current_path = " › ".join(self._goal_path_titles(int(goal_id)))
+        proposed_path = " › ".join([*self._goal_path_titles(int(parent_id)), node["title"]])
+        return {
+            "goal_id": int(goal_id), "node_id_preserved": True,
+            "current": {"type": node["type"], "type_label": labels[node["type"]],
+                        "parent_id": node["parent_id"], "path": current_path,
+                        "position": int(node["position"])},
+            "proposed": {"type": new_type, "type_label": labels[new_type],
+                         "parent_id": int(parent_id), "parent_title": parent["title"],
+                         "path": proposed_path, "position": proposed_position},
+            "retained_counts": self._restructure_retained_counts(scope_ids),
+            "affected_node_ids": scope_ids,
+        }
+
+    def restructure(self, goal_id: int, new_type: str, parent_id: int,
+                    position: int | None = None, *, proposal_id: int | None = None,
+                    rationale: str = "", commit: bool = True) -> dict:
+        preview = self.restructure_preview(goal_id, new_type, parent_id, position)
+        old_parent = int(preview["current"]["parent_id"])
+        new_parent = int(preview["proposed"]["parent_id"])
+        insert_at = int(preview["proposed"]["position"])
+        now = _now()
+        started = False
+        try:
+            if commit and not self.conn.in_transaction:
+                self.conn.execute("BEGIN IMMEDIATE")
+                started = True
+            self.conn.execute(
+                "UPDATE goal_node SET parent_id=?,node_type=?,position=?,updated_at=? WHERE id=?",
+                (new_parent, str(new_type), insert_at, now, int(goal_id)))
+            new_siblings = [int(row["id"]) for row in self.conn.execute(
+                "SELECT id FROM goal_node WHERE parent_id=? AND id!=? ORDER BY position,id",
+                (new_parent, int(goal_id))).fetchall()]
+            new_siblings.insert(min(len(new_siblings), insert_at), int(goal_id))
+            for index, sibling_id in enumerate(new_siblings):
+                self.conn.execute("UPDATE goal_node SET position=? WHERE id=?", (index, sibling_id))
+            if old_parent != new_parent:
+                old_siblings = self.conn.execute(
+                    "SELECT id FROM goal_node WHERE parent_id=? ORDER BY position,id",
+                    (old_parent,)).fetchall()
+                for index, sibling in enumerate(old_siblings):
+                    self.conn.execute("UPDATE goal_node SET position=? WHERE id=?",
+                                      (index, sibling["id"]))
+            self.conn.execute(
+                "INSERT INTO goal_restructure_history "
+                "(goal_id,proposal_id,old_parent_id,new_parent_id,old_node_type,new_node_type,"
+                "retained_counts_json,rationale,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (int(goal_id), proposal_id, old_parent, new_parent,
+                 preview["current"]["type"], str(new_type),
+                 json.dumps(preview["retained_counts"], sort_keys=True),
+                 crypto.enc(str(rationale or "")), now))
+            self._mark_goal_ai_dirty(*preview["affected_node_ids"], old_parent, new_parent)
+            if commit:
+                self.conn.commit()
+        except Exception:
+            if commit and (started or self.conn.in_transaction):
+                self.conn.rollback()
+            raise
+        result = dict(preview)
+        result["history_id"] = int(self.conn.execute(
+            "SELECT id FROM goal_restructure_history WHERE goal_id=? ORDER BY id DESC LIMIT 1",
+            (int(goal_id),)).fetchone()[0])
+        return result
+
+    def restructure_batch_preview(self, changes: list[dict],
+                                  role_updates: list[dict] | None = None) -> dict:
+        """Validate a whole-path normalization against the final graph.
+
+        This intentionally keeps the four structural node types. Area, Project,
+        and Stage are presentation roles attached only to Branches.
+        """
+        changes = list(changes or [])[:24]
+        role_updates = list(role_updates or [])[:48]
+        rows = [self._row(row) for row in self.conn.execute(
+            "SELECT * FROM goal_node WHERE status!='archived' ORDER BY id")]
+        nodes = {int(node["id"]): node for node in rows if node}
+        final = {node_id: {"type": node["type"], "parent_id": node["parent_id"],
+                           "position": int(node["position"])}
+                 for node_id, node in nodes.items()}
+        normalized: list[dict] = []
+        seen: set[int] = set()
+        for raw in changes:
+            try:
+                goal_id = int(raw.get("goal_id"))
+                parent_id = int(raw.get("parent_id"))
+            except (TypeError, ValueError):
+                raise ValueError("every restructure change needs valid node and parent ids")
+            if goal_id in seen:
+                raise ValueError("a node can appear only once in a restructure plan")
+            seen.add(goal_id)
+            node = nodes.get(goal_id)
+            parent = nodes.get(parent_id)
+            new_type = str(raw.get("new_type") or "").strip().lower()
+            if not node or node["type"] == "umbrella" or not parent:
+                raise ValueError("restructure plan contains an unavailable node")
+            if new_type not in {"overgoal", "subgoal", "task"}:
+                raise ValueError("new type must be Root, Branch, or Leaf")
+            position = raw.get("position")
+            position = (None if position is None else max(0, int(position)))
+            final[goal_id] = {"type": new_type, "parent_id": parent_id,
+                              "position": node["position"] if position is None else position}
+            if new_type != node["type"] or parent_id != int(node["parent_id"] or 0):
+                normalized.append({"goal_id": goal_id, "new_type": new_type,
+                                   "parent_id": parent_id, "position": position,
+                                   "reason": str(raw.get("reason") or "")[:700]})
+
+        allowed_parents = {
+            "umbrella": set(), "overgoal": {"umbrella"},
+            "subgoal": {"overgoal", "subgoal"},
+            "task": {"overgoal", "subgoal"},
+        }
+        for goal_id, state in final.items():
+            if state["type"] == "umbrella":
+                if state["parent_id"] is not None:
+                    raise ValueError("the Soul cannot have a parent")
+                continue
+            parent = final.get(int(state["parent_id"] or 0))
+            if not parent or parent["type"] not in allowed_parents[state["type"]]:
+                raise ValueError("the proposed tree contains an invalid parent relationship")
+            visited, current = {goal_id}, int(state["parent_id"] or 0)
+            while current:
+                if current in visited:
+                    raise ValueError("the proposed tree contains a cycle")
+                visited.add(current)
+                current = int(final[current]["parent_id"] or 0) if current in final else 0
+
+        existing_roles = {int(row["goal_id"]): row["role"] for row in self.conn.execute(
+            "SELECT goal_id,role FROM goal_semantic_role")}
+        display_roles: dict[int, str] = {}
+        children_by_parent: dict[int, list[int]] = {}
+        for child_id, child in nodes.items():
+            children_by_parent.setdefault(int(child.get("parent_id") or 0), []).append(child_id)
+
+        def derive_roles(goal_id: int, parent_role: str = "") -> None:
+            node = nodes[goal_id]
+            next_parent_role = parent_role
+            if node["type"] == "subgoal":
+                role = existing_roles.get(goal_id)
+                if not role:
+                    parent = nodes.get(int(node.get("parent_id") or 0))
+                    if parent and parent["type"] == "overgoal":
+                        role = ("area" if any(nodes[child]["type"] == "subgoal"
+                                              for child in children_by_parent.get(goal_id, []))
+                                else "project")
+                    elif parent_role == "area":
+                        role = "project"
+                    else:
+                        role = "stage"
+                display_roles[goal_id] = role
+                next_parent_role = role
+            for child_id in children_by_parent.get(goal_id, []):
+                derive_roles(child_id, next_parent_role)
+
+        soul_id = next((node_id for node_id, node in nodes.items()
+                        if node["type"] == "umbrella"), 0)
+        if soul_id:
+            derive_roles(soul_id)
+        normalized_roles: list[dict] = []
+        role_seen: set[int] = set()
+        for raw in role_updates:
+            try:
+                goal_id = int(raw.get("goal_id"))
+            except (TypeError, ValueError):
+                raise ValueError("every Branch role needs a valid node id")
+            role = str(raw.get("role") or "").strip().lower()
+            if goal_id in role_seen:
+                raise ValueError("a Branch can receive only one semantic role")
+            role_seen.add(goal_id)
+            if goal_id not in final or final[goal_id]["type"] != "subgoal":
+                raise ValueError("Area, Project, and Stage roles apply only to Branches")
+            if role not in {"area", "project", "stage"}:
+                raise ValueError("Branch role must be Area, Project, or Stage")
+            if existing_roles.get(goal_id) != role:
+                normalized_roles.append({"goal_id": goal_id, "role": role,
+                                         "reason": str(raw.get("reason") or "")[:700]})
+        if not normalized and not normalized_roles:
+            raise ValueError("the proposed structure is unchanged")
+
+        def path_for(goal_id: int, graph: dict[int, dict]) -> str:
+            titles, seen_ids, current = [], set(), int(goal_id)
+            while current and current not in seen_ids and current in nodes:
+                seen_ids.add(current)
+                titles.append(nodes[current]["title"])
+                current = int(graph[current]["parent_id"] or 0)
+            return " › ".join(reversed(titles))
+
+        labels = {"umbrella": "Soul", "overgoal": "Root",
+                  "subgoal": "Branch", "task": "Leaf"}
+        structural = []
+        for item in normalized:
+            goal_id = item["goal_id"]
+            node = nodes[goal_id]
+            structural.append({
+                **item, "title": node["title"],
+                "current": {"type": node["type"], "type_label": labels[node["type"]],
+                            "parent_id": node["parent_id"],
+                            "path": " › ".join(self._goal_path_titles(goal_id))},
+                "proposed": {"type": item["new_type"],
+                             "type_label": labels[item["new_type"]],
+                             "parent_id": item["parent_id"],
+                             "path": path_for(goal_id, final)},
+            })
+        roles = [{**item, "title": nodes[item["goal_id"]]["title"],
+                  "current_role": display_roles.get(item["goal_id"]),
+                  "proposed_role": item["role"]} for item in normalized_roles]
+        scope_ids: set[int] = set()
+        for goal_id in {item["goal_id"] for item in [*normalized, *normalized_roles]}:
+            scope_ids.update(self._subtree_ids(goal_id))
+        return {
+            "structural_changes": structural, "role_changes": roles,
+            "retained_counts": self._restructure_retained_counts(sorted(scope_ids)),
+            "affected_node_ids": sorted(scope_ids), "node_ids_preserved": True,
+        }
+
+    def restructure_batch(self, changes: list[dict], role_updates: list[dict] | None = None,
+                          *, proposal_id: int | None = None, rationale: str = "",
+                          commit: bool = True) -> dict:
+        preview = self.restructure_batch_preview(changes, role_updates)
+        structural = preview["structural_changes"]
+        roles = preview["role_changes"]
+        old_parents = {int(item["goal_id"]): int(item["current"]["parent_id"] or 0)
+                       for item in structural}
+        touched_parents = {int(item["proposed"]["parent_id"]) for item in structural}
+        touched_parents.update(parent for parent in old_parents.values() if parent)
+        now = _now()
+        started = False
+        try:
+            if commit and not self.conn.in_transaction:
+                self.conn.execute("BEGIN IMMEDIATE")
+                started = True
+            for item in structural:
+                position = item["position"]
+                if position is None:
+                    position = int(self.conn.execute(
+                        "SELECT COALESCE(MAX(position),-1)+1 FROM goal_node WHERE parent_id=?",
+                        (int(item["parent_id"]),)).fetchone()[0])
+                self.conn.execute(
+                    "UPDATE goal_node SET parent_id=?,node_type=?,position=?,updated_at=? WHERE id=?",
+                    (int(item["parent_id"]), item["new_type"], int(position), now,
+                     int(item["goal_id"])))
+                if item["new_type"] != "subgoal":
+                    self.conn.execute("DELETE FROM goal_semantic_role WHERE goal_id=?",
+                                      (int(item["goal_id"]),))
+                self.conn.execute(
+                    "INSERT INTO goal_restructure_history "
+                    "(goal_id,proposal_id,old_parent_id,new_parent_id,old_node_type,new_node_type,"
+                    "retained_counts_json,rationale,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (int(item["goal_id"]), proposal_id, int(item["current"]["parent_id"]),
+                     int(item["proposed"]["parent_id"]), item["current"]["type"],
+                     item["new_type"], json.dumps(preview["retained_counts"], sort_keys=True),
+                     crypto.enc(item.get("reason") or rationale), now))
+            for parent_id in touched_parents:
+                siblings = self.conn.execute(
+                    "SELECT id FROM goal_node WHERE parent_id=? ORDER BY position,id",
+                    (parent_id,)).fetchall()
+                for index, sibling in enumerate(siblings):
+                    self.conn.execute("UPDATE goal_node SET position=? WHERE id=?",
+                                      (index, int(sibling["id"])))
+            for item in roles:
+                self._set_semantic_role(
+                    int(item["goal_id"]), item["proposed_role"],
+                    rationale=item.get("reason") or rationale, source="ai", commit=False)
+            self._mark_goal_ai_dirty(*preview["affected_node_ids"], *touched_parents)
+            if commit:
+                self.conn.commit()
+        except Exception:
+            if commit and (started or self.conn.in_transaction):
+                self.conn.rollback()
+            raise
+        return preview
+
     def delete_subtree(self, goal_id: int) -> int:
         """'Delete' a node and everything under it. Always a soft archive
         (status='archived'), never a hard row delete — reversible, and
@@ -860,6 +1270,13 @@ class GoalStore:
             node["outcomes"] = []
             node["origin"] = None
             node["mastery"] = self.mastery(node["id"])
+            node["semantic_role"] = None
+            node["semantic_role_source"] = ""
+        for row in self.conn.execute(
+                "SELECT goal_id,role,source FROM goal_semantic_role ORDER BY goal_id"):
+            if row["goal_id"] in nodes:
+                nodes[row["goal_id"]]["semantic_role"] = row["role"]
+                nodes[row["goal_id"]]["semantic_role_source"] = row["source"]
         for row in self.conn.execute("SELECT * FROM goal_origin ORDER BY goal_id"):
             if row["goal_id"] in nodes:
                 nodes[row["goal_id"]]["origin"] = self._origin_dict(row)
@@ -882,6 +1299,24 @@ class GoalStore:
         for node in nodes.values():
             if node["parent_id"] in nodes:
                 nodes[node["parent_id"]]["children"].append(node)
+
+        def assign_semantic_roles(node: dict, parent_role: str = "") -> None:
+            if node["type"] == "subgoal":
+                if not node.get("semantic_role"):
+                    parent = nodes.get(node.get("parent_id"))
+                    if parent and parent["type"] == "overgoal":
+                        node["semantic_role"] = (
+                            "area" if any(child["type"] == "subgoal"
+                                          for child in node["children"])
+                            else "project")
+                    elif parent_role == "area":
+                        node["semantic_role"] = "project"
+                    else:
+                        node["semantic_role"] = "stage"
+                    node["semantic_role_source"] = "derived"
+                parent_role = str(node["semantic_role"])
+            for child in node["children"]:
+                assign_semantic_roles(child, parent_role)
 
         def inherit_curiosities(node: dict, inherited: list[dict]) -> None:
             direct_ids = {item["id"] for item in node["curiosities"]}
@@ -920,6 +1355,7 @@ class GoalStore:
 
         root = nodes.get(self.root_id)
         if root:
+            assign_semantic_roles(root)
             inherit_curiosities(root, [])
             progress(root)
         return root or {}
@@ -932,11 +1368,25 @@ class GoalStore:
             raise ValueError("planning target must accept child goals")
         if source_item_id is not None:
             existing = self.conn.execute(
-                "SELECT id FROM goal_plan_session WHERE source_item_id=? "
+                "SELECT id,target_parent_id FROM goal_plan_session WHERE source_item_id=? "
                 "AND status IN ('active','ready') ORDER BY id DESC LIMIT 1",
                 (int(source_item_id),)).fetchone()
             if existing:
-                return self.plan_session(existing["id"])
+                if int(existing["target_parent_id"]) == int(target["id"]):
+                    session = self.plan_session(existing["id"])
+                    approved = (draft or {}).get("_placement")
+                    if approved and not session["draft"].get("_placement"):
+                        restored = dict(session["draft"])
+                        restored["_placement"] = approved
+                        self.set_plan_draft(existing["id"], restored,
+                                            ready=session["status"] == "ready")
+                    return self.plan_session(existing["id"])
+                # A newly approved placement supersedes an earlier draft that
+                # was opened under the wrong parent. Preserve its transcript as
+                # abandoned history instead of silently reusing its location.
+                self.conn.execute(
+                    "UPDATE goal_plan_session SET status='abandoned',updated_at=? WHERE id=?",
+                    (_now(), int(existing["id"])))
         now = _now()
         cur = self.conn.execute(
             "INSERT INTO goal_plan_session "
@@ -966,6 +1416,19 @@ class GoalStore:
 
     def set_plan_draft(self, session_id: int, draft: dict, summary: str | None = None,
                        ready: bool = False) -> None:
+        # Placement is an approval boundary, not model-authored draft content.
+        # Preserve it when the planner replies or the user edits the JSON review.
+        row = self.conn.execute(
+            "SELECT draft_json FROM goal_plan_session WHERE id=?",
+            (int(session_id),)).fetchone()
+        if row:
+            try:
+                existing = json.loads(crypto.dec(row["draft_json"]) or "{}")
+            except json.JSONDecodeError:
+                existing = {}
+            if existing.get("_placement"):
+                draft = dict(draft or {})
+                draft["_placement"] = existing["_placement"]
         self.conn.execute(
             "UPDATE goal_plan_session SET draft_json=?,summary=COALESCE(?,summary),"
             "status=?,updated_at=? WHERE id=? AND status IN ('active','ready')",
@@ -1001,9 +1464,33 @@ class GoalStore:
             return {"goal_id": session["committed_goal_id"], "already_implemented": True}
         if session["status"] != "ready":
             raise ValueError("summarize and review the plan before creating it")
-        nodes = session["draft"].get("nodes") or []
+        nodes = list(session["draft"].get("nodes") or [])
         if not nodes:
             raise ValueError("draft has no goals to create")
+        target = self.get(session["target_parent_id"])
+        placement = session["draft"].get("_placement") or {}
+        if target and target["type"] == "umbrella":
+            if (placement.get("mode") != "new_root" or
+                    not placement.get("root_eligible") or
+                    not str(placement.get("root_title") or "").strip()):
+                raise ValueError("a new Root requires an approved durable life-domain placement")
+            root_title = str(placement["root_title"]).strip()
+            root_description = str(placement.get("root_description") or "").strip()
+            first = dict(nodes[0])
+            if str(first.get("title") or "").strip().casefold() != root_title.casefold():
+                # The planner described a temporary project as the top node. Keep
+                # that work, but place it beneath the approved durable domain.
+                nodes = [{
+                    "type": "overgoal", "title": root_title,
+                    "description": root_description, "priority": "normal",
+                    "due_date": None, "children": nodes,
+                }]
+            else:
+                first["type"] = "overgoal"
+                first["title"] = root_title
+                if root_description:
+                    first["description"] = root_description
+                nodes[0] = first
 
         def add(raw: dict, parent_id: int) -> int:
             # Model drafts are user-reviewed JSON, not schema-guaranteed: coerce
@@ -1200,6 +1687,53 @@ Never use type "umbrella". Use TODAY from the prompt for any dates. Keep
 descriptions short so the JSON reply never exceeds ~1500 tokens.
 """
 
+PLACEMENT_SYSTEM = """Choose where a proposed plan belongs in an existing personal Growth tree.
+This is a semantic ownership decision, not a wording-match exercise. Prefer the most specific
+existing Root or Branch whose enduring purpose owns the proposed work. A temporary project,
+experiment, milestone, product test, or task is not a Root. Recommend a new Root only for a
+distinct durable life domain that should still matter after the proposed project ends.
+
+Return strict JSON:
+{"parent_id": int|null, "confidence": 0..1, "rationale": str,
+ "question": str, "plan_title": str, "new_root":
+ {"eligible": bool, "title": str, "description": str, "rationale": str}}.
+Use only a supplied parent id. Set parent_id to null when a genuinely new Root is best or when
+the evidence is too uncertain. Ask at most one short placement question when confidence is below
+0.72; otherwise question must be empty. A new Root title must name a broad durable domain, never
+the temporary proposal itself.
+"""
+
+RESTRUCTURE_SYSTEM = """Review one existing node inside a personal Growth tree and decide whether
+its structural role is misleading. Use meaning and durable ownership, not title overlap alone.
+Soul is the whole person; Root is an enduring life domain; Branch is a project, strategy, area,
+or experiment inside a domain; Leaf is one concrete outcome or action. A temporary project or
+experiment must not be a Root. Prefer the most specific existing parent that genuinely owns the
+work. Do not recommend change merely for cosmetic neatness.
+
+Return strict JSON:
+{"action":"keep"|"restructure"|"uncertain", "new_type":"overgoal"|"subgoal"|"task"|null,
+ "parent_id":int|null, "confidence":0..1, "rationale":str, "question":str}.
+Use only a supplied parent id. Ask at most one short plain-language question when uncertain.
+"""
+
+TREE_RESTRUCTURE_SYSTEM = """Review the selected node's ancestor path and descendant subtree as
+one coherent Growth structure. Keep the stored types Soul, Root, Branch, and Leaf. Soul is the
+whole person; a Root is a durable life domain; a Branch may be an Area, Project, or Stage; a Leaf
+is one concrete outcome or action. Nested Branches are allowed only when their scopes are genuinely
+different. Do not preserve a project-shaped Root or use several generic Branch labels when Area,
+Project, and Stage explain the nesting. Prefer the smallest set of changes that makes the path
+understandable. Never delete, merge, archive, rename, or recreate a node.
+
+Return strict JSON:
+{"action":"keep"|"restructure"|"uncertain", "confidence":0..1, "rationale":str,
+ "question":str, "nodes":[{"goal_id":int,"new_type":"overgoal"|"subgoal"|"task",
+ "parent_id":int,"semantic_role":"area"|"project"|"stage"|null,"reason":str}],
+ "warnings":[str]}.
+Include a node only when its type, parent, or Branch role should change. Use only supplied ids.
+Area/Project/Stage applies only when new_type is subgoal. Ask at most one short question when the
+meaning is genuinely uncertain. Return at most 16 node changes.
+"""
+
 SUMMARY_SYSTEM = """Turn this planning dialogue into one concise editable goal tree.
 Use the user's decisions as authoritative. Return strict JSON:
 {"summary": str, "draft": {"rationale": str, "nodes": [goal nodes]}}.
@@ -1223,7 +1757,170 @@ def _json_object(text: str) -> dict:
 
 
 class StubGoalPlanner:
-    def first(self, suggestion: str, target: dict) -> tuple[str, dict]:
+    def place(self, suggestion: str, candidates: list[dict], soul: dict) -> dict:
+        from .inference import concept_similarity
+        domain_groups = [
+            ({"career", "work", "job", "business", "freelance", "upwork", "client", "building", "automation"},
+             "Career & Work", "An enduring domain for work, building, clients, and professional development."),
+            ({"health", "energy", "food", "sleep", "exercise", "body", "mental"},
+             "Health & Wellbeing", "An enduring domain for physical health, energy, and emotional wellbeing."),
+            ({"relationship", "family", "friend", "social", "love"},
+             "Relationships & Community", "An enduring domain for close relationships and community life."),
+            ({"learning", "language", "korean", "study", "education"},
+             "Learning & Education", "An enduring domain for learning, study, and skill development."),
+            ({"creative", "art", "music", "writing", "aesthetic", "design"},
+             "Creativity & Expression", "An enduring domain for creative practice and self-expression."),
+            ({"finance", "money", "budget", "saving", "income"},
+             "Finances", "An enduring domain for money, financial stability, and long-term resources."),
+        ]
+        suggestion_words = set(re.findall(r"[a-z0-9]+", suggestion.casefold()))
+        matched_domain = next((spec for spec in domain_groups if suggestion_words & spec[0]), None)
+        ranked: list[tuple[float, dict]] = []
+        for candidate in candidates:
+            comparison = "\n".join(filter(None, [
+                candidate.get("path", ""), candidate.get("description", "")]))
+            score = concept_similarity(suggestion, comparison)
+            candidate_words = set(re.findall(r"[a-z0-9]+", comparison.casefold()))
+            for group, _title, _description in domain_groups:
+                if suggestion_words & group and candidate_words & group:
+                    score += .32
+            if candidate.get("node_type") == "subgoal":
+                score += .02
+            ranked.append((min(score, 1.0), candidate))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        best_score, best = ranked[0] if ranked else (0.0, None)
+        confident = bool(best and best_score >= .30)
+        propose_domain = bool(not confident and matched_domain)
+        plan_title = " ".join(suggestion.split())[:72]
+        return {
+            "parent_id": int(best["id"]) if confident else None,
+            "confidence": round(best_score, 3) if confident else (.78 if propose_domain else .35),
+            "rationale": (f"This work fits the enduring purpose of {best['path']}."
+                          if confident else (f"This belongs to the durable {matched_domain[1]} domain."
+                          if propose_domain else "The existing tree does not provide a clear durable owner yet.")),
+            "question": ("" if confident or propose_domain else
+                         "Which existing area of your life should own this work?"),
+            "plan_title": plan_title,
+            "new_root": {
+                "eligible": propose_domain,
+                "title": matched_domain[1] if propose_domain else "",
+                "description": matched_domain[2] if propose_domain else "",
+                "rationale": ("This names an ongoing life domain that remains relevant after the "
+                              "temporary proposal ends." if propose_domain else ""),
+            },
+        }
+
+    def recommend_restructure(self, node: dict, candidates: list[dict], soul: dict) -> dict:
+        text = "\n".join(filter(None, [node.get("title", ""), node.get("description", ""),
+                                        node.get("path", "")]))
+        # The Soul appears verbatim in every current path, so it is not a useful
+        # semantic competitor when looking for a more specific enduring owner.
+        placed = self.place(text, [c for c in candidates if c.get("node_type") != "umbrella"], soul)
+        parent_id = placed.get("parent_id")
+        has_children = bool(node.get("child_count"))
+        new_type = "subgoal" if has_children or node.get("type") != "task" else "task"
+        changed = parent_id is not None and (
+            int(parent_id) != int(node.get("parent_id") or 0) or new_type != node.get("type"))
+        return {
+            "action": "restructure" if changed else ("keep" if node.get("type") == "overgoal" else "uncertain"),
+            "new_type": new_type if changed else None,
+            "parent_id": parent_id if changed else None,
+            "confidence": max(.78, float(placed.get("confidence", .35))) if changed else placed.get("confidence", .35),
+            "rationale": (placed.get("rationale", "") if changed else
+                          "The current structure is not clearly wrong from the available context."),
+            "question": "" if changed else "Which enduring part of your life should own this work?",
+        }
+
+    def recommend_tree_restructure(self, review: dict, candidates: list[dict],
+                                   soul: dict) -> dict:
+        nodes = {int(node["id"]): dict(node) for node in review.get("nodes", [])}
+        durable_words = {"career", "work", "health", "wellbeing", "relationship",
+                         "relationships", "learning", "education", "finance", "finances",
+                         "creativity", "creative", "home", "family", "community"}
+        project_words = {"project", "experiment", "test", "launch", "build", "upwork",
+                         "automation", "product", "gig", "prototype", "migration"}
+        stage_words = {"brainstorm", "evaluate", "select", "validate", "review", "prepare",
+                       "plan", "write", "post", "log", "measure", "choose", "research"}
+        generic_words = {"life", "lives", "overall", "actualized", "self", "world"}
+        changes: list[dict] = []
+        final = {node_id: {"type": node.get("type"), "parent_id": node.get("parent_id")}
+                 for node_id, node in nodes.items()}
+        root = nodes.get(int(review.get("scope_root_id") or 0))
+        demoted_temporary_root = False
+        if root:
+            root_words = set(re.findall(r"[a-z0-9]+", root.get("title", "").casefold()))
+            if root_words & project_words:
+                single = self.recommend_restructure(
+                    {**root, "path": root.get("path", ""),
+                     "child_count": len(root.get("child_ids") or [])},
+                    candidates, soul)
+                if (single.get("action") == "restructure" and
+                        single.get("new_type") == "subgoal" and single.get("parent_id")):
+                    final[root["id"]] = {"type": "subgoal",
+                                         "parent_id": int(single["parent_id"])}
+                    changes.append({"goal_id": root["id"], "new_type": "subgoal",
+                                    "parent_id": int(single["parent_id"]),
+                                    "semantic_role": "project",
+                                    "reason": str(single.get("rationale") or
+                                                  "This temporary project belongs inside an enduring domain.")})
+                    demoted_temporary_root = True
+            selected_path_ids = [int(value) for value in review.get("selected_path_ids", [])]
+            for goal_id in ([] if demoted_temporary_root else selected_path_ids):
+                node = nodes.get(goal_id)
+                if not node or node.get("type") != "subgoal" or node.get("parent_id") != root["id"]:
+                    continue
+                words = set(re.findall(r"[a-z0-9]+", node.get("title", "").casefold()))
+                if words & durable_words and root_words & generic_words:
+                    final[goal_id] = {"type": "overgoal", "parent_id": int(soul["id"])}
+                    changes.append({"goal_id": goal_id, "new_type": "overgoal",
+                                    "parent_id": int(soul["id"]), "semantic_role": None,
+                                    "reason": (f"{node['title']} is an enduring life domain, while "
+                                               f"{root['title']} is too broad to clarify ownership.")})
+                    break
+
+        def branch_role(goal_id: int) -> str:
+            node = nodes[goal_id]
+            words = set(re.findall(r"[a-z0-9]+", node.get("title", "").casefold()))
+            if words & stage_words:
+                return "stage"
+            if words & project_words:
+                return "project"
+            parent_id = int(final[goal_id].get("parent_id") or 0)
+            parent = final.get(parent_id)
+            if parent and parent.get("type") == "overgoal":
+                return "area" if words & durable_words else "project"
+            parent_node = nodes.get(parent_id, {})
+            parent_role = str(parent_node.get("semantic_role") or "")
+            return "project" if parent_role == "area" else "stage"
+
+        changed_ids = {item["goal_id"] for item in changes}
+        for goal_id, state in final.items():
+            if state.get("type") != "subgoal":
+                continue
+            role = branch_role(goal_id)
+            node = nodes[goal_id]
+            if node.get("semantic_role_source") != "derived" and node.get("semantic_role") == role:
+                continue
+            entry = next((item for item in changes if item["goal_id"] == goal_id), None)
+            if entry:
+                entry["semantic_role"] = role
+            else:
+                changes.append({"goal_id": goal_id, "new_type": "subgoal",
+                                "parent_id": int(state["parent_id"]),
+                                "semantic_role": role,
+                                "reason": f"Show this Branch as a {role.title()} so its scope is clear."})
+                changed_ids.add(goal_id)
+        return {
+            "action": "restructure" if changes else "keep",
+            "confidence": .86 if changes else .72,
+            "rationale": ("The path can be made clearer by separating durable domains from "
+                          "projects and stages." if changes else
+                          "The current path already communicates distinct scopes."),
+            "question": "", "nodes": changes[:16], "warnings": [],
+        }
+
+    def first(self, suggestion: str, target: dict,
+              placement: dict | None = None) -> tuple[str, dict]:
         message = (f'I can turn “{suggestion}” into a plan. My starting approach is to make '
                    "the smallest useful outcome explicit first. What would success look like?")
         return message, {"rationale": suggestion, "nodes": []}
@@ -1237,15 +1934,20 @@ class StubGoalPlanner:
     def summarize(self, session: dict, target: dict) -> tuple[str, dict]:
         suggestion = session.get("draft", {}).get("rationale") or "Implement the idea"
         success = session.get("draft", {}).get("success") or "Define a useful outcome"
-        first_type = "overgoal" if target["type"] == "umbrella" else "subgoal"
-        draft = {"rationale": suggestion, "nodes": [{
-            "type": first_type, "title": suggestion[:80], "description": success,
-            "priority": "normal", "due_date": None, "children": [{
-                "type": "task", "title": "Take the first concrete step",
-                "description": "", "priority": "normal", "due_date": None,
-                "children": [],
-            }],
-        }]}
+        placement = session.get("draft", {}).get("_placement") or {}
+        project = {"type": "subgoal", "title": suggestion[:80], "description": success,
+                   "priority": "normal", "due_date": None, "children": [{
+                       "type": "task", "title": "Take the first concrete step",
+                       "description": "", "priority": "normal", "due_date": None,
+                       "children": [],
+                   }]}
+        if target["type"] == "umbrella":
+            nodes = [{"type": "overgoal", "title": placement.get("root_title", "New life domain"),
+                      "description": placement.get("root_description", ""), "priority": "normal",
+                      "due_date": None, "children": [project]}]
+        else:
+            nodes = [project]
+        draft = {"rationale": suggestion, "nodes": nodes, "_placement": placement}
         return f"Plan: {suggestion}. Success means {success}.", draft
 
 
@@ -1278,9 +1980,30 @@ class ClaudeGoalPlanner:
     def _today() -> str:
         return datetime.now().astimezone().date().isoformat()
 
-    def first(self, suggestion: str, target: dict) -> tuple[str, dict]:
+    def place(self, suggestion: str, candidates: list[dict], soul: dict) -> dict:
+        prompt = (f"SOUL: {json.dumps(soul, ensure_ascii=False)}\n"
+                  f"PROPOSAL: {suggestion}\n"
+                  f"POSSIBLE EXISTING PARENTS: {json.dumps(candidates, ensure_ascii=False)}")
+        return self._call(PLACEMENT_SYSTEM, prompt)
+
+    def recommend_restructure(self, node: dict, candidates: list[dict], soul: dict) -> dict:
+        prompt = (f"SOUL: {json.dumps(soul, ensure_ascii=False)}\n"
+                  f"NODE TO REVIEW: {json.dumps(node, ensure_ascii=False)}\n"
+                  f"VALID POSSIBLE PARENTS: {json.dumps(candidates, ensure_ascii=False)}")
+        return self._call(RESTRUCTURE_SYSTEM, prompt)
+
+    def recommend_tree_restructure(self, review: dict, candidates: list[dict],
+                                   soul: dict) -> dict:
+        prompt = (f"SOUL: {json.dumps(soul, ensure_ascii=False)}\n"
+                  f"SELECTED PATH AND SUBTREE: {json.dumps(review, ensure_ascii=False)}\n"
+                  f"VALID DESTINATIONS: {json.dumps(candidates, ensure_ascii=False)}")
+        return self._call(TREE_RESTRUCTURE_SYSTEM, prompt)
+
+    def first(self, suggestion: str, target: dict,
+              placement: dict | None = None) -> tuple[str, dict]:
         data = self._call(PLANNER_SYSTEM,
                           f"TODAY: {self._today()}\nTARGET TYPE: {target['type']}\n"
+                          f"APPROVED PLACEMENT: {json.dumps(placement or {}, ensure_ascii=False)}\n"
                           f"SUGGESTION: {suggestion}")
         return str(data.get("message") or "What outcome do you want?"), data.get("draft") or {}
 
@@ -1307,8 +2030,282 @@ def get_goal_planner(config):
     return StubGoalPlanner() if backend == "stub" else ClaudeGoalPlanner(config)
 
 
+def recommend_suggestion_placement(config, planner, source_item_id: int,
+                                     *, max_candidates: int = 80) -> dict:
+    """Recommend a semantic owner before a suggestion can become a plan.
+
+    This deliberately remains separate from overlap detection: overlap asks
+    whether work already exists, while placement asks which enduring area owns
+    genuinely new work.
+    """
+    store = GoalStore(config.memory_db_path)
+    try:
+        row = store.conn.execute(
+            "SELECT kind,status,text FROM curiosity_item WHERE id=?",
+            (int(source_item_id),)).fetchone()
+        if not row or row["kind"] != "suggestion" or row["status"] != "open":
+            raise ValueError("only an open suggestion can be placed")
+        suggestion = crypto.dec(row["text"]) or ""
+        soul_node = store.get(store.root_id)
+        soul = {"id": store.root_id, "title": soul_node["title"],
+                "description": soul_node.get("description", "")}
+        candidates: list[dict] = []
+        for entry in store.catalog(max_candidates + 1):
+            if entry["type"] not in {"Root", "Branch"} or entry["status"] != "active":
+                continue
+            node = store.get(entry["id"])
+            candidates.append({
+                "id": int(entry["id"]), "node_type": node["type"],
+                "type_label": entry["type"], "title": entry["title"],
+                "path": entry["path"],
+                "description": str(node.get("description") or "")[:700],
+            })
+            if len(candidates) >= max_candidates:
+                break
+        raw = planner.place(suggestion, candidates, soul) or {}
+        candidate_by_id = {item["id"]: item for item in candidates}
+        try:
+            parent_id = int(raw.get("parent_id")) if raw.get("parent_id") is not None else None
+        except (TypeError, ValueError):
+            parent_id = None
+        if parent_id not in candidate_by_id:
+            parent_id = None
+        try:
+            confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        root_raw = raw.get("new_root") if isinstance(raw.get("new_root"), dict) else {}
+        root_title = " ".join(str(root_raw.get("title") or "").split())[:100]
+        root_description = str(root_raw.get("description") or "").strip()[:700]
+        root_eligible = bool(root_raw.get("eligible") and root_title and root_description)
+        plan_title = " ".join(str(raw.get("plan_title") or suggestion).split())[:90]
+        if not plan_title:
+            plan_title = "New plan"
+        recommended = candidate_by_id.get(parent_id)
+        if recommended:
+            proposed_path = f"{recommended['path']} › {plan_title}"
+        elif root_eligible:
+            proposed_path = f"{soul['title']} › {root_title} › {plan_title}"
+        else:
+            proposed_path = ""
+        # Low confidence is intentionally surfaced instead of silently falling
+        # back to the Soul, even if the model supplied a candidate id.
+        needs_choice = confidence < .72 or (recommended is None and not root_eligible)
+        ordered = sorted(candidates, key=lambda item: (
+            0 if item["id"] == parent_id else 1,
+            0 if item["type_label"] == "Branch" else 1,
+            item["path"].casefold()))
+        return {
+            "item_id": int(source_item_id), "suggestion": suggestion,
+            "plan_title": plan_title, "confidence": round(confidence, 3),
+            "rationale": str(raw.get("rationale") or "").strip(),
+            "question": str(raw.get("question") or "").strip()[:300],
+            "needs_choice": needs_choice, "recommended_parent_id": parent_id,
+            "recommended": recommended, "proposed_path": proposed_path,
+            "soul": soul,
+            "candidates": ordered,
+            "new_root": {
+                "eligible": root_eligible, "title": root_title,
+                "description": root_description,
+                "rationale": str(root_raw.get("rationale") or "").strip()[:500],
+                "path": (f"{soul['title']} › {root_title} › {plan_title}"
+                         if root_eligible else ""),
+            },
+        }
+    finally:
+        store.close()
+
+
+def recommend_goal_restructure(config, planner, goal_id: int,
+                               *, max_candidates: int = 80) -> dict:
+    store = GoalStore(config.memory_db_path)
+    try:
+        node = store.get(int(goal_id))
+        if not node or node["type"] == "umbrella" or node["status"] == "archived":
+            raise ValueError("an active Root, Branch, or Leaf is required")
+        subtree_ids = set(store._subtree_ids(int(goal_id)))
+        soul_node = store.get(store.root_id)
+        soul = {"id": store.root_id, "title": soul_node["title"],
+                "description": soul_node.get("description", "")}
+        candidates: list[dict] = [{
+            "id": store.root_id, "node_type": "umbrella", "type_label": "Soul",
+            "title": soul["title"], "path": soul["title"],
+            "description": soul["description"],
+        }]
+        for entry in store.catalog(max_candidates + len(subtree_ids) + 1):
+            if (entry["id"] in subtree_ids or entry["type"] not in {"Root", "Branch"}
+                    or entry["status"] != "active"):
+                continue
+            candidate = store.get(entry["id"])
+            candidates.append({
+                "id": int(entry["id"]), "node_type": candidate["type"],
+                "type_label": entry["type"], "title": entry["title"],
+                "path": entry["path"],
+                "description": str(candidate.get("description") or "")[:700],
+            })
+            if len(candidates) >= max_candidates:
+                break
+        children = [store.get(child_id) for child_id in [int(row["id"]) for row in store.conn.execute(
+            "SELECT id FROM goal_node WHERE parent_id=? AND status!='archived' ORDER BY position,id",
+            (int(goal_id),)).fetchall()]]
+        context = {
+            "id": int(goal_id), "type": node["type"], "title": node["title"],
+            "description": str(node.get("description") or "")[:1000],
+            "path": " › ".join(store._goal_path_titles(int(goal_id))),
+            "parent_id": node["parent_id"], "child_count": len(children),
+            "children": [{"type": child["type"], "title": child["title"],
+                          "description": str(child.get("description") or "")[:250]}
+                         for child in children[:12] if child],
+        }
+        raw = planner.recommend_restructure(context, candidates, soul) or {}
+        action = str(raw.get("action") or "uncertain").strip().lower()
+        if action not in {"keep", "restructure", "uncertain"}:
+            action = "uncertain"
+        try:
+            confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        recommendation = None
+        if action == "restructure":
+            try:
+                new_type = str(raw.get("new_type") or "")
+                parent_id = int(raw.get("parent_id"))
+                preview = store.restructure_preview(int(goal_id), new_type, parent_id)
+                recommendation = {
+                    "new_type": new_type, "parent_id": parent_id,
+                    "preview": preview,
+                }
+            except (TypeError, ValueError):
+                action = "uncertain"
+                recommendation = None
+        if action == "restructure" and confidence < .60:
+            action = "uncertain"
+        return {
+            "goal_id": int(goal_id), "action": action,
+            "confidence": round(confidence, 3),
+            "rationale": str(raw.get("rationale") or "").strip()[:700],
+            "question": str(raw.get("question") or "").strip()[:300],
+            "current": {"type": node["type"], "path": context["path"]},
+            "recommendation": recommendation,
+        }
+    finally:
+        store.close()
+
+
+def recommend_goal_tree_restructure(config, planner, goal_id: int,
+                                    *, max_nodes: int = 80) -> dict:
+    """Review the selected ancestor path and subtree as one bounded structure."""
+    store = GoalStore(config.memory_db_path)
+    try:
+        selected = store.get(int(goal_id))
+        if not selected or selected["type"] == "umbrella" or selected["status"] == "archived":
+            raise ValueError("an active Root, Branch, or Leaf is required")
+        soul_node = store.get(store.root_id)
+        soul = {"id": store.root_id, "title": soul_node["title"],
+                "description": soul_node.get("description", "")}
+        ancestor_ids: list[int] = []
+        current = selected
+        while current and current["type"] != "umbrella":
+            ancestor_ids.append(int(current["id"]))
+            current = store.get(int(current["parent_id"])) if current.get("parent_id") else None
+        ancestor_ids.reverse()
+        scope_root_id = next((node_id for node_id in ancestor_ids
+                              if store.get(node_id)["type"] == "overgoal"), ancestor_ids[0])
+        subtree_ids = store._subtree_ids(int(goal_id))
+        review_ids = list(dict.fromkeys([*ancestor_ids, *subtree_ids]))[:max_nodes]
+
+        tree = store.tree()
+        rendered: dict[int, dict] = {}
+        pending = [tree]
+        while pending:
+            node = pending.pop()
+            rendered[int(node["id"])] = node
+            pending.extend(reversed(node.get("children", [])))
+        review_nodes = []
+        for node_id in review_ids:
+            node = rendered.get(node_id) or store.get(node_id)
+            if not node:
+                continue
+            review_nodes.append({
+                "id": node_id, "type": node["type"], "parent_id": node["parent_id"],
+                "title": node["title"],
+                "description": str(node.get("description") or "")[:700],
+                "path": " › ".join(store._goal_path_titles(node_id)),
+                "semantic_role": node.get("semantic_role"),
+                "semantic_role_source": node.get("semantic_role_source", ""),
+                "child_ids": [int(child["id"]) for child in node.get("children", [])
+                              if child.get("status") != "archived"][:20],
+            })
+        candidates = [{"id": store.root_id, "node_type": "umbrella", "type_label": "Soul",
+                       "title": soul["title"], "path": soul["title"]}]
+        for entry in store.catalog(max_nodes + 20):
+            if entry["status"] != "active" or entry["type"] not in {"Root", "Branch"}:
+                continue
+            candidate = store.get(entry["id"])
+            candidates.append({"id": int(entry["id"]), "node_type": candidate["type"],
+                               "type_label": entry["type"], "title": entry["title"],
+                               "path": entry["path"],
+                               "description": str(candidate.get("description") or "")[:500]})
+        review = {"selected_id": int(goal_id), "scope_root_id": int(scope_root_id),
+                  "selected_path_ids": ancestor_ids, "nodes": review_nodes}
+        raw = planner.recommend_tree_restructure(review, candidates, soul) or {}
+        action = str(raw.get("action") or "uncertain").strip().lower()
+        if action not in {"keep", "restructure", "uncertain"}:
+            action = "uncertain"
+        try:
+            confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        structural, roles = [], []
+        allowed_goal_ids = set(review_ids)
+        allowed_parent_ids = {int(item["id"]) for item in candidates} | allowed_goal_ids
+        by_id = {int(item["id"]): item for item in review_nodes}
+        if action == "restructure":
+            for raw_node in list(raw.get("nodes") or [])[:16]:
+                try:
+                    node_id = int(raw_node.get("goal_id"))
+                    parent_id = int(raw_node.get("parent_id"))
+                except (TypeError, ValueError):
+                    continue
+                if node_id not in allowed_goal_ids or parent_id not in allowed_parent_ids:
+                    continue
+                current_node = by_id.get(node_id)
+                if not current_node:
+                    continue
+                new_type = str(raw_node.get("new_type") or current_node["type"]).strip().lower()
+                reason = str(raw_node.get("reason") or "")[:700]
+                if (new_type != current_node["type"] or
+                        parent_id != int(current_node.get("parent_id") or 0)):
+                    structural.append({"goal_id": node_id, "new_type": new_type,
+                                       "parent_id": parent_id, "reason": reason})
+                role = str(raw_node.get("semantic_role") or "").strip().lower()
+                if new_type == "subgoal" and role in {"area", "project", "stage"}:
+                    roles.append({"goal_id": node_id, "role": role, "reason": reason})
+            try:
+                preview = store.restructure_batch_preview(structural, roles)
+            except ValueError as error:
+                action, preview = "uncertain", None
+                raw["question"] = str(error)
+            if action == "restructure" and confidence < .60:
+                action = "uncertain"
+        else:
+            preview = None
+        return {
+            "goal_id": int(goal_id), "scope_id": int(scope_root_id), "action": action,
+            "confidence": round(confidence, 3),
+            "rationale": str(raw.get("rationale") or "")[:900],
+            "question": str(raw.get("question") or "")[:300],
+            "warnings": [str(value)[:300] for value in list(raw.get("warnings") or [])[:6]],
+            "recommendation": (None if not preview else {
+                "changes": structural, "role_updates": roles, "preview": preview}),
+        }
+    finally:
+        store.close()
+
+
 def start_planning(store: GoalStore, planner, source_item_id: int,
-                   target_parent_id: int | None = None) -> dict:
+                   target_parent_id: int | None = None,
+                   placement: dict | None = None) -> dict:
     row = store.conn.execute("SELECT * FROM curiosity_item WHERE id=?",
                              (int(source_item_id),)).fetchone()
     if not row:
@@ -1322,10 +2319,260 @@ def start_planning(store: GoalStore, planner, source_item_id: int,
             "WHERE l.curiosity_id=? AND g.node_type IN ('umbrella','overgoal','subgoal') "
             "AND g.status!='archived' ORDER BY g.id LIMIT 1",
             (row["curiosity_id"],)).fetchone()
-        target_parent_id = int(linked["id"]) if linked else store.root_id
+        if not linked:
+            raise ValueError("placement review is required before planning this suggestion")
+        target_parent_id = int(linked["id"])
     target = store.get(target_parent_id or store.root_id)
-    message, draft = planner.first(suggestion, target)
+    if not target or target["type"] not in {"umbrella", "overgoal", "subgoal"}:
+        raise ValueError("planning target must be an active Soul, Root, or Branch")
+    placement = dict(placement or {})
+    if target["type"] == "umbrella":
+        if (placement.get("mode") != "new_root" or
+                not placement.get("root_eligible") or
+                not str(placement.get("root_title") or "").strip() or
+                not str(placement.get("root_description") or "").strip()):
+            raise ValueError("a new Root requires an approved durable life-domain placement")
+    else:
+        placement.update({
+            "mode": "existing", "parent_id": int(target["id"]),
+            "parent_path": " › ".join(store._goal_path_titles(int(target["id"]))),
+        })
+    message, draft = planner.first(suggestion, target, placement)
+    draft = dict(draft or {})
+    draft["_placement"] = placement
     return store.start_plan(int(source_item_id), target["id"], message, draft)
+
+
+def suggestion_leaf_overlaps(config, source_item_id: int, *, limit: int = 5) -> dict:
+    """Find existing goal nodes that may already serve an Investigation suggestion.
+
+    The public name is retained for bridge compatibility. Provenance belongs only
+    to the node that was actually implemented from a suggestion; it must not be
+    inherited by every descendant, which would make unrelated Leaves tie.
+    """
+    from .inference import concept_similarity
+    store = GoalStore(config.memory_db_path)
+    try:
+        row = store.conn.execute(
+            "SELECT kind,status,text,curiosity_id FROM curiosity_item WHERE id=?",
+            (int(source_item_id),)).fetchone()
+        if not row or row["kind"] != "suggestion" or row["status"] != "open":
+            raise ValueError("only an open suggestion can be reviewed")
+        suggestion = crypto.dec(row["text"]) or ""
+        tables = {r["name"] for r in store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+
+        def count_rows(table: str, column: str, node_ids: list[int]) -> int:
+            if table not in tables:
+                return 0
+            placeholders = ",".join("?" for _ in node_ids)
+            return int(store.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} IN ({placeholders})",
+                node_ids).fetchone()[0])
+
+        matches = []
+        for entry in store.catalog(300):
+            if entry["type"] == "Soul" or entry["status"] in {"archived", "completed"}:
+                continue
+            node = store.get(entry["id"])
+            comparison = "\n".join(filter(None, [
+                node.get("title", ""), node.get("description", ""), node.get("notes", "")]))
+            leaf_score = concept_similarity(suggestion, comparison)
+
+            # A concise renamed node can look lexically different from the
+            # suggestion that created it, so include direct provenance. Do not
+            # borrow an ancestor's provenance: that was the source of every
+            # child in one plan appearing as the same 48% match.
+            origin_ids = {
+                int(r["id"]) for r in store.conn.execute(
+                    "SELECT id FROM curiosity_item WHERE implementation_goal_id=?",
+                    (int(node["id"]),))
+            }
+            for evidence in store.conn.execute(
+                    "SELECT source_id FROM goal_evidence_link WHERE goal_id=? "
+                    "AND source_kind='curiosity_suggestion'", (int(node["id"]),)):
+                try:
+                    origin_ids.add(int(evidence["source_id"]))
+                except (TypeError, ValueError):
+                    continue
+            origin_score = 0.0
+            origin_text = ""
+            if origin_ids:
+                origin_placeholders = ",".join("?" for _ in origin_ids)
+                for origin in store.conn.execute(
+                        f"SELECT id,text FROM curiosity_item WHERE id IN ({origin_placeholders})",
+                        sorted(origin_ids)):
+                    if int(origin["id"]) == int(source_item_id):
+                        continue
+                    text = crypto.dec(origin["text"]) or ""
+                    candidate_score = concept_similarity(suggestion, text)
+                    if candidate_score > origin_score:
+                        origin_score, origin_text = candidate_score, text
+            score = max(leaf_score, origin_score)
+            if score < .28:
+                continue
+            matched_via = "originating_suggestion" if origin_score > leaf_score else "leaf"
+            scope_ids, pending_ids = [int(node["id"])], [int(node["id"])]
+            while pending_ids:
+                placeholders = ",".join("?" for _ in pending_ids)
+                children = [int(r["id"]) for r in store.conn.execute(
+                    f"SELECT id FROM goal_node WHERE parent_id IN ({placeholders}) "
+                    "AND status!='archived'", pending_ids)]
+                scope_ids.extend(children)
+                pending_ids = children
+            history_counts = {
+                "coach_messages": count_rows("goal_step_coach_message", "node_id", scope_ids),
+                "coach_steps": count_rows("goal_step_coach_state", "node_id", scope_ids),
+                "outcomes": count_rows("experiment_outcome", "goal_id", scope_ids),
+                "evidence": count_rows("goal_evidence_link", "goal_id", scope_ids),
+                "children": len(scope_ids) - 1,
+            }
+            matches.append({
+                "goal_id": int(node["id"]), "title": node["title"],
+                "node_type": node["type"], "type_label": entry["type"],
+                "path": entry["path"], "description": node.get("description", ""),
+                "notes": node.get("notes", ""), "similarity": round(score, 3),
+                "leaf_similarity": round(leaf_score, 3),
+                "origin_similarity": round(origin_score, 3),
+                "matched_via": matched_via,
+                "origin_suggestion": origin_text if matched_via == "originating_suggestion" else "",
+                "history_counts": history_counts,
+                "overlap": "strong" if score >= .65 else ("possible" if score >= .42 else "light"),
+            })
+        matches.sort(key=lambda item: item["similarity"], reverse=True)
+        return {"item_id": int(source_item_id), "suggestion": suggestion,
+                "matches": matches[:max(1, min(8, int(limit)))]}
+    finally:
+        store.close()
+
+
+def propose_goal_restructure(config, goal_id: int, new_type: str, parent_id: int,
+                             position: int | None = None, rationale: str = "") -> dict:
+    """Stage an identity-preserving structural migration for explicit approval."""
+    from .goal_ai import AgentProposal, GoalAgentStore
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        preview = goals.restructure_preview(
+            int(goal_id), str(new_type), int(parent_id), position)
+        payload = {
+            "new_type": preview["proposed"]["type"],
+            "parent_id": preview["proposed"]["parent_id"],
+            "position": preview["proposed"]["position"],
+            "current": preview["current"], "proposed": preview["proposed"],
+            "retained_counts": preview["retained_counts"],
+            "node_id_preserved": True,
+        }
+        reason = str(rationale or "").strip() or (
+            f"Reclassify this {preview['current']['type_label']} as a "
+            f"{preview['proposed']['type_label']} and move it in place without losing history.")
+        proposal_id = agents.add_proposal(
+            int(goal_id), AgentProposal(
+                "restructure_node", int(goal_id), payload, reason))
+        if proposal_id is None:
+            raise ValueError("the same restructure proposal is already open or was dismissed")
+        return {"proposal_id": proposal_id, "preview": preview}
+    finally:
+        agents.close(); goals.close()
+
+
+def propose_goal_tree_restructure(config, scope_id: int, changes: list[dict],
+                                  role_updates: list[dict] | None = None,
+                                  rationale: str = "") -> dict:
+    """Stage one atomic, identity-preserving path normalization for approval."""
+    from .goal_ai import AgentProposal, GoalAgentStore
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        scope = goals.get(int(scope_id))
+        if not scope or scope["type"] not in {"overgoal", "subgoal", "task"}:
+            raise ValueError("active review scope not found")
+        preview = goals.restructure_batch_preview(list(changes or []), list(role_updates or []))
+        watched_ids = set(preview["affected_node_ids"])
+        for item in preview["structural_changes"]:
+            watched_ids.add(int(item["current"]["parent_id"]))
+            watched_ids.add(int(item["proposed"]["parent_id"]))
+        versions = {}
+        for node_id in sorted(value for value in watched_ids if value):
+            node = goals.get(node_id)
+            if node:
+                versions[str(node_id)] = node["updated_at"]
+        payload = {
+            "changes": [{"goal_id": item["goal_id"], "new_type": item["new_type"],
+                         "parent_id": item["parent_id"], "position": item["position"],
+                         "reason": item.get("reason", "")}
+                        for item in preview["structural_changes"]],
+            "role_updates": [{"goal_id": item["goal_id"],
+                              "role": item["proposed_role"],
+                              "reason": item.get("reason", "")}
+                             for item in preview["role_changes"]],
+            "preview": preview, "expected_versions": versions,
+            "node_ids_preserved": True,
+        }
+        reason = str(rationale or "").strip() or (
+            "Normalize this Growth path while preserving every node and its attached history.")
+        proposal_id = agents.add_proposal(
+            int(scope_id), AgentProposal("restructure_tree", int(scope_id), payload, reason))
+        if proposal_id is None:
+            raise ValueError("the same whole-tree restructure is already open or was dismissed")
+        return {"proposal_id": proposal_id, "preview": preview, "scope_id": int(scope_id)}
+    finally:
+        agents.close(); goals.close()
+
+
+def propose_suggestion_leaf_update(config, source_item_id: int, goal_id: int,
+                                   title: str, description: str) -> dict:
+    """Create a pending GoalAI update; never mutate the matched Leaf directly."""
+    from .goal_ai import AgentProposal, GoalAgentStore
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        row = goals.conn.execute(
+            "SELECT kind,status,text FROM curiosity_item WHERE id=?",
+            (int(source_item_id),)).fetchone()
+        node = goals.get(int(goal_id))
+        if not row or row["kind"] != "suggestion" or row["status"] != "open":
+            raise ValueError("only an open suggestion can update a Leaf")
+        if not node or node["type"] == "umbrella" or node["status"] == "archived":
+            raise ValueError("active Root, Branch, or Leaf not found")
+        title = " ".join(str(title or "").split())
+        description = str(description or "").strip()
+        if not title or not description:
+            raise ValueError("title and adapted direction are required")
+        suggestion = crypto.dec(row["text"]) or ""
+        # Re-clicking Adapt after editing must replace the prior draft for the
+        # same suggestion+node, not stack multiple open proposals.
+        replaced = 0
+        for pending in agents.conn.execute(
+                "SELECT id,payload_json FROM goal_agent_proposal WHERE target_node_id=? "
+                "AND proposal_type='update_fields' AND status='open'", (int(goal_id),)):
+            try:
+                pending_payload = json.loads(crypto.dec(pending["payload_json"]) or "{}")
+            except (TypeError, json.JSONDecodeError):
+                pending_payload = {}
+            if str(pending_payload.get("source_curiosity_item_id")) == str(source_item_id):
+                agents.conn.execute(
+                    "UPDATE goal_agent_proposal SET status='stale',resolved_at=? WHERE id=?",
+                    (_now(), int(pending["id"])))
+                replaced += 1
+        if replaced:
+            agents.conn.commit()
+        from .inference import concept_similarity
+        similarity = concept_similarity(
+            suggestion, "\n".join([node["title"], node.get("description", ""), node.get("notes", "")]))
+        proposal_id = agents.add_proposal(
+            int(goal_id), AgentProposal(
+                "update_fields", int(goal_id),
+                {"title": title, "description": description,
+                 "source_curiosity_item_id": int(source_item_id)},
+                f"Adapt this existing goal node in place from an Investigation suggestion "
+                f"instead of creating overlapping work ({similarity:.0%} overlap)."))
+        if proposal_id is None:
+            raise ValueError("the same Leaf update is already pending or was dismissed")
+        return {"proposal_id": proposal_id, "goal_id": int(goal_id),
+                "similarity": round(similarity, 3), "replaced_open_proposals": replaced}
+    finally:
+        agents.close(); goals.close()
 
 
 def continue_planning(store: GoalStore, planner, session_id: int, answer: str) -> dict:

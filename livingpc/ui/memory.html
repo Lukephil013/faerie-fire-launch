@@ -16,7 +16,15 @@
     background-position: center, center 28%;
     background-repeat: no-repeat, no-repeat;
     background-attachment: fixed, fixed;
-    color:var(--fg); overflow:hidden; }
+    color:var(--fg); overflow:hidden; user-select:text; }
+  button,select,option,summary { user-select:none; }
+  input,textarea,[contenteditable="true"] { user-select:text; }
+  .text-context-menu { position:fixed; z-index:10000; min-width:150px; padding:6px;
+    border:1px solid var(--line); border-radius:10px; background:#07150e;
+    box-shadow:0 12px 34px rgba(0,0,0,.58); display:grid; gap:2px; }
+  .text-context-menu button { width:100%; padding:7px 10px; border:0; box-shadow:none;
+    background:transparent; text-align:left; color:var(--fg); }
+  .text-context-menu button:hover { background:rgba(83,231,192,.12); color:var(--cyan); }
   ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background:#274a35; border-radius:4px; }
   ::-webkit-scrollbar-track { background:transparent; }
 
@@ -52,6 +60,195 @@
     50%  { transform:translate(var(--drift,12px), -52vh) scale(1); }
     92%  { opacity:.6; }
     100% { transform:translate(calc(var(--drift,12px) * 2), -108vh) scale(.6); opacity:0; }
+  }
+
+  /* Small code-native companion: crisp SVG shapes, no image/model dependency. */
+  #faerie-mascot { position:fixed; left:84px; bottom:61px; z-index:34; width:72px; height:78px;
+    padding:0; border:0; background:transparent; box-shadow:none; color:inherit;
+    display:grid; place-items:center; transform-origin:50% 100%; animation:mascot-float 3.8s ease-in-out infinite;
+    filter:drop-shadow(0 5px 8px rgba(0,0,0,.42)); transition:opacity .18s,transform .18s;
+    cursor:grab; touch-action:none; user-select:none; }
+  #faerie-mascot:hover { border:0; background:transparent; }
+  #faerie-mascot[data-state="idle"]:not(.dragging):hover {
+    animation:mascot-giggle-eight 1.05s ease-in-out infinite; }
+  #faerie-mascot.dragging { cursor:grabbing;
+    animation:mascot-giggle-eight 1.05s ease-in-out infinite; transition:none; }
+  #faerie-mascot:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; border-radius:18px; }
+  #faerie-mascot .mascot-facing { width:100%; height:100%; display:grid; place-items:center;
+    pointer-events:none; transform:scaleX(var(--mascot-facing,1)); transform-origin:center;
+    transition:transform .14s ease-out; }
+  #faerie-mascot svg { width:68px; height:68px; overflow:visible; image-rendering:pixelated;
+    shape-rendering:crispEdges; }
+  #faerie-mascot .dark-fae-skin { display:none; position:relative; width:88px; height:108px;
+    pointer-events:none; filter:drop-shadow(0 0 7px rgba(128,31,255,.6)); }
+  #faerie-mascot[data-skin="dark"] { width:94px; height:112px; }
+  #faerie-mascot[data-skin="dark"] .mascot-classic { display:none; }
+  #faerie-mascot[data-skin="dark"] .dark-fae-skin { display:block; }
+  .dark-fae-skin img,.dark-fae-wing-echo { position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; image-rendering:pixelated; }
+  .dark-fae-skin img { z-index:2; animation:dark-fae-breathe 3.2s ease-in-out infinite; }
+  .dark-fae-aura { position:absolute; z-index:0; left:17%; right:12%; bottom:3%; height:28%;
+    border-radius:50%; background:radial-gradient(ellipse,rgba(132,27,255,.58),rgba(74,0,151,.15) 58%,transparent 74%);
+    filter:blur(5px); animation:dark-fae-aura 2s ease-in-out infinite; }
+  .dark-fae-wing-echo { z-index:1; background:url('assets/dark-fae-mascot.png') center/contain no-repeat;
+    clip-path:polygon(0 3%,67% 3%,67% 65%,0 75%); opacity:.18; transform-origin:58% 38%;
+    animation:dark-fae-wings .72s ease-in-out infinite alternate; }
+  .dark-fae-flame { position:absolute; z-index:3; right:10%; top:5%; width:11px; height:14px;
+    border-radius:65% 35% 60% 40%; background:#bc63ff; box-shadow:0 0 5px #e6b7ff,0 0 12px #841dff;
+    mix-blend-mode:screen; transform:rotate(8deg); animation:dark-fae-flame .55s ease-in-out infinite alternate; }
+  .dark-fae-mote { position:absolute; z-index:4; width:3px; height:3px; border-radius:50%;
+    background:#d7a4ff; box-shadow:0 0 5px #8e2cff; opacity:.28; }
+  .dark-fae-mote.one { left:30%; top:18%; animation:dark-fae-mote 1.8s -.4s ease-out infinite; }
+  .dark-fae-mote.two { right:4%; top:31%; animation:dark-fae-mote 2.1s -1.1s ease-out infinite; }
+  .dark-fae-mote.three { left:17%; top:53%; animation:dark-fae-mote 1.6s -.8s ease-out infinite; }
+  #faerie-mascot[data-skin="dark"][data-state="thinking"] .dark-fae-flame { animation-duration:.18s; }
+  #faerie-mascot[data-skin="dark"][data-state="thinking"] .dark-fae-wing-echo { animation-duration:.28s; opacity:.3; }
+  #faerie-mascot[data-skin="dark"][data-state="reply"] .dark-fae-mote { opacity:1; animation-duration:.55s; }
+  #faerie-mascot[data-skin="dark"][data-state="error"] .dark-fae-flame { background:#ff5797; }
+  #faerie-mascot .cupid-cat-skin { display:none; position:relative; width:96px; height:90px;
+    pointer-events:none; filter:drop-shadow(0 3px 5px rgba(255,79,154,.38)); }
+  #faerie-mascot[data-skin="cat"] { width:102px; height:96px; }
+  #faerie-mascot[data-skin="cat"] .mascot-classic { display:none; }
+  #faerie-mascot[data-skin="cat"] .cupid-cat-skin { display:block; }
+  .cupid-cat-skin img { position:absolute; z-index:2; inset:0; width:100%; height:100%;
+    object-fit:contain; image-rendering:pixelated; animation:cupid-cat-breathe 2.4s ease-in-out infinite; }
+  .cupid-cat-aura { position:absolute; z-index:0; left:10%; right:8%; bottom:3%; height:31%;
+    border-radius:50%; background:radial-gradient(ellipse,rgba(255,98,176,.5),rgba(255,191,222,.12) 58%,transparent 74%);
+    filter:blur(4px); animation:cupid-cat-aura 1.8s ease-in-out infinite; }
+  .cupid-cat-heart { position:absolute; z-index:3; width:7px; height:7px; opacity:.25;
+    background:#ff70ae; transform:rotate(45deg); animation:cupid-cat-heart 1.55s ease-out infinite; }
+  .cupid-cat-heart::before,.cupid-cat-heart::after { content:""; position:absolute; width:7px; height:7px;
+    border-radius:50%; background:inherit; }
+  .cupid-cat-heart::before { left:-4px; }
+  .cupid-cat-heart::after { top:-4px; }
+  .cupid-cat-heart.one { left:12%; top:34%; animation-delay:-.3s; }
+  .cupid-cat-heart.two { right:8%; top:27%; animation-delay:-.9s; }
+  .cupid-cat-heart.three { right:23%; top:3%; animation-delay:-1.25s; }
+  #faerie-mascot[data-skin="cat"][data-state="thinking"] .cupid-cat-heart { animation-duration:.48s; }
+  #faerie-mascot[data-skin="cat"][data-state="thinking"] .cupid-cat-skin img { animation-duration:.65s; }
+  #faerie-mascot[data-skin="cat"][data-state="reply"] .cupid-cat-heart { opacity:1; animation-duration:.42s; }
+  #faerie-mascot[data-skin="cat"][data-state="error"] .cupid-cat-skin img { filter:hue-rotate(40deg) saturate(.75); }
+  #faerie-mascot .knight-cat-skin,#faerie-mascot .meditating-cat-skin { display:none; position:relative;
+    width:100px; height:100px; pointer-events:none; }
+  #faerie-mascot[data-skin="knight"],#faerie-mascot[data-skin="meditate"] { width:106px; height:104px; }
+  #faerie-mascot[data-skin="knight"] .mascot-classic,
+  #faerie-mascot[data-skin="meditate"] .mascot-classic { display:none; }
+  #faerie-mascot[data-skin="knight"] .knight-cat-skin,
+  #faerie-mascot[data-skin="meditate"] .meditating-cat-skin { display:block; }
+  .pixel-cat-img { position:absolute; z-index:2; inset:0; width:100%; height:100%; object-fit:contain;
+    image-rendering:pixelated; animation:pixel-cat-breathe 2.7s ease-in-out infinite; }
+  .pixel-cat-glow { position:absolute; z-index:0; left:12%; right:10%; bottom:4%; height:29%;
+    border-radius:50%; filter:blur(4px); animation:pixel-cat-glow 2s ease-in-out infinite; }
+  .knight-cat-skin .pixel-cat-glow { background:radial-gradient(ellipse,rgba(255,200,67,.5),rgba(224,65,36,.12) 58%,transparent 74%); }
+  .meditating-cat-skin .pixel-cat-glow { background:radial-gradient(ellipse,rgba(104,224,210,.42),rgba(255,130,169,.1) 58%,transparent 74%); }
+  .pixel-cat-particle { position:absolute; z-index:3; width:6px; height:6px; opacity:.24;
+    animation:pixel-cat-particle 1.8s ease-out infinite; }
+  .knight-cat-skin .pixel-cat-particle { background:#ffd956; clip-path:polygon(50% 0,61% 38%,100% 50%,61% 62%,50% 100%,39% 62%,0 50%,39% 38%); }
+  .meditating-cat-skin .pixel-cat-particle { border-radius:60% 0 60% 0; background:#72ddd2; transform:rotate(45deg); }
+  .pixel-cat-particle.one { left:10%; top:27%; animation-delay:-.35s; }
+  .pixel-cat-particle.two { right:7%; top:18%; animation-delay:-1.05s; }
+  .pixel-cat-particle.three { right:25%; top:1%; animation-delay:-1.42s; }
+  #faerie-mascot[data-skin="knight"][data-state="thinking"] .pixel-cat-img,
+  #faerie-mascot[data-skin="meditate"][data-state="thinking"] .pixel-cat-img { animation-duration:.62s; }
+  #faerie-mascot[data-skin="knight"][data-state="reply"] .pixel-cat-particle,
+  #faerie-mascot[data-skin="meditate"][data-state="reply"] .pixel-cat-particle { opacity:1; animation-duration:.44s; }
+  #faerie-mascot[data-skin="knight"][data-state="error"] .pixel-cat-img,
+  #faerie-mascot[data-skin="meditate"][data-state="error"] .pixel-cat-img { filter:saturate(.65) hue-rotate(18deg); }
+  #faerie-mascot .mascot-aura { fill:rgba(83,231,192,.1); animation:mascot-aura 2.8s ease-in-out infinite; }
+  #faerie-mascot .mascot-wing { fill:rgba(126,226,255,.55); stroke:#9df8ef; stroke-width:1.5;
+    transform-box:fill-box; }
+  #faerie-mascot .wing-left { transform-origin:100% 70%; animation:mascot-wing-left .72s ease-in-out infinite alternate; }
+  #faerie-mascot .wing-right { transform-origin:0 70%; animation:mascot-wing-right .72s ease-in-out infinite alternate; }
+  #faerie-mascot .mascot-body { fill:#315baa; stroke:#89a9ff; stroke-width:2; }
+  #faerie-mascot .mascot-head { fill:#183f70; stroke:#70f0d0; stroke-width:2; }
+  #faerie-mascot .mascot-cap { fill:#6f83ff; }
+  #faerie-mascot .mascot-hair { fill:#7d69cf; stroke:#a99cff; stroke-width:1; }
+  #faerie-mascot .mascot-bow { fill:#b48cff; stroke:#d5c5ff; stroke-width:.8; }
+  #faerie-mascot .mascot-skirt { fill:#566bc5; stroke:#9d9fff; stroke-width:1.2; }
+  #faerie-mascot .mascot-face { fill:#071d2b; }
+  #faerie-mascot .mascot-eye { fill:#72ffe0; transform-origin:center; animation:mascot-blink 6.4s steps(1,end) infinite; }
+  #faerie-mascot .mascot-lash { fill:none; stroke:#72ffe0; stroke-width:1;
+    stroke-linecap:round; }
+  #faerie-mascot .mascot-giggle-face { opacity:0; fill:none; stroke:#72ffe0;
+    stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  #faerie-mascot[data-state="idle"]:not(.dragging):hover .mascot-eye,
+  #faerie-mascot.dragging .mascot-eye { opacity:0; }
+  #faerie-mascot[data-state="idle"]:not(.dragging):hover .mascot-giggle-face,
+  #faerie-mascot.dragging .mascot-giggle-face { opacity:1; }
+  #faerie-mascot .mascot-heart { fill:#b6fff0; }
+  #faerie-mascot .mascot-spark { fill:#c9fff3; opacity:.25; transform-origin:center; }
+  #faerie-mascot .spark-one { animation:mascot-spark 2.4s ease-in-out infinite; }
+  #faerie-mascot .spark-two { animation:mascot-spark 2.4s 1.1s ease-in-out infinite; }
+  #faerie-mascot .mascot-giggle-drop { opacity:0; fill:#75ffe1; stroke:#c8fff5;
+    stroke-width:.7; transform-box:fill-box; transform-origin:center; }
+  #faerie-mascot[data-state="idle"]:not(.dragging):hover .mascot-giggle-drop,
+  #faerie-mascot.dragging .mascot-giggle-drop {
+    animation:mascot-giggle-spray .92s var(--giggle-delay,0s) ease-out infinite; }
+  #faerie-mascot[data-state="thinking"] { animation:mascot-thinking .55s ease-in-out infinite alternate; }
+  #faerie-mascot[data-state="thinking"] .mascot-wing { animation-duration:.22s; }
+  #faerie-mascot[data-state="thinking"] .mascot-aura { fill:rgba(83,231,192,.27); animation-duration:.7s; }
+  #faerie-mascot[data-state="reply"] { animation:mascot-reply .55s ease-out 2; }
+  #faerie-mascot[data-state="reply"] .mascot-spark { opacity:1; animation-duration:.55s; }
+  #faerie-mascot[data-state="error"] { animation:mascot-error .18s ease-in-out 4 alternate; }
+  body.mascot-disabled #faerie-mascot,
+  body:has(.planner-drawer.open) #faerie-mascot,
+  body:has(.inquiry-drawer.open) #faerie-mascot,
+  body:has(.onboard-overlay.open) #faerie-mascot,
+  body:has(.growth-map-overlay.open) #faerie-mascot { opacity:0; pointer-events:none; }
+  @keyframes mascot-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+  @keyframes mascot-aura { 0%,100%{opacity:.38;transform:scale(.9)} 50%{opacity:.8;transform:scale(1.05)} }
+  @keyframes mascot-wing-left { from{transform:rotate(-9deg) scaleX(.92)} to{transform:rotate(15deg) scaleX(1.05)} }
+  @keyframes mascot-wing-right { from{transform:rotate(9deg) scaleX(.92)} to{transform:rotate(-15deg) scaleX(1.05)} }
+  @keyframes mascot-blink { 0%,94%,100%{transform:scaleY(1)} 95%,97%{transform:scaleY(.12)} }
+  @keyframes mascot-spark { 0%,100%{opacity:.12;transform:scale(.55) rotate(0)} 50%{opacity:.9;transform:scale(1.1) rotate(45deg)} }
+  @keyframes mascot-giggle-eight {
+    0%,100%{transform:translate(0,0) rotate(0) scale(1.04)}
+    12.5%{transform:translate(3px,-3px) rotate(2deg) scale(1.06,1.03)}
+    25%{transform:translate(5px,0) rotate(3deg) scale(1.04,1.07)}
+    37.5%{transform:translate(3px,3px) rotate(1deg) scale(1.06,1.03)}
+    50%{transform:translate(0,0) rotate(0) scale(1.04)}
+    62.5%{transform:translate(-3px,-3px) rotate(-2deg) scale(1.06,1.03)}
+    75%{transform:translate(-5px,0) rotate(-3deg) scale(1.04,1.07)}
+    87.5%{transform:translate(-3px,3px) rotate(-1deg) scale(1.06,1.03)} }
+  @keyframes mascot-giggle-spray { 0%{opacity:0;transform:translate(0,7px) scale(.25) rotate(0)}
+    18%{opacity:1} 62%{opacity:.9}
+    100%{opacity:0;transform:translate(var(--giggle-x,0px),-20px) scale(1.05) rotate(95deg)} }
+  @keyframes mascot-thinking { from{transform:translateY(-2px) rotate(-2deg)} to{transform:translateY(-7px) rotate(2deg)} }
+  @keyframes mascot-reply { 0%{transform:translateY(0) scale(1)} 50%{transform:translateY(-11px) scale(1.08)} 100%{transform:translateY(0) scale(1)} }
+  @keyframes mascot-error { from{transform:rotate(-6deg)} to{transform:rotate(6deg)} }
+  @keyframes dark-fae-breathe { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-2px) scale(1.015)} }
+  @keyframes dark-fae-aura { 0%,100%{opacity:.48;transform:scale(.82)} 50%{opacity:.95;transform:scale(1.08)} }
+  @keyframes dark-fae-wings { from{transform:rotate(-2deg) scaleX(.97)} to{transform:rotate(3deg) scaleX(1.045)} }
+  @keyframes dark-fae-flame { from{transform:translateY(1px) rotate(2deg) scale(.86);opacity:.68}
+    to{transform:translateY(-2px) rotate(13deg) scale(1.12);opacity:1} }
+  @keyframes dark-fae-mote { 0%{opacity:0;transform:translate(0,5px) scale(.4)} 30%{opacity:.85}
+    100%{opacity:0;transform:translate(6px,-16px) scale(1.1)} }
+  @keyframes cupid-cat-breathe { 0%,100%{transform:translateY(0) scale(1)}
+    50%{transform:translateY(-2px) scale(1.025,1.01)} }
+  @keyframes cupid-cat-aura { 0%,100%{opacity:.45;transform:scale(.82)}
+    50%{opacity:.95;transform:scale(1.08)} }
+  @keyframes cupid-cat-heart { 0%{opacity:0;transform:translate(0,7px) rotate(45deg) scale(.35)}
+    28%{opacity:.9} 100%{opacity:0;transform:translate(5px,-17px) rotate(58deg) scale(1)} }
+  @keyframes pixel-cat-breathe { 0%,100%{transform:translateY(0) scale(1)}
+    50%{transform:translateY(-2px) scale(1.022,1.01)} }
+  @keyframes pixel-cat-glow { 0%,100%{opacity:.4;transform:scale(.82)}
+    50%{opacity:.92;transform:scale(1.08)} }
+  @keyframes pixel-cat-particle { 0%{opacity:0;transform:translate(0,7px) rotate(0) scale(.35)}
+    25%{opacity:.88} 100%{opacity:0;transform:translate(5px,-17px) rotate(90deg) scale(1)} }
+  @media(max-width:1080px){ #faerie-mascot { left:auto; right:14px; bottom:14px; width:54px; height:58px; }
+    #faerie-mascot svg { width:50px; height:50px; }
+    #faerie-mascot[data-skin="dark"] { width:66px; height:78px; }
+    #faerie-mascot .dark-fae-skin { width:62px; height:76px; }
+    #faerie-mascot[data-skin="cat"] { width:72px; height:68px; }
+    #faerie-mascot .cupid-cat-skin { width:68px; height:64px; }
+    #faerie-mascot[data-skin="knight"],#faerie-mascot[data-skin="meditate"] { width:76px; height:74px; }
+    #faerie-mascot .knight-cat-skin,#faerie-mascot .meditating-cat-skin { width:72px; height:72px; } }
+  @media(prefers-reduced-motion:reduce){
+    #faerie-mascot,#faerie-mascot * { animation:none !important; }
+    #faerie-mascot:hover { transform:none; }
+    #faerie-mascot[data-state="idle"]:not(.dragging):hover .mascot-giggle-drop,
+    #faerie-mascot.dragging .mascot-giggle-drop {
+      opacity:.85; transform:translateY(-5px); }
   }
 
   #app { position:relative; z-index:2; display:grid; grid-template-columns:176px minmax(0,1fr);
@@ -418,6 +615,11 @@
     letter-spacing:1.4px; text-transform:uppercase; margin-bottom:5px; }
   .soul-calibration-field textarea { width:100%; min-height:86px; }
   .soul-calibration-prompt { font-size:16px; font-weight:600; line-height:1.4; margin-bottom:10px; }
+  .soul-calibration-intro { margin:0 0 14px; padding:12px 14px; border:1px solid rgba(83,231,192,.28);
+    border-radius:12px; background:rgba(83,231,192,.055); }
+  .soul-calibration-intro b { display:block; color:var(--cyan); margin-bottom:5px; }
+  .soul-calibration-intro p { margin:0; color:var(--muted); font-size:12.5px; line-height:1.55; }
+  .soul-calibration-intro .actions { margin-top:9px; }
   .soul-cal-answer-hint { margin-top:5px; font-size:11px; }
   .soul-facts { margin-top:12px; padding-top:10px; border-top:1px solid var(--line2); }
   .soul-fact { padding:7px 0; border-bottom:1px solid rgba(112,214,158,.08);
@@ -576,6 +778,15 @@
     border:1px solid rgba(112,214,158,.14); border-radius:14px; padding:12px 13px; margin-bottom:12px; }
   .cur-item .cur-text { font-size:14px; line-height:1.45; margin-bottom:6px; font-weight:700; }
   .cur-conf { font-size:11px; color:var(--muted); }
+  .cur-overlap-review { margin-top:10px; padding:11px; border:1px solid var(--line2);
+    border-radius:11px; background:rgba(83,231,192,.045); }
+  .cur-overlap-match { margin-top:8px; padding:9px 10px; border:1px solid rgba(126,226,255,.2);
+    border-radius:9px; background:rgba(126,226,255,.045); }
+  .cur-overlap-score { color:var(--cyan); font-weight:750; }
+  .cur-overlap-path { color:var(--muted); font-size:10.5px; margin-top:2px; }
+  .cur-overlap-description { color:var(--muted); font-size:11.5px; margin-top:6px; white-space:pre-wrap; }
+  .cur-overlap-form { display:grid; gap:8px; margin-top:8px; }
+  .cur-overlap-form input,.cur-overlap-form textarea { width:100%; }
   .cur-loop-panel { border:1px solid rgba(83,231,192,.28); border-radius:12px;
     padding:13px 14px; margin:12px 0; background:linear-gradient(135deg,rgba(83,231,192,.08),rgba(5,18,11,.58)); }
   .cur-loop-panel pre { margin:8px 0 10px; white-space:pre-wrap; overflow-wrap:anywhere;
@@ -810,11 +1021,50 @@
   .outcome-form .actions { margin-top:12px; }
   .goal-definition-starter { margin-top:12px; }
   .goal-definition-starter .goal-focus-muted { margin:7px 0 10px; }
+  .goal-step-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; }
+  .goal-step-row > label { display:flex; gap:8px; align-items:flex-start; min-width:0; }
+  .goal-step-help { padding:5px 9px; font-size:10.5px; white-space:nowrap; }
+  .goal-step-help-all { margin-top:9px; }
+  .leaf-coach-drawer { width:min(520px,94vw); padding:0; overflow:hidden; }
+  .leaf-coach-drawer.open { display:flex; flex-direction:column; }
+  .leaf-coach-head { flex:0 0 auto; padding:16px 20px 12px; margin:0;
+    background:rgba(7,19,13,.98); border-bottom:1px solid var(--line); z-index:2; }
+  .leaf-coach-scroll { flex:1 1 auto; min-height:0; overflow-y:auto; padding:0 20px 20px; }
+  .leaf-coach-close { width:34px; height:34px; padding:0; margin-left:auto;
+    border-radius:50%; font-size:22px; line-height:1; display:grid; place-items:center; }
+  .leaf-coach-boundary { margin:8px 0 12px; padding:9px 10px; border:1px solid var(--line2);
+    border-radius:10px; color:var(--muted); font-size:11.5px; line-height:1.45; }
+  .leaf-coach-focus { color:var(--cyan); font-weight:700; margin-top:4px; }
+  .leaf-coach-messages { display:grid; gap:9px; margin:12px 0; }
+  .leaf-coach-message { padding:10px 12px; border-radius:12px; white-space:pre-wrap; line-height:1.5; }
+  .leaf-coach-message,.leaf-coach-boundary,.goal-focus-panel,.cur-item { user-select:text; cursor:text; }
+  .leaf-coach-message.user { background:rgba(126,226,255,.09); border:1px solid rgba(126,226,255,.2); }
+  .leaf-coach-message.assistant { background:rgba(83,231,192,.07); border:1px solid var(--line2); }
+  .leaf-coach-message.focus { padding:6px 10px; color:var(--cyan); font-size:11px;
+    border:1px dashed var(--line2); background:transparent; }
+  .leaf-coach-next { margin-top:8px; padding:8px 9px; border-left:2px solid var(--green);
+    background:rgba(83,231,192,.045); }
+  .leaf-coach-question { margin-top:8px; font-weight:650; }
+  .leaf-coach-completion { margin-top:10px; padding:10px; border:1px solid var(--green);
+    border-radius:10px; background:rgba(83,231,192,.08); }
+  .leaf-coach-completion .actions { margin-top:8px; }
+  .leaf-coach-revision { margin-top:10px; padding:10px; border:1px solid rgba(83,231,192,.42);
+    border-radius:10px; background:rgba(3,20,13,.72); }
+  .leaf-coach-revision-steps { width:100%; min-height:130px; margin-top:8px;
+    white-space:pre-wrap; resize:vertical; }
+  .leaf-coach-examples,.leaf-coach-shortcuts { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .leaf-coach-example,.leaf-coach-shortcut { padding:5px 8px; font-size:10.5px; text-align:left; }
+  .leaf-coach-error { border:1px solid #a63b62; color:#ff8fb4; border-radius:10px;
+    padding:9px 10px; margin:9px 0; }
+  #leaf-coach-input { width:100%; min-height:82px; }
   .goal-focus-mini { display:grid; gap:7px; margin:10px 0; }
   .goal-focus-leaf { display:flex; gap:8px; align-items:flex-start; padding:8px 9px;
     border:1px solid rgba(83,231,192,.12); border-radius:10px; background:rgba(83,231,192,.04);
     line-height:1.35; }
   .goal-focus-leaf input { margin-top:2px; }
+  .goal-order-chip { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px;
+    margin-right:7px; border:1px solid rgba(255,226,137,.8); border-radius:999px;
+    background:rgba(255,209,102,.18); color:#ffe289; font-size:11px; font-weight:900; vertical-align:middle; }
   .goal-focus-muted { color:var(--muted); font-size:12px; line-height:1.45; }
   .goal-question-card { border:1px solid rgba(83,231,192,.16); border-radius:12px;
     background:rgba(5,20,13,.54); padding:10px; margin:8px 0; }
@@ -836,6 +1086,13 @@
   .goal-ai-strip .strip-copy { color:var(--muted); line-height:1.4; flex:1; min-width:240px; }
   .goal-ai-strip b { color:var(--cyan); }
   .goal-ai-strip button { padding:7px 11px; }
+  .settings-choice { display:grid; gap:5px; width:100%; color:var(--muted); font-size:11px; }
+  .settings-choice select { width:100%; border:1px solid var(--line); border-radius:10px;
+    background:rgba(2,12,7,.72); color:var(--fg); padding:9px 10px; font:inherit; }
+  .settings-choice.mascot-choice { grid-template-columns:1fr auto; align-items:center; padding:9px 10px;
+    border:1px solid var(--line); border-radius:10px; color:var(--fg); font-size:12px;
+    background:rgba(2,12,7,.5); cursor:pointer; }
+  .settings-choice.mascot-choice input { width:18px; height:18px; accent-color:var(--green); }
   .growth-map-tree { position:relative; min-height:620px; border:1px solid var(--line);
     border-radius:18px; overflow:hidden; background:
       radial-gradient(circle at 50% 48%, rgba(47,227,160,.12), transparent 32%),
@@ -849,6 +1106,23 @@
     height:min(68vh,720px); min-height:620px; }
   .constellation-edge { stroke:rgba(133,255,216,.32); stroke-width:1.2; }
   .constellation-edge.selected { stroke:rgba(83,231,192,.78); stroke-width:2; }
+  .solar-orbit { display:none; fill:none; stroke:rgba(174,219,255,.18); stroke-width:1;
+    stroke-dasharray:3 7; vector-effect:non-scaling-stroke; }
+  .growth-map-tree.skin-solar { background:
+    radial-gradient(circle at 50% 48%, rgba(255,225,139,.13), transparent 24%),
+    radial-gradient(circle at 18% 16%, rgba(106,151,255,.08), transparent 25%),
+    rgba(0,5,15,.82); }
+  .growth-map-tree.skin-solar::before { background-size:53px 47px; opacity:.42; }
+  .skin-solar .solar-orbit { display:block; }
+  .skin-solar .constellation-edge { opacity:.2; stroke-dasharray:2 7; }
+  .skin-solar .constellation-edge.selected { opacity:.62; }
+  .skin-solar .constellation-node circle.core { stroke-width:1; }
+  .skin-solar .constellation-node.umbrella circle.core { fill:url(#solarSun); stroke:#fff3ad; }
+  .skin-solar .constellation-node.overgoal circle.core { fill:url(#solarPlanet); stroke:#bcecff; }
+  .skin-solar .constellation-node.subgoal circle.core { fill:url(#solarMoon); stroke:#e2d2ff; }
+  .skin-solar .constellation-node.task circle.core { fill:url(#solarSatellite); stroke:#c8ffdf; }
+  .skin-solar .constellation-node circle.planet-shine { display:block; fill:rgba(255,255,255,.72); stroke:none; }
+  .constellation-node circle.planet-shine { display:none; pointer-events:none; }
   .constellation-node { cursor:grab; outline:none; }
   .constellation-node.dragging-node { cursor:grabbing; }
   .constellation-node circle.core { fill:rgba(230,255,246,.9); stroke:rgba(83,231,192,.9); stroke-width:1.4; }
@@ -864,6 +1138,9 @@
   .constellation-node text { fill:rgba(227,255,242,.9); font-size:12px; font-weight:700;
     paint-order:stroke; stroke:rgba(1,9,5,.88); stroke-width:4px; stroke-linejoin:round; }
   .constellation-node.task text { font-size:10.5px; font-weight:600; fill:rgba(211,238,226,.78); }
+  .constellation-node .execution-order-badge circle { fill:#ffd166; stroke:#fff2b4; stroke-width:1; }
+  .constellation-node .execution-order-badge text { fill:#182015; font-size:8px; font-weight:900;
+    paint-order:normal; stroke:none; }
   .constellation-node.paused,.constellation-node.completed { opacity:.58; }
   .constellation-node.selected circle.glow { fill:rgba(47,227,160,.28); }
   .constellation-node.selected circle.core { fill:var(--cyan); stroke:white; stroke-width:2; }
@@ -1044,6 +1321,61 @@
   <span style="left:38%; width:2px; height:2px;  --drift:6px;   animation-duration:15s; animation-delay:-12s;"></span>
   <span style="left:70%; width:2px; height:2px;  --drift:-7px;  animation-duration:26s; animation-delay:-5s;"></span>
 </div>
+<button id="faerie-mascot" type="button" data-state="idle" data-skin="classic" aria-label="Open Faerie chat" title="Open Faerie chat">
+ <span class="mascot-facing">
+  <svg class="mascot-classic" viewBox="0 0 80 80" aria-hidden="true" focusable="false">
+    <circle class="mascot-aura" cx="40" cy="42" r="31"></circle>
+    <g class="mascot-wing wing-left"><path d="M29 35 L12 23 L9 40 L25 48 Z"></path><path d="M26 45 L12 45 L18 59 L32 52 Z"></path></g>
+    <g class="mascot-wing wing-right"><path d="M51 35 L68 23 L71 40 L55 48 Z"></path><path d="M54 45 L68 45 L62 59 L48 52 Z"></path></g>
+    <rect class="mascot-body" x="29" y="48" width="22" height="19" rx="5"></rect>
+    <rect class="mascot-body" x="27" y="53" width="6" height="12" rx="2"></rect>
+    <rect class="mascot-body" x="47" y="53" width="6" height="12" rx="2"></rect>
+    <rect class="mascot-body" x="31" y="64" width="7" height="8" rx="2"></rect>
+    <rect class="mascot-body" x="42" y="64" width="7" height="8" rx="2"></rect>
+    <path class="mascot-skirt" d="M29 56 L51 56 L55 67 L25 67 Z"></path>
+    <rect class="mascot-head" x="20" y="19" width="40" height="34" rx="8"></rect>
+    <path class="mascot-hair" d="M21 25 L28 22 L30 29 L27 48 L21 45 Z M59 25 L52 22 L50 29 L53 48 L59 45 Z"></path>
+    <path class="mascot-cap" d="M21 27 L21 19 L27 19 L27 14 L34 14 L34 11 L48 11 L48 14 L55 14 L55 19 L60 19 L60 28 L55 25 L26 25 Z"></path>
+    <path class="mascot-bow" d="M52 14 L57 11 L60 15 L57 19 L52 16 L49 19 L47 15 L49 12 Z"></path>
+    <rect class="mascot-face" x="25" y="28" width="30" height="18" rx="4"></rect>
+    <rect class="mascot-eye" x="31" y="34" width="4" height="5" rx="1"></rect>
+    <rect class="mascot-eye" x="45" y="34" width="4" height="5" rx="1"></rect>
+    <path class="mascot-lash" d="M31 34 L29 32 M35 34 L37 32 M45 34 L43 32 M49 34 L51 32"></path>
+    <path class="mascot-giggle-face" d="M29 37 Q33 33 37 37 M43 37 Q47 33 51 37 M36 40 Q40 45 44 40"></path>
+    <path class="mascot-heart" d="M37 55 L40 58 L43 55 L45 57 L40 63 L35 57 Z"></path>
+    <path class="mascot-spark spark-one" d="M65 11 L67 15 L71 17 L67 19 L65 23 L63 19 L59 17 L63 15 Z"></path>
+    <path class="mascot-spark spark-two" d="M12 12 L13.5 15 L17 16.5 L13.5 18 L12 21 L10.5 18 L7 16.5 L10.5 15 Z"></path>
+    <g class="mascot-giggle-spray" aria-hidden="true">
+      <path class="mascot-giggle-drop" style="--giggle-x:-8px;--giggle-delay:-.12s" d="M31 12 L34 7 L37 12 L34 15 Z"></path>
+      <circle class="mascot-giggle-drop" style="--giggle-x:4px;--giggle-delay:-.48s" cx="40" cy="9" r="2.2"></circle>
+      <path class="mascot-giggle-drop" style="--giggle-x:9px;--giggle-delay:-.72s" d="M46 12 L48 8 L50 12 L48 15 Z"></path>
+      <circle class="mascot-giggle-drop" style="--giggle-x:-3px;--giggle-delay:-.84s" cx="37" cy="13" r="1.5"></circle>
+    </g>
+  </svg>
+  <span class="dark-fae-skin" aria-hidden="true">
+    <span class="dark-fae-aura"></span>
+    <span class="dark-fae-wing-echo"></span>
+    <img src="assets/dark-fae-mascot.png" alt="" draggable="false">
+    <span class="dark-fae-flame"></span>
+    <span class="dark-fae-mote one"></span><span class="dark-fae-mote two"></span><span class="dark-fae-mote three"></span>
+  </span>
+  <span class="cupid-cat-skin" aria-hidden="true">
+    <span class="cupid-cat-aura"></span>
+    <img src="assets/cupid-cat-mascot.png" alt="" draggable="false">
+    <span class="cupid-cat-heart one"></span><span class="cupid-cat-heart two"></span><span class="cupid-cat-heart three"></span>
+  </span>
+  <span class="knight-cat-skin" aria-hidden="true">
+    <span class="pixel-cat-glow"></span>
+    <img class="pixel-cat-img" src="assets/knight-cat-mascot.png" alt="" draggable="false">
+    <span class="pixel-cat-particle one"></span><span class="pixel-cat-particle two"></span><span class="pixel-cat-particle three"></span>
+  </span>
+  <span class="meditating-cat-skin" aria-hidden="true">
+    <span class="pixel-cat-glow"></span>
+    <img class="pixel-cat-img" src="assets/meditating-cat-mascot.png" alt="" draggable="false">
+    <span class="pixel-cat-particle one"></span><span class="pixel-cat-particle two"></span><span class="pixel-cat-particle three"></span>
+  </span>
+ </span>
+</button>
 <div class="onboard-overlay" id="onboard-overlay" aria-hidden="true">
   <div class="onboard-shell">
     <div class="onboard-dots" id="onboard-dots">
@@ -1135,6 +1467,24 @@
       <button id="settings-open-calibration">Soul Calibration<span id="settings-cal-status" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
       <button id="settings-change-key">Change API Key</button>
       <button id="settings-language">Language · 언어<span id="settings-language-line" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
+      <label class="settings-choice" for="settings-growth-skin">Growth map style
+        <select id="settings-growth-skin">
+          <option value="tree">Living tree</option>
+          <option value="solar">Solar system</option>
+        </select>
+      </label>
+      <label class="settings-choice mascot-choice" for="settings-mascot-enabled"><span>Show Faerie mascot</span>
+        <input type="checkbox" id="settings-mascot-enabled" checked>
+      </label>
+      <label class="settings-choice" for="settings-mascot-skin">Faerie style
+        <select id="settings-mascot-skin">
+          <option value="classic">Pixel Faerie</option>
+          <option value="dark">Dark flame faerie</option>
+          <option value="cat">Cupid flower cat</option>
+          <option value="knight">Knight star cat</option>
+          <option value="meditate">Meditating lotus cat</option>
+        </select>
+      </label>
       <button id="settings-usage">API Usage · 사용량<span id="settings-usage-line" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
       <button id="settings-daily-report">Today's Report</button>
       <button id="settings-full-report">Full Report</button>
@@ -1303,6 +1653,7 @@
 
   <div class="view" id="view-curiosity">
     <div id="cur-candidates"></div>
+    <div id="cur-related"></div>
     <div id="cur-list"></div>
     <div id="cur-switcher"></div>
   </div>
@@ -1315,7 +1666,7 @@
         <div class="growth-map-stage">
           <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
           <div class="constellation-legend">
-            <span>✦ Soul</span><span>◆ Root</span><span>◇ Branch</span><span>✓ Leaf</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+            <span>✦ Soul</span><span>◆ Root</span><span>◇ Area / Project / Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
           </div>
         </div>
         <aside class="goal-pane goal-focus-panel" id="goal-focus-panel">
@@ -1351,7 +1702,7 @@
       <div id="growth-map-summary" class="growth-map-summary"></div>
       <div id="growth-map-tree" class="growth-map-tree" aria-label="Living constellation map"></div>
       <div class="constellation-legend">
-        <span>✦ Soul</span><span>◆ Root</span><span>◇ Branch</span><span>✓ Leaf</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+        <span>✦ Soul</span><span>◆ Root</span><span>◇ Area / Project / Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
       </div>
     </div>
   </div>
@@ -1383,6 +1734,24 @@
     <div id="agent-chat-messages"></div>
     <textarea id="agent-chat-input" rows="4" placeholder="Ask about this goal…"></textarea>
     <div class="actions"><button class="accent" id="agent-chat-send">Send</button></div>
+  </aside>
+
+  <aside class="planner-drawer leaf-coach-drawer" id="leaf-step-coach">
+    <div class="cur-head leaf-coach-head"><span class="cur-label" id="leaf-coach-title">Leaf Coach</span>
+      <button class="leaf-coach-close" id="leaf-coach-close" aria-label="Close Leaf Coach" title="Close Leaf Coach">×</button></div>
+    <div class="leaf-coach-scroll">
+    <div class="leaf-coach-boundary" id="leaf-coach-boundary"></div>
+    <div class="leaf-coach-error" id="leaf-coach-error" hidden></div>
+    <div class="leaf-coach-messages" id="leaf-coach-messages"></div>
+    <div class="leaf-coach-shortcuts">
+      <button class="leaf-coach-shortcut" data-coach-shortcut="example">Show me an example</button>
+      <button class="leaf-coach-shortcut" data-coach-shortcut="smaller">Make this smaller</button>
+      <button class="leaf-coach-shortcut" data-coach-shortcut="stuck">I'm stuck</button>
+    </div>
+    <textarea id="leaf-coach-input" rows="4" placeholder="Ask about this step…"></textarea>
+    <div class="actions"><button class="skip" id="leaf-coach-clear">Start over</button>
+      <button class="accent" id="leaf-coach-send" style="margin-left:auto">Send</button></div>
+    </div>
   </aside>
 
   <div class="view" id="view-memory">
@@ -1503,6 +1872,18 @@ const KO_UI_TEXT = Object.freeze({
   'Close':'닫기',
   'Edit Soul':'Soul 편집',
   'Soul Calibration':'Soul 조율',
+  'Growth map style':'성장 지도 스타일',
+  'Living tree':'생명 나무',
+  'Solar system':'태양계',
+  'Show Faerie mascot':'페어리 마스코트 표시',
+  'Faerie style':'페어리 스타일',
+  'Pixel Faerie':'픽셀 페어리',
+  'Dark flame faerie':'어둠의 불꽃 페어리',
+  'Cupid flower cat':'큐피드 꽃 고양이',
+  'Knight star cat':'별의 기사 고양이',
+  'Meditating lotus cat':'명상하는 연꽃 고양이',
+  'Open Faerie chat':'페어리 채팅 열기',
+  'Close Leaf Coach':'Leaf 코치 닫기',
   'Open Timeline':'타임라인 열기',
   'Open Import':'가져오기 열기',
   'Database rescue':'데이터베이스 복구',
@@ -1666,6 +2047,17 @@ const KO_UI_TEXT = Object.freeze({
   'Address these leaves next':'다음으로 다룰 Leaf',
   'Show full original note':'원본 메모 전체 보기',
   'Ask Faerie about this node':'이 노드에 대해 페어리에게 묻기',
+  'Leaf Coach':'Leaf 코치',
+  'Get help with these steps':'이 단계들 도움받기',
+  'Help':'도움',
+  'Show me an example':'예시를 보여주세요',
+  'Make this smaller':'더 작게 나눠주세요',
+  "I'm stuck":'막혔어요',
+  'Ask about this step…':'이 단계에 대해 물어보세요…',
+  'Start over':'처음부터 다시',
+  'Retry':'다시 시도',
+  'Next action':'다음 행동',
+  'Try one of these':'이 중 하나를 사용해보세요',
   'What does GoalAI think right now?':'GoalAI는 지금 어떻게 보고 있나요?',
   'No assessment yet.':'아직 평가가 없어요.',
   'Soul':'소울',
@@ -1673,7 +2065,9 @@ const KO_UI_TEXT = Object.freeze({
   'Branch':'가지',
   'Leaf':'잎',
   'gold halo = needs care':'금색 후광 = 돌봄 필요',
+  '◇ Area / Project / Stage':'◇ 영역 / 프로젝트 / 단계',
   '★ gold ring = greatest curiosity':'★ 금색 고리 = 가장 큰 호기심',
+  '① = recommended execution order':'① = 추천 실행 순서',
 
   // --- added: full sweep ---
   'Command Center chat':'커맨드 센터 채팅',
@@ -2449,6 +2843,136 @@ function enableKoreanUI(){
 let GATE = 0.8, showHist = false, memData = [], toastTimer = null;
 let appProfile = 'personal', initialView = 'self', appBootstrapped = false;
 let commandAttachments = [], commandChatState = null;
+let growthMapSkin=(function(){
+  try{ return localStorage.getItem('ffGrowthMapSkin')==='solar'?'solar':'tree'; }
+  catch(e){ return 'tree'; }
+})();
+let faerieMascotEnabled=(function(){
+  try{ return localStorage.getItem('ffFaerieMascotEnabled')!=='0'; }
+  catch(e){ return true; }
+})();
+let faerieMascotSkin=(function(){
+  try{
+    const saved=localStorage.getItem('ffFaerieMascotSkin');
+    return ['classic','dark','cat','knight','meditate'].includes(saved)?saved:'classic';
+  }
+  catch(e){ return 'classic'; }
+})();
+let faerieMascotTimer=null;
+let faerieMascotPosition=(function(){
+  try{
+    const saved=JSON.parse(localStorage.getItem('ffFaerieMascotPosition')||'null');
+    return saved&&Number.isFinite(saved.x)&&Number.isFinite(saved.y)?saved:null;
+  }catch(e){ return null; }
+})();
+let faerieMascotSuppressClick=false;
+
+function persistDurableUiPreference(key,value){
+  if(!api()||!pywebview.api.ui_preference_set) return Promise.resolve(false);
+  return pywebview.api.ui_preference_set(key,value).then(result=>!!(result&&result.ok)).catch(()=>false);
+}
+
+function setFaerieMascotState(state,duration){
+  const mascot=$('faerie-mascot');
+  if(!mascot) return;
+  if(faerieMascotTimer){ clearTimeout(faerieMascotTimer); faerieMascotTimer=null; }
+  mascot.dataset.state=['idle','thinking','reply','error'].includes(state)?state:'idle';
+  if(duration&&state!=='idle') faerieMascotTimer=setTimeout(()=>{
+    mascot.dataset.state='idle'; faerieMascotTimer=null;
+  },duration);
+}
+function refreshFaerieMascotSetting(){
+  const toggle=$('settings-mascot-enabled');
+  if(toggle) toggle.checked=faerieMascotEnabled;
+  const skin=$('settings-mascot-skin');
+  if(skin) skin.value=faerieMascotSkin;
+  const mascot=$('faerie-mascot');
+  if(mascot) mascot.dataset.skin=faerieMascotSkin;
+  document.body.classList.toggle('mascot-disabled',!faerieMascotEnabled);
+  if(!faerieMascotEnabled) setFaerieMascotState('idle');
+}
+function setFaerieMascotEnabled(enabled){
+  faerieMascotEnabled=!!enabled;
+  try{ localStorage.setItem('ffFaerieMascotEnabled',faerieMascotEnabled?'1':'0'); }catch(e){}
+  refreshFaerieMascotSetting();
+}
+function setFaerieMascotSkin(skin){
+  faerieMascotSkin=['classic','dark','cat','knight','meditate'].includes(skin)?skin:'classic';
+  try{ localStorage.setItem('ffFaerieMascotSkin',faerieMascotSkin); }catch(e){}
+  persistDurableUiPreference('mascot_skin',faerieMascotSkin);
+  refreshFaerieMascotSetting();
+  requestAnimationFrame(applyFaerieMascotPosition);
+}
+function updateFaerieMascotFacing(targetX){
+  const mascot=$('faerie-mascot');
+  if(!mascot) return;
+  const rect=mascot.getBoundingClientRect();
+  const target=Number.isFinite(targetX)?targetX:window.innerWidth/2;
+  // The image skins use their reference's left-facing orientation as the
+  // baseline. Mirror the whole visual when the point of interest is right.
+  const facesLeft=target<(rect.left+rect.width/2);
+  mascot.style.setProperty('--mascot-facing',facesLeft?'1':'-1');
+  mascot.dataset.facing=facesLeft?'left':'right';
+}
+function applyFaerieMascotPosition(){
+  const mascot=$('faerie-mascot');
+  if(!mascot) return;
+  if(!faerieMascotPosition){ updateFaerieMascotFacing(window.innerWidth/2); return; }
+  const width=mascot.offsetWidth||72, height=mascot.offsetHeight||78, margin=6;
+  const roomX=Math.max(0,window.innerWidth-width-margin*2);
+  const roomY=Math.max(0,window.innerHeight-height-margin*2);
+  mascot.style.left=(margin+Math.max(0,Math.min(1,faerieMascotPosition.x))*roomX)+'px';
+  mascot.style.top=(margin+Math.max(0,Math.min(1,faerieMascotPosition.y))*roomY)+'px';
+  mascot.style.right='auto'; mascot.style.bottom='auto';
+  updateFaerieMascotFacing(window.innerWidth/2);
+}
+function bindFaerieMascotDrag(){
+  const mascot=$('faerie-mascot');
+  if(!mascot) return;
+  let drag=null;
+  mascot.addEventListener('pointerdown',event=>{
+    if(event.button!==0) return;
+    const rect=mascot.getBoundingClientRect();
+    drag={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+      left:rect.left,top:rect.top,moved:false};
+    mascot.setPointerCapture(event.pointerId);
+    mascot.classList.add('dragging');
+    event.preventDefault();
+  });
+  mascot.addEventListener('pointermove',event=>{
+    if(!drag||event.pointerId!==drag.pointerId) return;
+    const dx=event.clientX-drag.startX, dy=event.clientY-drag.startY;
+    if(!drag.moved&&Math.hypot(dx,dy)<5) return;
+    drag.moved=true;
+    const margin=6, maxLeft=Math.max(margin,window.innerWidth-mascot.offsetWidth-margin);
+    const maxTop=Math.max(margin,window.innerHeight-mascot.offsetHeight-margin);
+    mascot.style.left=Math.max(margin,Math.min(maxLeft,drag.left+dx))+'px';
+    mascot.style.top=Math.max(margin,Math.min(maxTop,drag.top+dy))+'px';
+    mascot.style.right='auto'; mascot.style.bottom='auto';
+    updateFaerieMascotFacing(window.innerWidth/2);
+  });
+  const finish=event=>{
+    if(!drag||event.pointerId!==drag.pointerId) return;
+    const moved=drag.moved; drag=null; mascot.classList.remove('dragging');
+    if(mascot.hasPointerCapture(event.pointerId)) mascot.releasePointerCapture(event.pointerId);
+    if(!moved) return;
+    const margin=6, left=parseFloat(mascot.style.left), top=parseFloat(mascot.style.top);
+    const roomX=Math.max(1,window.innerWidth-mascot.offsetWidth-margin*2);
+    const roomY=Math.max(1,window.innerHeight-mascot.offsetHeight-margin*2);
+    faerieMascotPosition={x:(left-margin)/roomX,y:(top-margin)/roomY};
+    try{ localStorage.setItem('ffFaerieMascotPosition',JSON.stringify(faerieMascotPosition)); }catch(e){}
+    faerieMascotSuppressClick=true;
+    updateFaerieMascotFacing(window.innerWidth/2);
+    setTimeout(()=>{ faerieMascotSuppressClick=false; },0);
+  };
+  mascot.addEventListener('pointerup',finish);
+  mascot.addEventListener('pointercancel',finish);
+  window.addEventListener('pointermove',event=>{
+    if(!mascot.classList.contains('dragging')) updateFaerieMascotFacing(event.clientX);
+  },{passive:true});
+  window.addEventListener('resize',applyFaerieMascotPosition);
+  applyFaerieMascotPosition();
+}
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ const d=document.createElement('div'); d.textContent=String(s==null?'':s); return d.innerHTML; }
@@ -2766,7 +3290,29 @@ if($('settings-cog')) $('settings-cog').onclick=()=>{
   refreshSettingsCalibrationLabel();
   refreshSettingsLanguageLabel();
   refreshSettingsUsageLine();
+  refreshGrowthMapSkinSetting();
+  refreshFaerieMascotSetting();
 };
+function refreshGrowthMapSkinSetting(){
+  const select=$('settings-growth-skin');
+  if(select) select.value=growthMapSkin;
+}
+function setGrowthMapSkin(skin){
+  growthMapSkin=skin==='solar'?'solar':'tree';
+  try{ localStorage.setItem('ffGrowthMapSkin',growthMapSkin); }catch(e){}
+  document.querySelectorAll('.growth-map-tree').forEach(box=>
+    box.classList.toggle('skin-solar',growthMapSkin==='solar'));
+  if(goalState){
+    renderGrowthViewMode();
+    if($('growth-map-overlay')&&$('growth-map-overlay').classList.contains('open')) renderGrowthMap();
+  }
+}
+if($('settings-growth-skin')) $('settings-growth-skin').onchange=e=>setGrowthMapSkin(e.target.value);
+refreshGrowthMapSkinSetting();
+if($('settings-mascot-enabled')) $('settings-mascot-enabled').onchange=e=>
+  setFaerieMascotEnabled(e.target.checked);
+if($('settings-mascot-skin')) $('settings-mascot-skin').onchange=e=>setFaerieMascotSkin(e.target.value);
+refreshFaerieMascotSetting();
 function refreshSettingsLanguageLabel(){
   const span=$('settings-language-line'); if(!span) return;
   span.textContent=(APP_LANG==='ko')
@@ -2900,6 +3446,12 @@ function bindSoulCalDrawer(){
   }
   const saveBtn=$('soul-cal-save'); if(saveBtn) saveBtn.onclick=()=>submitSoulCalField(false);
   const skipBtn=$('soul-cal-skip'); if(skipBtn) skipBtn.onclick=()=>submitSoulCalField(true);
+  const chatBtn=$('soul-cal-chat');
+  if(chatBtn) chatBtn.onclick=()=>{
+    closeSoulCalDrawer();
+    activateView('self');
+    setTimeout(()=>{ const input=$('cc-chat-input'); if(input) input.focus(); },80);
+  };
   document.querySelectorAll('#soul-cal-body .calibration-row[data-cal-key]').forEach(row=>{
     row.onclick=()=>{
       soulCalSelectedKey=row.dataset.calKey;
@@ -2945,8 +3497,12 @@ function renderSoulCalDrawer(){
       'You can revisit or change any answer anytime: reopen this from Settings → Soul Calibration, or '+
       'just click a question below to edit it.</div></div>';
   }
-  body.innerHTML=formHtml+'<div class="soul-facts">'+
+  const intro=APP_LANG==='ko'
+    ?'<div class="soul-calibration-intro"><b>이 질문들은 모두 선택 사항이에요.</b><p>이 과정은 AI가 당신을 더 빨리 이해하도록 맥락을 제공하는 지름길일 뿐이에요. 완전하지 않거나 막연한 답도 괜찮고, 일부 또는 모든 질문에 답하지 않아도 괜찮아요. 바로 챗봇과 대화를 시작하면 대화 속에서 자연스럽게 필요한 질문을 만들고 결국 같은 이해에 도달해요. 지금 아는 만큼 답하면 페어리가 더 빨리 도움을 시작할 수 있을 뿐, 어느 쪽이든 괜찮아요.</p><div class="actions"><button type="button" id="soul-cal-chat">대신 챗봇과 대화하기</button></div></div>'
+    :'<div class="soul-calibration-intro"><b>Every question here is optional.</b><p>This is simply a shortcut for giving the AI useful context. Partial, vague, or uncertain answers are welcome, and you can answer some questions or none at all. You can go straight to the chatbot: it will naturally develop questions from your conversations and reach the same understanding over time. Answering what you can just helps Faerie start helping you sooner. Either path is fine.</p><div class="actions"><button type="button" id="soul-cal-chat">Talk to the chatbot instead</button></div></div>';
+  body.innerHTML=intro+formHtml+'<div class="soul-facts">'+
     soulCalChecklistHtml(state, active?(active.section+'::'+active.attribute):null)+'</div>';
+  bindCollapsePrefs(body);
   bindSoulCalDrawer();
   const backBtn=$('soul-cal-back');
   if(backBtn) backBtn.onclick=()=>{ soulCalSelectedKey=null; renderSoulCalDrawer(); };
@@ -3104,6 +3660,12 @@ document.addEventListener('click',e=>{
 function switchView(name){
   activateView(name);
 }
+bindFaerieMascotDrag();
+if($('faerie-mascot')) $('faerie-mascot').onclick=()=>{
+  if(faerieMascotSuppressClick) return;
+  switchView('self');
+  setTimeout(()=>{ const input=$('cc-input'); if(input) input.focus(); },80);
+};
 
 function refreshActiveView(){
   const active=document.querySelector('.view.active');
@@ -3195,9 +3757,11 @@ function approvePendingProposal(){
       {role:'user',content:approvalWord}
     ])});
   $('cc-status').innerHTML='<span class="spin"></span>Thinking…';
+  setFaerieMascotState('thinking');
   pywebview.api.command_send(approvalWord, []).then(r=>{
     $('cc-status').textContent='';
-    if(!r||r.ok===false){ toast((r&&r.message)||'Command Center failed.',true); return; }
+    if(!r||r.ok===false){ setFaerieMascotState('error',1100); toast((r&&r.message)||'Command Center failed.',true); return; }
+    setFaerieMascotState('reply',1200);
     renderCommandChat({ok:true,active_chat_id:r.active_chat_id,chats:r.chats,
       pending_proposal:r.pending_proposal,
       messages:(commandChatState&&commandChatState.messages||[]).concat([
@@ -3208,7 +3772,7 @@ function approvePendingProposal(){
     // keep the sidebar (Soul Calibration checklist, goals) live instead of
     // only refreshing on page load / manual "Refresh dashboard".
     loadSelf();
-  }).catch(e=>{ $('cc-status').textContent=''; toast('Command Center failed: '+e,true); });
+  }).catch(e=>{ $('cc-status').textContent=''; setFaerieMascotState('error',1100); toast('Command Center failed: '+e,true); });
 }
 function loadCommandChat(){
   if(!api()||!pywebview.api.command_chat_state){
@@ -3261,10 +3825,12 @@ function sendCommandMessage(){
     ])});
   $('cc-send').disabled=true;
   $('cc-status').innerHTML='<span class="spin"></span>Thinking…';
+  setFaerieMascotState('thinking');
   pywebview.api.command_send(text, attachmentsForSend).then(r=>{
     $('cc-send').disabled=false;
     $('cc-status').textContent='';
-    if(!r||r.ok===false){ toast((r&&r.message)||'Command Center failed.',true); return; }
+    if(!r||r.ok===false){ setFaerieMascotState('error',1100); toast((r&&r.message)||'Command Center failed.',true); return; }
+    setFaerieMascotState('reply',1200);
     renderCommandChat({ok:true,active_chat_id:r.active_chat_id,chats:r.chats,
       pending_proposal:r.pending_proposal,
       messages:(commandChatState&&commandChatState.messages||[]).concat([
@@ -3278,6 +3844,7 @@ function sendCommandMessage(){
   }).catch(e=>{
     $('cc-send').disabled=false;
     $('cc-status').textContent='';
+    setFaerieMascotState('error',1100);
     toast('Command Center failed: '+e,true);
   });
 }
@@ -4381,6 +4948,7 @@ $('clar-bulk-text').addEventListener('keydown', e=>{
 /* ---------- goals ---------- */
 let goalState=null, selectedGoalId=null, plannerSession=null, goalAgentView=null, goalAgentNodeId=null;
 let goalFocusPending=null;
+let leafCoachView=null, leafCoachLeafId=null, leafCoachRetry=null;
 let growthViewMode='map';
 let goalAIOverviewCache=null;
 const constellationViewState={};
@@ -4389,6 +4957,7 @@ let goalMapPositions=(function(){
   try{ return JSON.parse(localStorage.getItem(GOAL_MAP_POS_KEY)||'{}')||{}; }
   catch(e){ return {}; }
 })();
+let goalMapLayoutPersistTimer=null;
 const descriptionDraftRequested=new Set();
 const goalOverviewCursors={};
 let goalOverviewFocus=null;
@@ -4398,9 +4967,19 @@ function saveGoalCollapsed(){
   localStorage.setItem('goalCollapsed', JSON.stringify(Array.from(goalCollapsed)));
 }
 
-function saveGoalMapPositions(){
+function saveGoalMapPositions(immediate){
   try{ localStorage.setItem(GOAL_MAP_POS_KEY, JSON.stringify(goalMapPositions)); }
   catch(e){}
+  if(goalMapLayoutPersistTimer) clearTimeout(goalMapLayoutPersistTimer);
+  const persist=()=>{
+    goalMapLayoutPersistTimer=null;
+    persistDurableUiPreference('growth_map_layout',{
+      positions:goalMapPositions,
+      views:constellationViewState
+    });
+  };
+  if(immediate) persist();
+  else goalMapLayoutPersistTimer=setTimeout(persist,250);
 }
 
 function goalFind(node,id){
@@ -4434,7 +5013,19 @@ function goalExpandPathTo(node,id){
 }
 
 function goalIcon(type){ return {umbrella:'✦',overgoal:'◆',subgoal:'◇',task:'✓'}[type]||'•'; }
-function goalTypeLabel(type){ return {umbrella:'Soul',overgoal:'Root',subgoal:'Branch',task:'Leaf'}[type]||type; }
+function goalSemanticRoleLabel(role){
+  role=String(role||'').toLowerCase();
+  if(!role) return APP_LANG==='ko'?'미지정':'Unlabeled';
+  return APP_LANG==='ko'
+    ?({area:'영역',project:'프로젝트',stage:'단계'}[role]||role)
+    :({area:'Area',project:'Project',stage:'Stage'}[role]||role);
+}
+function goalTypeLabel(type,node){
+  if(type==='subgoal'&&node&&node.semantic_role){
+    return goalSemanticRoleLabel(node.semantic_role);
+  }
+  return {umbrella:'Soul',overgoal:'Root',subgoal:'Branch',task:'Leaf'}[type]||type;
+}
 
 function goalGreatestCuriosityId(){
   const cur=((goalState&&goalState.curiosities)||[]).find(c=>c.is_greatest&&c.status==='active');
@@ -4483,6 +5074,7 @@ function renderGoalTree(){
 
 function selectGrowthNode(nodeId,opts){
   opts=opts||{};
+  if(leafCoachLeafId!=null&&parseInt(nodeId,10)!==leafCoachLeafId) closeLeafCoach();
   selectedGoalId=parseInt(nodeId,10);
   if(goalState&&goalState.tree&&!goalFind(goalState.tree,selectedGoalId)) selectedGoalId=goalState.tree.id;
   if(growthViewMode==='list') renderGoalTree();
@@ -4745,23 +5337,341 @@ function goalLeafSteps(node){
 function goalStepKey(nodeId,step){
   return 'ff-step:'+nodeId+':'+step.toLowerCase().replace(/\s+/g,' ').slice(0,80);
 }
+
+function goalExecutionOrder(node){
+  const order=new Map();
+  const scopes=node&&node.type==='umbrella'
+    ? goalVisibleChildren(node).filter(child=>child.type==='overgoal')
+    : [node];
+  scopes.forEach(scope=>{
+    const leaves=goalSortedActiveLeaves(scope);
+    leaves.forEach((leaf,index)=>order.set(leaf.id,{rank:index+1,total:leaves.length,scope:scope.title}));
+  });
+  return order;
+}
+
+function goalExecutionBadge(leaf,order){
+  const item=order&&order.get(leaf.id);
+  if(!item) return '';
+  const title=APP_LANG==='ko'
+    ? item.scope+' 안의 추천 실행 순서 '+item.rank+'/'+item.total
+    : 'Recommended execution order '+item.rank+' of '+item.total+' within '+item.scope;
+  return '<span class="goal-order-chip" title="'+esc(title)+'">'+item.rank+'</span>';
+}
+const goalStepDrafts=(function(){
+  try{ return JSON.parse(localStorage.getItem('ffGoalStepDrafts')||'{}')||{}; }
+  catch(e){ return {}; }
+})();
+function persistGoalStepDraft(nodeId,text,meta){
+  if(text) goalStepDrafts[nodeId]={text:String(text),meta:meta||{},saved_at:new Date().toISOString()};
+  else delete goalStepDrafts[nodeId];
+  try{ localStorage.setItem('ffGoalStepDrafts',JSON.stringify(goalStepDrafts)); }catch(e){}
+}
+function goalStepDraftHtml(node){
+  const draft=goalStepDrafts[node.id];
+  if(!draft||!String(draft.text||'').trim()) return '';
+  const type=goalTypeLabel(node.type,node);
+  const hint=APP_LANG==='ko'
+    ?'이 초안은 저장하거나 삭제할 때까지 여기에 남아 있어요. 탭을 이동하거나 앱을 다시 열어도 사라지지 않아요.'
+    :'This draft stays here until you save or discard it, even if you change tabs or reopen the app.';
+  const saveLabel=APP_LANG==='ko'?'이 '+type+'에 단계 저장':'Save steps to this '+type;
+  const meta=draft.meta||{};
+  const overlaps=(meta.overlaps||[]).map(item=>{
+    const title=(meta.peer_titles||{})[String(item.node_id)]||('Leaf '+item.node_id);
+    const action=item.recommendation==='merge'
+      ?(APP_LANG==='ko'?'병합 권장':'merge recommended')
+      :item.recommendation==='narrow'?(APP_LANG==='ko'?'범위 축소 권장':'narrowing recommended')
+      :(APP_LANG==='ko'?'분리 유지':'keep separate');
+    const propose=item.recommendation==='merge'
+      ?' <button type="button" class="goal-boundary-merge" data-merge-peer="'+Number(item.node_id)+'">'+
+        (APP_LANG==='ko'?'병합 제안 만들기':'Create merge proposal')+'</button>'
+      :item.recommendation==='narrow'&&item.revised_description
+        ?' <button type="button" class="goal-boundary-narrow" data-narrow-peer="'+Number(item.node_id)+'">'+
+          (APP_LANG==='ko'?'범위 축소 제안 만들기':'Create narrowing proposal')+'</button>'
+      :'';
+    return '<li><b>'+esc(title)+'</b> · '+Math.round(Number(item.score||0)*100)+'% · '+esc(action)+
+      (item.reason?' — '+esc(item.reason):'')+propose+'</li>';
+  }).join('');
+  const boundary=(meta.input_contract||meta.output_contract||meta.boundary_note||overlaps)
+    ?'<div class="goal-recap-card"><div class="cur-sub">'+(APP_LANG==='ko'?'LEAF 경계':'LEAF BOUNDARY')+'</div>'+
+      (meta.input_contract?'<p><b>'+(APP_LANG==='ko'?'입력:':'Input:')+'</b> '+esc(meta.input_contract)+'</p>':'')+
+      (meta.output_contract?'<p><b>'+(APP_LANG==='ko'?'이 Leaf만의 결과물:':'Output owned by this Leaf:')+'</b> '+esc(meta.output_contract)+'</p>':'')+
+      (meta.boundary_note?'<p class="goal-question-hint">'+esc(meta.boundary_note)+'</p>':'')+
+      (overlaps?'<div class="goal-question-hint"><b>'+(APP_LANG==='ko'?'인접 Leaf와의 책임 중복':'Responsibility overlap with nearby Leaves')+'</b><ul>'+overlaps+'</ul></div>':'')+'</div>'
+    :'';
+  return '<div class="goal-question-card goal-steps-persisted"><b>'+
+    (APP_LANG==='ko'?'제안된 단계':'Suggested steps')+'</b>'+
+    '<div class="goal-question-hint">'+esc(hint)+'</div>'+
+    boundary+
+    '<div style="white-space:pre-wrap;font-size:12.5px">'+esc(draft.text)+'</div>'+
+    '<div class="actions"><button class="accent goal-steps-save">'+esc(saveLabel)+'</button>'+
+    '<button class="skip goal-steps-discard">'+(APP_LANG==='ko'?'초안 삭제':'Discard draft')+'</button></div></div>';
+}
+function bindGoalStepDraft(node,root){
+  if(!root) return;
+  root.querySelectorAll('.goal-boundary-merge').forEach(button=>button.onclick=()=>{
+    const draft=goalStepDrafts[node.id]||{}, meta=draft.meta||{};
+    const peerId=Number(button.dataset.mergePeer);
+    const overlap=(meta.overlaps||[]).find(item=>Number(item.node_id)===peerId)||{};
+    button.disabled=true;
+    pywebview.api.goal_leaf_merge_proposal(
+      node.id,peerId,overlap.merged_title||node.title,
+      overlap.merged_description||node.description,overlap.reason||'').then(result=>{
+        if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not create merge proposal.');
+        toast(APP_LANG==='ko'?'병합 제안을 만들었어요. Growth에서 승인하기 전에는 아무것도 변경되지 않아요.':'Merge proposal created. Nothing changes until you approve it in Growth.');
+        loadGoals();
+      }).catch(error=>{button.disabled=false;toast('Could not create merge proposal: '+error,true);});
+  });
+  root.querySelectorAll('.goal-boundary-narrow').forEach(button=>button.onclick=()=>{
+    const draft=goalStepDrafts[node.id]||{}, meta=draft.meta||{};
+    const peerId=Number(button.dataset.narrowPeer);
+    const overlap=(meta.overlaps||[]).find(item=>Number(item.node_id)===peerId)||{};
+    button.disabled=true;
+    pywebview.api.goal_leaf_rewrite_proposal(
+      node.id,overlap.revised_title||node.title,overlap.revised_description||'',
+      overlap.reason||'').then(result=>{
+        if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not create narrowing proposal.');
+        toast(APP_LANG==='ko'?'범위 축소 제안을 만들었어요. Growth에서 승인하기 전에는 아무것도 변경되지 않아요.':'Narrowing proposal created. Nothing changes until you approve it in Growth.');
+        loadGoals();
+      }).catch(error=>{button.disabled=false;toast('Could not create narrowing proposal: '+error,true);});
+  });
+  const save=root.querySelector('.goal-steps-save');
+  const discard=root.querySelector('.goal-steps-discard');
+  if(discard) discard.onclick=()=>{ persistGoalStepDraft(node.id,''); renderGoalFocusPanel(); };
+  if(!save) return;
+  save.onclick=()=>{
+    const draft=goalStepDrafts[node.id];
+    const text=String(draft&&draft.text||'').trim();
+    if(!text) return;
+    const lines=text.split(/\r?\n/).map(s=>s.trim()).filter(s=>/^(?:[-*•]|\d+[.)])\s+/.test(s));
+    const block=(lines.length?lines:text.split(/\r?\n/).filter(Boolean).map((s,i)=>(i+1)+'. '+s)).join('\n');
+    const desc=(node.description?node.description.replace(/\s+$/,'')+'\n\n':'')+'Steps:\n'+block;
+    save.disabled=true;
+    pywebview.api.goal_update(node.id,{description:desc}).then(r=>{
+      if(!r||r.ok===false){ save.disabled=false; toast((r&&r.message)||'Could not save steps.',true); return; }
+      persistGoalStepDraft(node.id,'');
+      applyGoalTreeUpdate(r);
+      const type=goalTypeLabel(node.type,node);
+      toast(APP_LANG==='ko'?'이 '+type+'에 단계를 저장했어요.':'Steps saved to this '+type+'.');
+    }).catch(e=>{ save.disabled=false; toast('Could not save steps: '+e,true); });
+  };
+}
 function goalLeafStepsHtml(node){
   const steps=goalLeafSteps(node);
   if(!steps.length)
     return '<div class="cur-sub">How to do this</div>'+
       '<p class="goal-focus-muted">No explicit steps yet. Draft concrete, in-the-moment actions for this Leaf.</p>'+
-      '<div class="actions"><button id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
-      '<div id="goal-steps-draft"></div>';
+      '<div class="actions"><button class="accent" id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
+      '<div id="goal-steps-draft">'+goalStepDraftHtml(node)+'</div>';
   let done=0;
   const rows=steps.map((s,i)=>{
     const checked=(function(){ try{ return localStorage.getItem(goalStepKey(node.id,s))==='1'; }catch(e){ return false; } })();
     if(checked) done++;
-    return '<label class="goal-focus-leaf"><input type="checkbox" class="goal-step-check" data-si="'+i+'" '+
-      (checked?'checked':'')+'><span>'+esc(s)+'</span></label>';
+    return '<div class="goal-focus-leaf goal-step-row"><label><input type="checkbox" class="goal-step-check" data-si="'+i+'" '+
+      (checked?'checked':'')+'><span>'+esc(s)+'</span></label>'+
+      '<button type="button" class="goal-step-help" data-step-help="'+i+'">Help</button></div>';
   }).join('');
   return '<div class="cur-sub" id="goal-steps-head">How to do this ('+done+'/'+steps.length+')</div>'+
-    '<div class="goal-focus-mini">'+rows+'</div>';
+    '<div class="goal-focus-mini">'+rows+'</div>'+
+    '<div class="actions goal-step-help-all"><button type="button" class="accent" id="goal-step-help-all">Get help with these steps</button></div>';
 }
+
+function goalAskFaerieLabel(node){
+  const type=goalTypeLabel(node&&node.type,node);
+  return APP_LANG==='ko'?'이 '+type+'에 대해 페어리에게 묻기':'Ask Faerie about this '+type;
+}
+
+function closeLeafCoach(){
+  const drawer=$('leaf-step-coach');
+  if(drawer) drawer.classList.remove('open');
+  leafCoachRetry=null;
+  leafCoachLeafId=null;
+}
+
+function leafCoachSetError(message,retry){
+  const box=$('leaf-coach-error');
+  if(!box) return;
+  leafCoachRetry=retry||null;
+  box.hidden=!message;
+  box.innerHTML=message?esc(message)+(retry?' <button type="button" id="leaf-coach-retry">Retry</button>':''):'';
+  const button=$('leaf-coach-retry');
+  if(button) button.onclick=()=>{ box.hidden=true; retry(); };
+}
+
+function leafCoachMessageHtml(message,allowCompletion){
+  const payload=message.payload||{};
+  if(message.role==='focus') return '<div class="leaf-coach-message focus">'+esc(payload.text||'')+'</div>';
+  const examples=(payload.examples||[]).slice(0,4);
+  const completion=allowCompletion&&payload.step_completed
+    ?'<div class="leaf-coach-completion"><b>'+esc(APP_LANG==='ko'
+      ?(message.step_index+1)+'단계가 완료된 것 같아요. 완료로 표시할까요?'
+      :'Step '+(message.step_index+1)+' appears complete. Should I mark it complete?')+'</b>'+
+      '<div class="actions"><button type="button" data-coach-complete="no">'+(APP_LANG==='ko'?'아직 아니에요':'Not yet')+'</button>'+
+      '<button type="button" class="accent" data-coach-complete="yes">'+(APP_LANG==='ko'?'완료로 표시':'Mark complete')+'</button></div></div>'
+    :'';
+  const revision=payload.step_revision||null, revisionStatus=payload.step_revision_status||'';
+  const revisionHtml=revision&&Array.isArray(revision.steps)
+    ?'<div class="leaf-coach-revision" data-revision-message="'+message.id+'"><b>'+esc(APP_LANG==='ko'?'How to do this 단계 변경 제안':'Proposed change to How to do this')+'</b>'+
+      (revision.rationale?'<p class="hint">'+esc(revision.rationale)+'</p>':'')+
+      '<textarea class="leaf-coach-revision-steps" '+(revisionStatus?'disabled':'')+'>'+esc(revision.steps.join('\n'))+'</textarea>'+
+      (revisionStatus?'<div class="hint">'+esc(revisionStatus==='approved'?(APP_LANG==='ko'?'승인됨':'Approved'):(APP_LANG==='ko'?'적용하지 않음':'Not applied'))+'</div>':
+        '<div class="actions"><button type="button" data-revision-action="reject">'+(APP_LANG==='ko'?'현재 단계 유지':'Keep current steps')+'</button>'+
+        '<button type="button" class="accent" data-revision-action="approve">'+(APP_LANG==='ko'?'수정된 단계 적용':'Apply revised steps')+'</button></div>')+'</div>'
+    :'';
+  return '<div class="leaf-coach-message '+esc(message.role)+'"><div>'+esc(payload.text||'')+'</div>'+
+    (payload.next_action?'<div class="leaf-coach-next"><b>'+(APP_LANG==='ko'?'다음 행동':'Next action')+'</b><br>'+esc(payload.next_action)+'</div>':'')+
+    (payload.question?'<div class="leaf-coach-question">'+esc(payload.question)+'</div>':'')+
+    (examples.length?'<div class="hint">'+(APP_LANG==='ko'?'제안된 응답':'Suggested responses')+'</div><div class="leaf-coach-examples">'+examples.map(example=>
+      '<button type="button" class="leaf-coach-example" data-example="'+esc(example)+'">'+esc(example)+'</button>').join('')+'</div>':'')+completion+
+    revisionHtml+'</div>';
+}
+
+function renderLeafCoach(){
+  if(!leafCoachView) return;
+  const view=leafCoachView, focus=view.steps[view.focus_step_index]||{};
+  $('leaf-coach-title').textContent=(APP_LANG==='ko'?'Leaf 코치 · ':'Leaf Coach · ')+view.title;
+  $('leaf-coach-boundary').innerHTML=(APP_LANG==='ko'
+    ?'이 코치는 이 Leaf와 상위 경로에만 제한돼 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요.'
+    :'This coach is limited to this Leaf and its parent path. It cannot see other Branches, global memory, the main chat, or screen activity.')+
+    '<div class="leaf-coach-focus">'+esc((APP_LANG==='ko'?'현재 단계 ':'Step ')+(view.focus_step_index+1)+'/'+view.steps.length+': '+(focus.text||''))+'</div>';
+  const messages=view.messages||[], lastId=messages.length?messages[messages.length-1].id:null;
+  $('leaf-coach-messages').innerHTML=messages.filter(message=>message.role!=='focus').map(message=>leafCoachMessageHtml(
+    message,message.id===lastId&&focus.status!=='completed')).join('');
+  document.querySelectorAll('#leaf-coach-messages .leaf-coach-example').forEach(button=>button.onclick=()=>{
+    $('leaf-coach-input').value=button.dataset.example||'';
+    $('leaf-coach-input').focus();
+  });
+  document.querySelectorAll('#leaf-coach-messages [data-coach-complete]').forEach(button=>button.onclick=()=>
+    confirmLeafCoachCompletion(view.focus_step_index,button.dataset.coachComplete==='yes'));
+  document.querySelectorAll('#leaf-coach-messages [data-revision-action]').forEach(button=>button.onclick=()=>{
+    const box=button.closest('.leaf-coach-revision');
+    decideLeafCoachRevision(parseInt(box.dataset.revisionMessage,10),
+      button.dataset.revisionAction==='approve',box);
+  });
+  const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
+  if(scroller) scroller.scrollTop=scroller.scrollHeight;
+}
+
+function decideLeafCoachRevision(messageId,approved,box){
+  if(!leafCoachView||!api()||!pywebview.api.goal_step_coach_revision) return;
+  const textarea=box.querySelector('.leaf-coach-revision-steps');
+  const steps=String(textarea&&textarea.value||'').split(/\r?\n/).map(line=>line
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/,'').trim()).filter(Boolean);
+  box.querySelectorAll('button').forEach(button=>button.disabled=true);
+  pywebview.api.goal_step_coach_revision(
+    leafCoachView.leaf_id,messageId,approved,steps).then(result=>{
+      if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not update Leaf steps.');
+      leafCoachView=result.coach;renderLeafCoach();loadGoals();
+      toast(approved?(APP_LANG==='ko'?'How to do this 단계를 업데이트했어요.':'How to do this steps updated.'):
+        (APP_LANG==='ko'?'현재 단계를 유지했어요.':'Current steps kept.'));
+    }).catch(error=>{
+      box.querySelectorAll('button').forEach(button=>button.disabled=false);
+      leafCoachSetError(String(error.message||error),()=>decideLeafCoachRevision(messageId,approved,box));
+    });
+}
+
+function confirmLeafCoachCompletion(stepIndex,confirmed){
+  if(!leafCoachView||!api()||!pywebview.api.goal_step_coach_confirm_completion) return;
+  const leafId=leafCoachView.leaf_id;
+  document.querySelectorAll('#leaf-coach-messages [data-coach-complete]').forEach(button=>button.disabled=true);
+  pywebview.api.goal_step_coach_confirm_completion(leafId,stepIndex,confirmed).then(result=>{
+    if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not confirm step completion.');
+    leafCoachView=result.coach; syncLeafCoachStepCompletion(leafCoachView);
+    if(!confirmed){ renderLeafCoach(); return; }
+    const later=leafCoachView.steps.find(step=>step.index>stepIndex&&step.status!=='completed');
+    const next=later||leafCoachView.steps.find(step=>step.status!=='completed');
+    if(!next){
+      renderLeafCoach();
+      toast(APP_LANG==='ko'?'이 Leaf의 모든 단계를 완료했어요.':'All steps in this Leaf are complete.');
+      return;
+    }
+    $('leaf-coach-boundary').textContent=APP_LANG==='ko'
+      ?(next.index+1)+'/'+leafCoachView.steps.length+'단계를 시작하는 중…'
+      :'Beginning step '+(next.index+1)+' of '+leafCoachView.steps.length+'…';
+    return pywebview.api.goal_step_coach_open(leafId,next.index).then(opened=>{
+      if(!opened||opened.ok===false) throw new Error((opened&&opened.message)||'Could not begin the next step.');
+      leafCoachView=opened.coach; renderLeafCoach(); $('leaf-coach-input').focus();
+    });
+  }).catch(error=>{
+    leafCoachSetError(String(error.message||error),()=>confirmLeafCoachCompletion(stepIndex,confirmed));
+    renderLeafCoach();
+  });
+}
+
+function syncLeafCoachStepCompletion(view){
+  if(!view||!goalState||!goalState.tree) return false;
+  const node=goalFind(goalState.tree,view.leaf_id);
+  if(!node||node.type!=='task') return false;
+  const steps=goalLeafSteps(node);
+  let changed=false;
+  (view.steps||[]).forEach(item=>{
+    if(!steps[item.index]||!['completed','reopened'].includes(item.status)) return;
+    const value=item.status==='completed'?'1':'0', key=goalStepKey(node.id,steps[item.index]);
+    try{
+      if(localStorage.getItem(key)!==value){ localStorage.setItem(key,value); changed=true; }
+    }catch(e){}
+  });
+  if(changed&&selectedGoalId===node.id) renderGoalFocusPanel();
+  return changed;
+}
+
+function openLeafCoach(node,stepIndex){
+  if(!api()||!node||node.type!=='task') return;
+  const steps=goalLeafSteps(node);
+  if(stepIndex<0||stepIndex>=steps.length) return;
+  leafCoachLeafId=node.id;
+  const drawer=$('leaf-step-coach');
+  drawer.classList.add('open');
+  $('leaf-coach-title').textContent=APP_LANG==='ko'?'Leaf 코치':'Leaf Coach';
+  $('leaf-coach-boundary').textContent=APP_LANG==='ko'?'가장 관련 있는 첫 질문을 준비하는 중…':'Preparing the most relevant first question…';
+  $('leaf-coach-messages').innerHTML='<div class="hint"><span class="spin"></span> Loading…</div>';
+  leafCoachSetError('');
+  const run=()=>pywebview.api.goal_step_coach_open(node.id,stepIndex).then(result=>{
+    if(!result||result.ok===false) throw new Error((result&&result.message)||'Leaf Coach could not open.');
+    leafCoachView=result.coach; syncLeafCoachStepCompletion(leafCoachView);
+    renderLeafCoach(); $('leaf-coach-input').focus();
+  }).catch(error=>leafCoachSetError(String(error.message||error),run));
+  run();
+}
+
+function sendLeafCoachMessage(text){
+  text=String(text||'').trim();
+  if(!text||!leafCoachView||!api()) return;
+  const button=$('leaf-coach-send');
+  button.disabled=true;
+  leafCoachSetError('');
+  const leafId=leafCoachView.leaf_id, stepIndex=leafCoachView.focus_step_index;
+  const run=()=>pywebview.api.goal_step_coach_send(leafId,stepIndex,text).then(result=>{
+    button.disabled=false;
+    if(!result||result.ok===false) throw new Error((result&&result.message)||'Leaf Coach could not reply.');
+    leafCoachView=result.coach; syncLeafCoachStepCompletion(leafCoachView);
+    $('leaf-coach-input').value=''; renderLeafCoach();
+  }).catch(error=>{ button.disabled=false; leafCoachSetError(String(error.message||error),run); });
+  run();
+}
+
+if($('leaf-coach-close')) $('leaf-coach-close').onclick=closeLeafCoach;
+if($('leaf-coach-send')) $('leaf-coach-send').onclick=()=>sendLeafCoachMessage($('leaf-coach-input').value);
+if($('leaf-coach-input')) $('leaf-coach-input').addEventListener('keydown',event=>{
+  if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)&&!event.isComposing){
+    event.preventDefault(); sendLeafCoachMessage(event.currentTarget.value);
+  }
+});
+document.querySelectorAll('[data-coach-shortcut]').forEach(button=>button.onclick=()=>{
+  const prompts={example:'Show me a concrete example I can copy.',smaller:'Make this step smaller and easier to start.',stuck:'I’m stuck. Ask me the one question that will identify why.'};
+  sendLeafCoachMessage(prompts[button.dataset.coachShortcut]||button.textContent);
+});
+if($('leaf-coach-clear')) $('leaf-coach-clear').onclick=()=>{
+  if(!leafCoachView||!confirm(APP_LANG==='ko'
+    ?'이 Leaf의 코칭 대화를 지울까요? 확인된 단계 해결 기록은 유지돼요.'
+    :'Clear this Leaf’s coaching conversation? Confirmed step resolutions will remain.')) return;
+  pywebview.api.goal_step_coach_clear(leafCoachView.leaf_id).then(result=>{
+    if(!result||result.ok===false){ leafCoachSetError((result&&result.message)||'Could not clear Leaf Coach.'); return; }
+    const node=goalFind(goalState.tree,leafCoachView.leaf_id);
+    const step=leafCoachView.focus_step_index;
+    leafCoachView=null; openLeafCoach(node,step);
+  }).catch(error=>leafCoachSetError(String(error.message||error)));
+};
 
 function goalNodeNeedsDefinition(node){
   if(!node||node.type==='umbrella') return false;
@@ -4783,14 +5693,14 @@ function goalDefinitionStarterHtml(node){
   const hint=APP_LANG==='ko'
     ?(node.type==='task'
       ?'이 Leaf는 아직 제목만 있어요. 결과, 완료도, 성찰을 추적하기 전에 구체적인 행동을 정의하세요.'
-      :'이 '+goalTypeLabel(node.type)+'는 아직 제목만 있어요. 페어리가 평가하거나 확장하기 전에 의미를 정의하세요.')
+      :'이 '+goalTypeLabel(node.type,node)+'는 아직 제목만 있어요. 페어리가 평가하거나 확장하기 전에 의미를 정의하세요.')
     :(node.type==='task'
       ?'This Leaf only has a title so far. Define the concrete action before tracking outcomes, completion, or reflection.'
-      :'This '+goalTypeLabel(node.type)+' only has a title so far. Define what it means before Faerie evaluates or expands it.');
+      :'This '+goalTypeLabel(node.type,node)+' only has a title so far. Define what it means before Faerie evaluates or expands it.');
   return '<div class="goal-recap-card goal-definition-starter"><div class="cur-sub">'+esc(label)+'</div>'+
     '<p class="goal-focus-muted">'+esc(hint)+'</p>'+
-    '<div class="actions"><button id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
-    '<div id="goal-steps-draft"></div></div>';
+    '<div class="actions"><button class="accent" id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
+    '<div id="goal-steps-draft">'+goalStepDraftHtml(node)+'</div></div>';
 }
 
 function goalShortText(text,limit=260){
@@ -4868,7 +5778,7 @@ function goalArchivedHistoryHtml(node){
   return '<details class="goal-full-note"><summary>Archived history · '+archived.length+'</summary>'+
     '<p class="goal-focus-muted">These remain part of your history without cluttering the current map.</p>'+
     '<div>'+archived.map(child=>'<span class="goal-chip" data-open="'+child.id+'">'+
-      esc(child.title)+' · '+esc(goalTypeLabel(child.type))+'</span>').join('')+'</div></details>';
+      esc(child.title)+' · '+esc(goalTypeLabel(child.type,child))+'</span>').join('')+'</div></details>';
 }
 
 function goalGardeningProposalHtml(proposal){
@@ -4914,9 +5824,16 @@ function goalRelevanceHtml(node){
     '</div>';
 }
 
+function goalRelevanceHasContent(node){
+  const view=node&&node.relevance||{}, state=view.state||{};
+  return !!(view.due||(view.proposals||[]).length||(view.reviews||[]).length||
+    (view.new_evidence||[]).length||state.last_reviewed_at||state.rationale||state.what_changed);
+}
+
 function goalOutcomeHtml(node){
   if(node.type!=='task') return '';
   const outcomes=node.outcomes||[];
+  if(node.status!=='completed'&&!outcomes.length) return '';
   const latest=outcomes[0]||null;
   const history=outcomes.slice(0,6).map(outcome=>
     '<div class="resolved-row"><div class="rr-body"><b>'+esc(outcome.result)+'</b> · '+
@@ -4967,39 +5884,33 @@ function draftLeafSteps(node){
   if(!btn||!out) return;
   btn.disabled=true;
   out.innerHTML='<p class="goal-focus-muted"><span class="spin"></span> Asking GoalAI for explicit steps…</p>';
-  const type=goalTypeLabel(node.type);
-  const ask=node.type==='task'
-    ?'Draft 3-5 explicit, physical steps for the Leaf "'+node.title+'". '+
-      'Each step must be one concrete action I can execute in the moment: what to do, when to do it, and for how long. '+
-      'No advice, no theory. Reply with a numbered list only, no preamble.'
-    :'Draft 3-5 concrete definition steps for the '+type+' "'+node.title+'". '+
+  const type=goalTypeLabel(node.type,node);
+  const request=node.type==='task'
+    ?pywebview.api.goal_leaf_step_draft(node.id)
+    :pywebview.api.goal_ai_chat(node.id,
+      'Draft 3-5 concrete definition steps for the '+type+' "'+node.title+'". '+
       'Clarify what this '+type+' means, what real-world change it is meant to produce, and how I would recognize progress. '+
-      'Reply with a numbered list only, no preamble.';
-  pywebview.api.goal_ai_chat(node.id,ask).then(r=>{
-    btn.disabled=false;
-    if(!r||r.ok===false){ out.innerHTML=''; toast((r&&r.message)||'GoalAI could not draft steps.',true); return; }
-    goalAgentView=r.view||goalAgentView;
-    const msgs=(r.view&&r.view.messages)||[];
-    const reply=[...msgs].reverse().find(m=>m.role!=='user');
-    const text=(reply&&reply.content||'').trim();
-    if(!text){ out.innerHTML=''; toast('GoalAI returned no reply.',true); return; }
-    out.innerHTML='<div class="goal-question-card"><b>Suggested steps</b>'+
-      '<div class="goal-question-hint">'+(APP_LANG==='ko'
-        ?'저장하면 이 '+esc(type)+'가 정의되고 나머지 작업 공간이 열려요.'
-        :'Saving defines this '+esc(type)+' and unlocks the rest of its workspace.')+'</div>'+
-      '<div style="white-space:pre-wrap;font-size:12.5px">'+esc(text)+'</div>'+
-      '<div class="actions"><button class="accent" id="goal-steps-save">Save to this Leaf</button></div></div>';
-    $('goal-steps-save').onclick=()=>{
-      const lines=text.split(/\r?\n/).map(s=>s.trim()).filter(s=>/^(?:[-*•]|\d+[.)])\s+/.test(s));
-      const block=(lines.length?lines:text.split(/\r?\n/).filter(Boolean).map((s,i)=>(i+1)+'. '+s)).join('\n');
-      const desc=(node.description?node.description.replace(/\s+$/,'')+'\n\n':'')+'Steps:\n'+block;
-      pywebview.api.goal_update(node.id,{description:desc}).then(r2=>{
-        if(!r2||r2.ok===false){ toast((r2&&r2.message)||'Could not save steps.',true); return; }
-        applyGoalTreeUpdate(r2); toast(APP_LANG==='ko'
-          ?'이 '+type+'에 단계를 저장했어요.':'Steps saved to this '+type+'.');
-      }).catch(e=>toast('Could not save steps: '+e,true));
-    };
-  }).catch(e=>{ btn.disabled=false; out.innerHTML=''; toast('GoalAI could not draft steps: '+e,true); });
+      'Reply with a numbered list only, no preamble.').then(result=>{
+        const msgs=(result.view&&result.view.messages)||[];
+        const reply=[...msgs].reverse().find(message=>message.role!=='user');
+        return {...result,draft:{text:String(reply&&reply.content||'').trim()}};
+      });
+  request.then(r=>{
+    if(btn.isConnected) btn.disabled=false;
+    if(!r||r.ok===false){ if(out.isConnected) out.innerHTML=''; toast((r&&r.message)||'GoalAI could not draft steps.',true); return; }
+    const draft=r.draft||{};
+    const text=String(draft.text||'').trim();
+    if(!text){ if(out.isConnected) out.innerHTML=''; toast('GoalAI returned no reply.',true); return; }
+    persistGoalStepDraft(node.id,text,draft);
+    if(selectedGoalId===node.id) renderGoalFocusPanel();
+    toast(APP_LANG==='ko'
+      ?'단계 초안을 저장했어요. 저장하거나 삭제할 때까지 여기에 남아 있어요.'
+      :'Step draft saved. It will stay here until you save or discard it.');
+  }).catch(e=>{
+    if(btn.isConnected) btn.disabled=false;
+    if(out.isConnected) out.innerHTML='';
+    toast('GoalAI could not draft steps: '+e,true);
+  });
 }
 
 function renderGoalFocusPanel(){
@@ -5007,8 +5918,10 @@ function renderGoalFocusPanel(){
   if(!panel||!goalState||!goalState.tree) return;
   const node=goalFind(goalState.tree,selectedGoalId)||goalState.tree;
   selectedGoalId=node.id;
+  panel.dataset.collapseScope='goal-'+node.id;
   const path=goalPathTitles(goalState.tree,node.id,[])||[node.title];
   const leaves=goalSortedActiveLeaves(node);
+  const executionOrder=goalExecutionOrder(goalState.tree);
   const childType=node.type==='umbrella'?'overgoal':node.type==='task'?null:'subgoal';
   const agent=(goalAgentNodeId===node.id&&goalAgentView)?goalAgentView:null;
   const agentState=agent&&agent.state||{};
@@ -5019,16 +5932,21 @@ function renderGoalFocusPanel(){
   if(goalNodeNeedsDefinition(node)){
     panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
       '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
-      '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span></div>'+
+      '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span></div>'+
       goalDefinitionStarterHtml(node);
     const draft=$('goal-focus-draft-steps');
     if(draft) draft.onclick=()=>draftLeafSteps(node);
+    bindGoalStepDraft(node,panel);
     return;
   }
   const recap=goalRecapHtml(node,agentState,curiosities,evidence);
-  const relevance=goalRelevanceHtml(node);
+  const relevance=goalRelevanceHasContent(node)?goalRelevanceHtml(node):'';
   const originalNote=node.description||agentState.next_focus||'';
   const mode=goalFocusMode(node);
+  const completion=node.completion||{};
+  const progressHtml=node.type!=='task'&&completion.percent!=null
+    ?'<div class="goal-progress"><div class="goal-progress-head"><span>Completion</span><span>'+esc(goalCompletionLabel(node))+'</span></div><div class="metric-progress"><i style="width:'+(completion.percent||0)+'%"></i></div></div>'
+    :'';
   const launchReadOnly=appProfile==='launch';
   const pending=goalFocusPending&&goalFocusPending.nodeId===node.id?goalFocusPending:null;
   const questionCards=(launchReadOnly||pending)?'':(mode==='leaf'?goalQuestionCards(node,agentState,agentQuestions)
@@ -5039,9 +5957,9 @@ function renderGoalFocusPanel(){
     : '';
   const leafRows=launchReadOnly
     ? (node.type==='task'
-      ? '<div class="goal-focus-leaf"><span>'+esc(node.status==='completed'?'Completed Leaf':'Leaf action')+'</span></div>'
+      ? ''
       : (leaves.length?leaves.slice(0,6).map(leaf=>
-        '<div class="goal-focus-leaf"><span data-open="'+leaf.id+'" title="Open this Leaf"><b>'+esc(leaf.title)+'</b>'+
+        '<div class="goal-focus-leaf"><span data-open="'+leaf.id+'" title="Open this Leaf">'+goalExecutionBadge(leaf,executionOrder)+'<b>'+esc(leaf.title)+'</b>'+
         (leaf.due_date?' · due '+esc(leaf.due_date):'')+
         (leaf.priority&&leaf.priority!=='normal'?' · '+esc(leaf.priority):'')+'</span></div>').join(''):
         '<p class="goal-focus-muted">No active Leaves under this node yet.</p>'))
@@ -5049,22 +5967,29 @@ function renderGoalFocusPanel(){
     ? '<label class="goal-focus-leaf"><input type="checkbox" class="goal-focus-complete" data-leaf-id="'+node.id+'" '+(node.status==='completed'?'checked':'')+'><span>'+esc(node.status==='completed'?'Completed':'Mark this Leaf complete when it is actually done')+'</span></label>'
     : (leaves.length?leaves.slice(0,6).map(leaf=>
         '<label class="goal-focus-leaf"><input type="checkbox" class="goal-focus-complete" data-leaf-id="'+leaf.id+'"><span data-open="'+leaf.id+'" title="Open this Leaf">'+
-        '<b>'+esc(leaf.title)+'</b>'+(leaf.due_date?' · due '+esc(leaf.due_date):'')+
+        goalExecutionBadge(leaf,executionOrder)+'<b>'+esc(leaf.title)+'</b>'+(leaf.due_date?' · due '+esc(leaf.due_date):'')+
         (leaf.priority&&leaf.priority!=='normal'?' · '+esc(leaf.priority):'')+'</span></label>').join(''):
         '<p class="goal-focus-muted">No active Leaves under this node yet.</p>');
-  const goalAiHtml=agent
-    ? '<div class="agent-brief">'+esc(agentState.brief||'No assessment yet.')+'</div>'+
-      '<div class="goal-focus-muted">'+esc(agentState.health||'unknown')+
-      ' · '+Math.round((agentState.confidence||0)*100)+'% confidence'+
+  const agentBrief=String(agentState.brief||'').trim();
+  const goalAiHasContent=!!(agent&&(agentBrief||(agentQuestions||[]).length||(proposals||[]).length));
+  const showGoalAi=goalAiHasContent&&(node.type!=='task'||node.status==='completed');
+  const agentMeta=(agentState.health||Number(agentState.confidence||0)>0||agentState.dirty)
+    ?'<div class="goal-focus-muted">'+(agentState.health?esc(agentState.health)+' · ':'')+
+      Math.round((agentState.confidence||0)*100)+'% confidence'+
       (agentState.dirty?' · queued for tonight':'')+'</div>'
-    : '<div class="goal-focus-muted" id="goal-focus-agent"><span class="spin"></span> Loading GoalAI context…</div>';
+    :'';
+  const goalAiHtml=showGoalAi
+    ? (agentBrief?'<div class="agent-brief">'+esc(agentBrief)+'</div>':'')+agentMeta
+    : '';
   const actionHtml=launchReadOnly
-    ? '<div class="actions"><button class="accent" id="goal-focus-ask-command">Ask Faerie about this node</button></div>'
+    ? '<div class="actions"><button class="accent" id="goal-focus-ask-command">'+esc(goalAskFaerieLabel(node))+'</button>'+
+      (node.type!=='umbrella'?'<button id="goal-focus-restructure">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+'</div>'
     : '<div class="actions">'+(questionCards?'<button class="accent" id="goal-focus-submit">Submit answers & review node</button>':'')+
       (mode==='leaf'?'<button id="goal-focus-dismiss">Dismiss & rethink</button>':'')+
       '<button id="goal-focus-edit">Edit details</button>'+
       '<button id="goal-focus-ask">Ask Agent</button><button id="goal-focus-review">Review node</button>'+
       '<button id="goal-focus-relevance">Review relevance</button>'+
+      (node.type!=='umbrella'?'<button id="goal-focus-restructure">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+
       ((childType||(node.type!=='task'&&node.type!=='umbrella'))
         ? '<span class="goal-add-wrap"><button id="goal-focus-add" title="Add to this node">+</button>'+
           '<div class="goal-add-menu" id="goal-focus-add-menu">'+
@@ -5075,17 +6000,17 @@ function renderGoalFocusPanel(){
       '</div>';
   panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
     '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
-    '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span><span class="goal-chip">'+
+    '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+
     esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>'+
     recap+relevance+
-    '<div class="goal-progress"><div class="goal-progress-head"><span>Completion</span><span>'+
-    esc(goalCompletionLabel(node))+'</span></div><div class="metric-progress"><i style="width:'+
-    ((node.completion&&node.completion.percent)||0)+'%"></i></div></div>'+
+    progressHtml+
     (node.type==='task'?goalLeafStepsHtml(node)+goalOutcomeHtml(node):'')+
     (mode==='rollup'?'<div class="cur-sub">Where each area stands</div>'+goalRollupHtml(node):'')+
     (mode==='brainstorm'
       ? '<div class="goal-next-action"><b>Brainstorm unlocked</b><span>No active Leaves here. Answer the rethink questions below, then Add Leaf to commit the next experiment.</span></div>'
-      : '<div class="cur-sub">'+(mode==='leaf'?'Which Leaf actions are active?':'Address these Leaves next')+'</div><div class="goal-focus-mini">'+leafRows+'</div>')+
+      : (mode==='leaf'
+        ? (leafRows?'<div class="goal-focus-mini">'+leafRows+'</div>':'')
+        : '<div class="cur-sub">Address these Leaves next</div><div class="goal-focus-mini">'+leafRows+'</div>'))+
     (mode==='locked'
       ? '<p class="goal-focus-muted">Questions are asked on each Leaf, not here. Open a Leaf to answer them or mark it complete — dismissing one unlocks this Branch for a rethink.</p>'
       : '')+
@@ -5096,13 +6021,15 @@ function renderGoalFocusPanel(){
       : '')+
     (originalNote?'<details class="goal-full-note"><summary>Show full original note</summary><div>'+
       esc(originalNote)+'</div></details>':'')+
-    actionHtml+
-    '<div class="cur-sub">What does GoalAI think right now?</div>'+goalAiHtml+
-    (agentQuestions.length?'<div class="cur-sub">What is GoalAI still asking?</div>'+agentQuestions.map(q=>
+    actionHtml+(node.type!=='umbrella'?'<div id="goal-focus-restructure-panel" hidden></div>':'')+
+    (showGoalAi?'<div class="cur-sub">What does GoalAI think right now?</div>'+goalAiHtml:'')+
+    (showGoalAi&&agentQuestions.length?'<div class="cur-sub">What is GoalAI still asking?</div>'+agentQuestions.map(q=>
       '<div class="resolved-row"><div class="rr-body">'+esc(q.text||q.question||q)+'</div><span class="rr-tag">question</span></div>').join(''):'')+
-    (proposals.length?'<div class="cur-sub">What changes is GoalAI proposing?</div>'+proposals.map(p=>
-      '<div class="resolved-row"><div class="rr-body">'+goalProposalSummaryHtml(p)+
-      '</div><span class="rr-tag">proposal</span></div>').join(''):'');
+    (showGoalAi&&proposals.length?'<div class="cur-sub">What changes is GoalAI proposing?</div>'+proposals.map(p=>
+      '<div class="agent-proposal" data-pid="'+p.id+'">'+goalProposalSummaryHtml(p)+'<div class="actions">'+
+      '<button class="agent-p-dismiss skip">'+(APP_LANG==='ko'?'닫기':'Dismiss')+'</button><button class="agent-p-refine">'+(APP_LANG==='ko'?'다듬기':'Refine')+'</button>'+
+      '<button class="agent-p-approve accent">'+(['restructure_node','restructure_tree'].includes(p.type)?(APP_LANG==='ko'?'구조 변경 승인':'Approve restructure'):(APP_LANG==='ko'?'승인':'Approve'))+'</button></div></div>').join(''):'');
+  bindCollapsePrefs(panel);
   bindGoalFocusPanel(node,childType);
 }
 
@@ -5144,6 +6071,7 @@ function bindGoalRelevanceControls(node,root,reviewButton){
 }
 
 function bindGoalFocusPanel(node,childType){
+  bindGoalStepDraft(node,$('goal-focus-panel'));
   bindGoalRelevanceControls(node,$('goal-focus-panel'),'goal-focus-relevance');
   bindGoalOutcomeControls(node,$('goal-focus-panel'));
   if($('goal-focus-ask-command')) $('goal-focus-ask-command').onclick=()=>{
@@ -5151,9 +6079,15 @@ function bindGoalFocusPanel(node,childType){
     setTimeout(()=>{
       const input=$('cc-input');
       if(input){
-        input.value='I want to talk about this Growth node: '+node.title+
+        const type=goalTypeLabel(node.type,node);
+        const steps=goalLeafSteps(node);
+        input.value=(APP_LANG==='ko'
+          ?'이 '+type+'에 대해 이야기하고 싶어요: '
+          :'I want to talk about this '+type+': ')+node.title+
           '\nPath: '+((goalPathTitles(goalState.tree,node.id,[])||[node.title]).join(' > '))+
-          '\nWhat should I understand or do next?';
+          (node.description?'\nDescription:\n'+node.description:'')+
+          (steps.length?'\nSteps:\n'+steps.map((step,index)=>(index+1)+'. '+step).join('\n'):'')+
+          (APP_LANG==='ko'?'\n무엇을 이해하거나 다음에 해야 할까요?':'\nWhat should I understand or do next?');
         autoGrow(input);
         input.focus();
       }
@@ -5163,6 +6097,8 @@ function bindGoalFocusPanel(node,childType){
   if($('goal-focus-edit')) $('goal-focus-edit').onclick=()=>setGrowthViewMode('list');
   if($('goal-focus-ask')) $('goal-focus-ask').onclick=()=>openGoalAgentChat(node.id,node.title);
   if($('goal-focus-review')) $('goal-focus-review').onclick=()=>reviewGoalAgent(node.id,false);
+  if($('goal-focus-restructure')) $('goal-focus-restructure').onclick=()=>
+    renderGoalRestructurePanel(node,$('goal-focus-restructure-panel'));
   const createChild=(type)=>{
     if(type==='task'){
       const active=goalActiveLeaves(node).length;
@@ -5184,7 +6120,24 @@ function bindGoalFocusPanel(node,childType){
     document.addEventListener('click',()=>{ if(addMenu.isConnected) addMenu.classList.remove('open'); },{once:true});
   }
   if($('goal-focus-draft-steps')) $('goal-focus-draft-steps').onclick=()=>draftLeafSteps(node);
+  document.querySelectorAll('#goal-focus-panel .agent-proposal[data-pid]').forEach(box=>{
+    const id=parseInt(box.dataset.pid,10);
+    box.querySelector('.agent-p-dismiss').onclick=()=>goalProposalAction(id,'dismiss',node.id);
+    box.querySelector('.agent-p-approve').onclick=()=>goalProposalAction(id,'approve',node.id);
+    box.querySelector('.agent-p-refine').onclick=()=>openGoalAgentChat(node.id,node.title);
+  });
   const stepList=goalLeafSteps(node);
+  document.querySelectorAll('#goal-focus-panel [data-step-help]').forEach(button=>button.onclick=event=>{
+    event.preventDefault(); event.stopPropagation();
+    openLeafCoach(node,parseInt(button.dataset.stepHelp,10));
+  });
+  if($('goal-step-help-all')) $('goal-step-help-all').onclick=()=>{
+    let index=stepList.findIndex(step=>{
+      try{ return localStorage.getItem(goalStepKey(node.id,step))!=='1'; }catch(e){ return true; }
+    });
+    if(index<0) index=Math.max(0,stepList.length-1);
+    openLeafCoach(node,index);
+  };
   document.querySelectorAll('#goal-focus-panel .goal-step-check').forEach(box=>{
     box.onchange=()=>{
       const step=stepList[parseInt(box.dataset.si,10)]||'';
@@ -5193,6 +6146,19 @@ function bindGoalFocusPanel(node,childType){
       if(head){
         const done=[...document.querySelectorAll('#goal-focus-panel .goal-step-check')].filter(b=>b.checked).length;
         head.textContent='How to do this ('+done+'/'+stepList.length+')';
+      }
+      if(api()&&pywebview.api.goal_step_coach_set_status){
+        const checked=box.checked;
+        pywebview.api.goal_step_coach_set_status(
+          node.id,parseInt(box.dataset.si,10),checked?'completed':'reopened').then(result=>{
+          if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not update step status.');
+          if(leafCoachView&&leafCoachView.leaf_id===node.id){ leafCoachView=result.coach; renderLeafCoach(); }
+        }).catch(error=>{
+          box.checked=!checked;
+          try{ localStorage.setItem(goalStepKey(node.id,step), box.checked?'1':'0'); }catch(e){}
+          toast('Could not update Leaf Coach status: '+error,true);
+          renderGoalFocusPanel();
+        });
       }
     };
   });
@@ -5357,7 +6323,13 @@ function buildGoalConstellation(tree){
       item.y=Math.max(-900,Math.min(height+900,Number(saved.y)));
     }
   });
-  return {width,height,nodes,edges};
+  const maxDepth=Math.max(0,...nodes.map(item=>item.depth));
+  const rings=Array.from({length:maxDepth},(_,index)=>({
+    depth:index+1,
+    rx:depthRadiusX[Math.min(index+1,depthRadiusX.length-1)],
+    ry:depthRadiusY[Math.min(index+1,depthRadiusY.length-1)]
+  }));
+  return {width,height,nodes,edges,rings};
 }
 
 function renderGoalConstellation(summaryId,treeId,opts){
@@ -5374,6 +6346,8 @@ function renderGoalConstellation(summaryId,treeId,opts){
   if(!selectedGoalId) selectedGoalId=tree.id;
   const selected=goalFind(tree,selectedGoalId)||tree;
   const map=buildGoalConstellation(tree);
+  const executionOrder=goalExecutionOrder(tree);
+  box.classList.toggle('skin-solar',growthMapSkin==='solar');
   const nodeById=Object.fromEntries(map.nodes.map(x=>[x.node.id,x]));
   const selectedAncestors=new Set();
   const markAncestors=(node,target)=>{
@@ -5385,6 +6359,9 @@ function renderGoalConstellation(summaryId,treeId,opts){
     return false;
   };
   markAncestors(tree,selected.id);
+  const orbits=(map.rings||[]).map(ring=>'<ellipse class="solar-orbit" cx="'+
+    (map.width/2)+'" cy="'+(map.height/2)+'" rx="'+ring.rx+'" ry="'+ring.ry+
+    '" data-depth="'+ring.depth+'"></ellipse>').join('');
   const edges=map.edges.map(edge=>{
     const a=nodeById[edge.sourceId], b=nodeById[edge.targetId];
     if(!a||!b) return '';
@@ -5402,33 +6379,45 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const status=node.status?(' '+node.status):'';
     const radius={umbrella:15,overgoal:11,subgoal:8,task:5}[node.type]||7;
     const glow=radius*(node.id===selected.id?5.7:4.5);
-    const label=goalLabelShort(node.title,node.type==='task'?24:30);
+    const structurePrefix=node.type==='overgoal'||node.type==='subgoal'?goalTypeLabel(node.type,node)+' · ':'';
+    const label=goalLabelShort(structurePrefix+node.title,node.type==='task'?24:34);
     const labelDy=item.depth===0?-25:(node.type==='task'?18:22);
+    const order=executionOrder.get(node.id);
+    const orderTitle=order?(APP_LANG==='ko'
+      ?' · '+order.scope+' 안의 추천 실행 순서 '+order.rank+'/'+order.total
+      :' · recommended execution order '+order.rank+' of '+order.total+' within '+order.scope):'';
     return '<g class="constellation-node '+esc(node.type)+status+selectedClass+care+(greatest?' greatest':'')+
       '" tabindex="0" role="button" data-map-goal-id="'+node.id+'" transform="translate('+
       item.x.toFixed(1)+' '+item.y.toFixed(1)+')">'+
-      '<title>'+esc(goalTypeLabel(node.type)+' · '+node.title+' · '+goalCompletionLabel(node)+
-        (greatest?' · linked to the greatest curiosity':''))+'</title>'+
+      '<title>'+esc(goalTypeLabel(node.type,node)+' · '+node.title+' · '+goalCompletionLabel(node)+
+        (greatest?' · linked to the greatest curiosity':'')+orderTitle)+'</title>'+
       '<circle class="glow" r="'+glow+'"></circle>'+
       (care?'<circle class="halo" r="'+(glow+5)+'"></circle>':'')+
       (greatest?'<circle class="greatest-ring" r="'+(radius+4.5)+'"></circle>':'')+
       '<circle class="core" r="'+radius+'"></circle>'+
+      '<circle class="planet-shine" cx="'+(-radius*.32).toFixed(1)+'" cy="'+(-radius*.34).toFixed(1)+
+      '" r="'+Math.max(1.2,radius*.18).toFixed(1)+'"></circle>'+
+      (order?'<g class="execution-order-badge" transform="translate('+(radius+6)+' '+(-radius-6)+')"><circle r="7"></circle><text text-anchor="middle" dominant-baseline="central">'+order.rank+'</text></g>':'')+
       '<text text-anchor="middle" y="'+labelDy+'">'+esc(label)+'</text></g>';
   }).join('');
   const view=constellationViewState[treeId]||{scale:1,panX:0,panY:0};
   constellationViewState[treeId]=view;
   box.innerHTML='<svg class="growth-constellation-svg" viewBox="0 0 '+map.width+' '+map.height+
     '" preserveAspectRatio="xMidYMid meet">'+
-    '<defs><filter id="starSoftGlow" x="-80%" y="-80%" width="260%" height="260%">'+
+    '<defs><radialGradient id="solarSun" cx="34%" cy="30%"><stop offset="0" stop-color="#fffde2"></stop><stop offset=".42" stop-color="#dfff7f"></stop><stop offset="1" stop-color="#6f8f27"></stop></radialGradient>'+
+    '<radialGradient id="solarPlanet" cx="32%" cy="28%"><stop offset="0" stop-color="#e5fbff"></stop><stop offset=".4" stop-color="#6ed5ff"></stop><stop offset="1" stop-color="#164e78"></stop></radialGradient>'+
+    '<radialGradient id="solarMoon" cx="32%" cy="28%"><stop offset="0" stop-color="#f6efff"></stop><stop offset=".42" stop-color="#b78cff"></stop><stop offset="1" stop-color="#513273"></stop></radialGradient>'+
+    '<radialGradient id="solarSatellite" cx="32%" cy="28%"><stop offset="0" stop-color="#eafff1"></stop><stop offset=".45" stop-color="#55df95"></stop><stop offset="1" stop-color="#17613b"></stop></radialGradient>'+
+    '<filter id="starSoftGlow" x="-80%" y="-80%" width="260%" height="260%">'+
     '<feGaussianBlur stdDeviation="5" result="blur"></feGaussianBlur>'+
     '<feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs>'+
     '<g class="constellation-viewport" transform="translate('+view.panX+' '+view.panY+') scale('+view.scale+
-    ')" filter="url(#starSoftGlow)">'+edges+nodes+'</g></svg>';
+    ')" filter="url(#starSoftGlow)">'+orbits+edges+nodes+'</g></svg>';
   const path=goalPathTitles(tree,selected.id,[])||[selected.title];
   if(summary){
     const nextAction=goalNextActionText(selected);
     summary.innerHTML='<div class="growth-map-summary-card"><b>'+esc(selected.title)+'</b>'+
-      '<span>'+esc(goalTypeLabel(selected.type))+' · '+esc(selected.status||'active')+
+      '<span>'+esc(goalTypeLabel(selected.type,selected))+' · '+esc(selected.status||'active')+
       ' · '+esc(goalCompletionLabel(selected))+'<br>'+esc(path.join(' › '))+'</span></div>'+
       (nextAction?'<div class="growth-map-summary-card"><b>TO DO</b><span>'+
       esc(nextAction)+'</span></div>':'');
@@ -5484,6 +6473,7 @@ function bindConstellationPanZoom(box,treeId,map){
     state.panY=py-beforeY*next;
     state.scale=next;
     apply();
+    saveGoalMapPositions();
   };
   let drag=null, nodeDrag=null;
   box.querySelectorAll('.constellation-node[data-map-goal-id]').forEach(group=>{
@@ -5527,9 +6517,10 @@ function bindConstellationPanZoom(box,treeId,map){
     apply();
   };
   const end=e=>{
+    const mapWasPanned=!!drag;
     if(nodeDrag){
       if(nodeDrag.moved){
-        saveGoalMapPositions();
+        saveGoalMapPositions(true);
         const draggedGroup=nodeDrag.group;
         if(draggedGroup) draggedGroup.dataset.dragged='1';
         setTimeout(()=>{ if(draggedGroup) draggedGroup.dataset.dragged='0'; },0);
@@ -5543,12 +6534,13 @@ function bindConstellationPanZoom(box,treeId,map){
     drag=null;
     box.classList.remove('dragging');
     try{ box.releasePointerCapture&&box.releasePointerCapture(e.pointerId); }catch(_){}
+    if(mapWasPanned) saveGoalMapPositions(true);
   };
   box.onpointerup=end;
   box.onpointercancel=end;
   box.ondblclick=e=>{
     if(e.target.closest&&e.target.closest('.constellation-node')) return;
-    state.scale=1; state.panX=0; state.panY=0; apply();
+    state.scale=1; state.panX=0; state.panY=0; apply(); saveGoalMapPositions(true);
   };
 }
 
@@ -5629,6 +6621,159 @@ function masteryHtml(node){
   return '<div class="cur-sub">Evidence-backed mastery</div><div class="metric-bars">'+rows+'</div>';
 }
 
+function renderGoalRestructurePanel(node,panel){
+  panel=panel||$('goal-restructure-panel'); if(!panel) return;
+  panel.hidden=false;
+  panel.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'
+    ?'페어리가 이 경로와 하위 구조를 함께 검토하는 중…'
+    :'Faerie is reviewing this path and its subtree together…');
+  pywebview.api.goal_tree_restructure_recommend(node.id).then(result=>{
+    if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not review this structure.');
+    const confidence=Math.round(Number(result.confidence||0)*100), rec=result.recommendation;
+    if(result.action==='restructure'&&rec&&rec.preview){
+      const preview=rec.preview;
+      const structural=(preview.structural_changes||[]).map(change=>
+        '<div class="goal-recap-item"><b>'+esc(change.title)+'</b><span>'+
+        esc(change.current.path)+' · '+esc(change.current.type_label)+'<br>→ '+
+        esc(change.proposed.path)+' · '+esc(change.proposed.type_label)+'</span></div>').join('');
+      const roles=(preview.role_changes||[]).map(change=>{
+        const same=change.current_role===change.proposed_role;
+        return '<div class="goal-recap-item"><b>'+esc(change.title)+'</b><span>'+
+          (same?(APP_LANG==='ko'?'역할 확인: ':'Role confirmed: '):(APP_LANG==='ko'?'가지 역할: ':'Branch role: '))+
+          esc(goalSemanticRoleLabel(change.current_role))+
+          (same?'':' → '+esc(goalSemanticRoleLabel(change.proposed_role)))+'</span></div>';
+      }).join('');
+      const warnings=(result.warnings||[]).map(value=>'<p class="hint">⚠ '+esc(value)+'</p>').join('');
+      panel.innerHTML='<div class="goal-recap-card"><div class="cur-sub">'+(APP_LANG==='ko'?'페어리의 전체 경로 구조 제안':'Faerie’s whole-path restructure')+'</div>'+
+        '<p>'+esc(result.rationale||'')+' <span class="cur-conf">'+confidence+'% '+(APP_LANG==='ko'?'확신':'confidence')+'</span></p>'+
+        structural+roles+warnings+
+        '<p class="hint"><b>'+(APP_LANG==='ko'?'모든 노드 ID와 기록이 유지됩니다.':'Every node ID and attached record stays intact.')+'</b> '+
+        (APP_LANG==='ko'?'아직 트리는 변경되지 않았습니다.':'The tree has not changed yet.')+'</p>'+
+        '<div class="actions"><button class="accent goal-restructure-create-batch">'+(APP_LANG==='ko'?'전체 변경 제안 만들기':'Create whole-tree proposal')+'</button>'+
+        '<button class="goal-restructure-manual">'+(APP_LANG==='ko'?'이 노드만 조정':'Adjust only this node')+'</button>'+
+        '<button class="skip goal-restructure-ai-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div></div>';
+      panel.querySelector('.goal-restructure-create-batch').onclick=()=>{
+        const button=panel.querySelector('.goal-restructure-create-batch');
+        button.disabled=true;button.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'승인 제안 만드는 중…':'Creating approval proposal…');
+        pywebview.api.goal_tree_restructure_propose(
+          result.scope_id,rec.changes||[],rec.role_updates||[],result.rationale||'').then(proposed=>{
+          if(!proposed||proposed.ok===false){
+            button.disabled=false;button.textContent=APP_LANG==='ko'?'전체 변경 제안 만들기':'Create whole-tree proposal';
+            toast((proposed&&proposed.message)||'Could not create restructure proposal.',true);return;
+          }
+          panel.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'
+            ?'전체 구조 변경이 승인 대기 중입니다.'
+            :'The whole-tree restructure is awaiting approval.')+'</b>'+
+            '<p class="hint">'+(APP_LANG==='ko'
+              ?'아직 변경되지 않았습니다. 아래 버튼으로 모든 검토된 변경을 한 번에 적용하세요.'
+              :'Nothing has changed yet. Approve below to apply every reviewed change atomically.')+'</p>'+
+            '<div class="actions"><button class="accent goal-restructure-approve-batch">'+(APP_LANG==='ko'?'모든 구조 변경 승인':'Approve all structure changes')+'</button>'+
+            '<button class="skip goal-restructure-ai-cancel">'+(APP_LANG==='ko'?'나중에':'Not now')+'</button></div></div>';
+          panel.querySelector('.goal-restructure-approve-batch').onclick=()=>{
+            const approve=panel.querySelector('.goal-restructure-approve-batch');
+            approve.disabled=true;approve.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'적용 중…':'Applying…');
+            pywebview.api.goal_ai_proposal(proposed.proposal_id,'approve',null,'').then(applied=>{
+              if(!applied||applied.ok===false){approve.disabled=false;approve.textContent=APP_LANG==='ko'?'모든 구조 변경 승인':'Approve all structure changes';toast((applied&&applied.message)||'Could not apply restructure.',true);return;}
+              panel.hidden=true;panel.innerHTML='';
+              applyGoalTreeUpdate(applied);
+              toast(APP_LANG==='ko'?'경로 구조와 가지 역할을 업데이트했어요.':'Growth path and Branch roles updated.');
+              loadGoalAgent(selectedGoalId);loadGoalAIOverview();
+            }).catch(error=>{approve.disabled=false;toast('Could not apply restructure: '+error,true);});
+          };
+          panel.querySelector('.goal-restructure-ai-cancel').onclick=()=>{panel.hidden=true;panel.innerHTML='';};
+        }).catch(error=>{button.disabled=false;toast('Could not create restructure proposal: '+error,true);});
+      };
+      panel.querySelector('.goal-restructure-manual').onclick=()=>renderGoalRestructureManual(node,panel,null,false);
+    }else{
+      const keep=result.action==='keep';
+      panel.innerHTML='<div class="goal-recap-card"><div class="cur-sub">'+(keep
+        ?(APP_LANG==='ko'?'현재 경로 구조가 적절해 보여요':'The current path structure looks reasonable')
+        :(APP_LANG==='ko'?'전체 경로 검토에 한 가지 답이 필요해요':'Faerie needs one answer about this path'))+'</div>'+
+        '<p>'+esc((keep?result.rationale:result.question||result.rationale)||'')+' <span class="cur-conf">'+confidence+'%</span></p>'+
+        '<div class="actions"><button class="goal-restructure-manual">'+(APP_LANG==='ko'?'이 노드만 직접 조정':'Adjust only this node manually')+'</button>'+
+        '<button class="skip goal-restructure-ai-cancel">'+(APP_LANG==='ko'?'닫기':'Close')+'</button></div></div>';
+      panel.querySelector('.goal-restructure-manual').onclick=()=>renderGoalRestructureManual(node,panel,null,false);
+    }
+    panel.querySelector('.goal-restructure-ai-cancel').onclick=()=>{panel.hidden=true;panel.innerHTML='';};
+  }).catch(error=>{
+    panel.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'AI 전체 경로 검토를 완료하지 못했어요.':'AI whole-path review could not finish.')+'</b>'+
+      '<p class="hint">'+esc(String(error))+'</p><div class="actions"><button class="goal-restructure-manual">'+(APP_LANG==='ko'?'직접 선택':'Choose manually')+'</button></div></div>';
+    panel.querySelector('.goal-restructure-manual').onclick=()=>renderGoalRestructureManual(node,panel,null,false);
+  });
+}
+
+function renderGoalRestructureManual(node,panel,recommendation,autoPreview){
+  panel=panel||$('goal-restructure-panel'); if(!panel) return;
+  panel.hidden=false;
+  const descendants=new Set();
+  const collect=current=>{(current.children||[]).forEach(child=>{descendants.add(child.id);collect(child);});};
+  collect(node);
+  const all=goalFlat(goalState.tree).filter(candidate=>candidate.id!==node.id&&!descendants.has(candidate.id)&&candidate.status!=='archived');
+  const defaultType=(recommendation&&recommendation.new_type)||(node.type==='overgoal'?'subgoal':node.type);
+  panel.innerHTML='<div class="cur-sub">'+(APP_LANG==='ko'?'구조 안전하게 변경':'Restructure safely')+'</div>'+
+    '<p class="hint">'+(APP_LANG==='ko'
+      ?'삭제하거나 다시 만들지 않습니다. 같은 ID에 단계, 완료 기록, 코칭, 증거, 결과와 Investigation 연결을 유지한 채 유형과 상위 위치를 함께 바꿉니다.'
+      :'Nothing is deleted or recreated. The same node ID keeps its steps, completion, coaching, evidence, outcomes, and Investigation links while its type and parent change together.')+'</p>'+
+    '<div class="goal-grid"><label class="goal-field">'+(APP_LANG==='ko'?'새 유형':'New type')+'<select class="goal-restructure-type">'+
+      ['overgoal','subgoal','task'].map(type=>'<option value="'+type+'"'+(type===defaultType?' selected':'')+'>'+esc(goalTypeLabel(type))+'</option>').join('')+
+    '</select></label><label class="goal-field">'+(APP_LANG==='ko'?'새 상위 영역':'New parent')+'<select class="goal-restructure-parent"></select></label></div>'+
+    '<label class="goal-field">'+(APP_LANG==='ko'?'같은 상위 영역 안의 위치':'Position under new parent')+'<input class="goal-restructure-position" type="number" min="1" value="'+(((recommendation&&recommendation.preview&&recommendation.preview.proposed.position)||0)+1)+'"></label>'+
+    '<label class="goal-field">'+(APP_LANG==='ko'?'변경 이유':'Reason for restructuring')+'<textarea class="goal-restructure-reason" rows="2" placeholder="'+esc(APP_LANG==='ko'?'예: 이 프로젝트는 Career 영역 안의 실험입니다.':'Example: This is a temporary experiment owned by the Career area.')+'"></textarea></label>'+
+    '<div class="actions"><button class="accent goal-restructure-preview">'+(APP_LANG==='ko'?'변경 미리보기':'Preview restructure')+'</button>'+
+    '<button class="skip goal-restructure-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div><div class="goal-restructure-preview-box"></div>';
+  const typeSelect=panel.querySelector('.goal-restructure-type'), parentSelect=panel.querySelector('.goal-restructure-parent');
+  const refreshParents=()=>{
+    const type=typeSelect.value;
+    const valid=all.filter(candidate=>type==='overgoal'?candidate.type==='umbrella':['overgoal','subgoal'].includes(candidate.type));
+    parentSelect.innerHTML=valid.map(candidate=>'<option value="'+candidate.id+'">'+esc((goalPathTitles(goalState.tree,candidate.id)||[candidate.title]).join(' › '))+' · '+esc(goalTypeLabel(candidate.type))+'</option>').join('');
+    const recommendedParent=recommendation&&valid.find(candidate=>candidate.id===recommendation.parent_id);
+    const career=valid.find(candidate=>/career|work|building|직업|커리어/i.test(candidate.title+' '+(candidate.description||'')));
+    if(recommendedParent){
+      parentSelect.value=String(recommendedParent.id);
+    }else if(career&&/upwork|automation|freelance|업워크|자동화/i.test(node.title+' '+(node.description||''))){
+      parentSelect.value=String(career.id);
+      const reason=panel.querySelector('.goal-restructure-reason');
+      if(reason&&!reason.value) reason.value=APP_LANG==='ko'
+        ?'이 항목은 별도의 삶의 영역이 아니라 Career & Building Things가 소유하는 임시 실험입니다.'
+        :'This is a temporary experiment owned by Career & Building Things, not a separate life domain.';
+    }
+  };
+  typeSelect.onchange=refreshParents; refreshParents();
+  if(recommendation&&recommendation.rationale) panel.querySelector('.goal-restructure-reason').value=recommendation.rationale;
+  panel.querySelector('.goal-restructure-cancel').onclick=()=>{panel.hidden=true;panel.innerHTML='';};
+  panel.querySelector('.goal-restructure-preview').onclick=()=>{
+    const button=panel.querySelector('.goal-restructure-preview'), box=panel.querySelector('.goal-restructure-preview-box');
+    if(!parentSelect.value){toast(APP_LANG==='ko'?'유효한 상위 영역을 선택해 주세요.':'Choose a valid destination parent.',true);return;}
+    button.disabled=true;button.textContent=APP_LANG==='ko'?'확인 중…':'Checking…';
+    box.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'보존될 데이터와 구조를 확인하는 중…':'Checking structure and retained data…');
+    const position=Math.max(0,(parseInt(panel.querySelector('.goal-restructure-position').value,10)||1)-1);
+    pywebview.api.goal_restructure_preview(node.id,typeSelect.value,parseInt(parentSelect.value,10),position).then(result=>{
+      button.disabled=false;button.textContent=APP_LANG==='ko'?'변경 미리보기':'Preview restructure';
+      if(!result||result.ok===false){box.innerHTML='';toast((result&&result.message)||'Could not preview restructure.',true);return;}
+      const preview=result.preview, counts=preview.retained_counts||{};
+      const kept=Object.entries(counts).filter(([,value])=>Number(value)>0).map(([key,value])=>
+        '<span class="goal-chip">'+esc(key.replaceAll('_',' '))+' · '+value+'</span>').join('');
+      box.innerHTML='<div class="goal-recap-card"><div class="cur-sub">'+(APP_LANG==='ko'?'승인 전 미리보기':'Review before approval')+'</div>'+
+        '<div class="goal-recap-item"><b>'+(APP_LANG==='ko'?'현재 경로':'Current path')+'</b><span>'+esc(preview.current.path)+' · '+esc(preview.current.type_label)+'</span></div>'+
+        '<div class="goal-recap-item"><b>'+(APP_LANG==='ko'?'변경 경로':'Proposed path')+'</b><span>'+esc(preview.proposed.path)+' · '+esc(preview.proposed.type_label)+'</span></div>'+
+        '<p class="hint"><b>'+(APP_LANG==='ko'?'같은 노드 ID가 유지됩니다.':'The same node ID will be preserved.')+'</b> '+
+          (APP_LANG==='ko'?'하위 구조와 연결된 기록은 이동과 함께 유지됩니다.':'Its subtree and attached records move with it.')+'</p><div>'+kept+'</div>'+
+        '<div class="actions"><button class="accent goal-restructure-propose">'+(APP_LANG==='ko'?'승인 대기 제안 만들기':'Create proposal for approval')+'</button></div></div>';
+      box.querySelector('.goal-restructure-propose').onclick=()=>{
+        const create=box.querySelector('.goal-restructure-propose');create.disabled=true;
+        pywebview.api.goal_restructure_propose(node.id,typeSelect.value,parseInt(parentSelect.value,10),position,
+          panel.querySelector('.goal-restructure-reason').value).then(proposed=>{
+            if(!proposed||proposed.ok===false){create.disabled=false;toast((proposed&&proposed.message)||'Could not create restructure proposal.',true);return;}
+            panel.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'구조 변경 제안이 승인 대기 중입니다.':'Restructure proposal is awaiting approval.')+'</b>'+
+              '<p class="hint">'+(APP_LANG==='ko'?'아직 트리는 바뀌지 않았습니다. 아래 GoalAI 제안에서 승인하면 한 번에 적용됩니다.':'The tree has not changed. Approve the GoalAI proposal below to apply it atomically.')+'</p></div>';
+            toast(APP_LANG==='ko'?'승인 대기 제안을 만들었습니다.':'Restructure proposal created.');loadGoalAgent(node.id);loadGoalAIOverview();
+          }).catch(error=>{create.disabled=false;toast('Could not create restructure proposal: '+error,true);});
+      };
+    }).catch(error=>{button.disabled=false;button.textContent=APP_LANG==='ko'?'변경 미리보기':'Preview restructure';box.innerHTML='';toast('Could not preview restructure: '+error,true);});
+  };
+  if(autoPreview) setTimeout(()=>panel.querySelector('.goal-restructure-preview').click(),0);
+}
+
 function renderGoalDetail(){
   if(!goalState||!goalState.tree) return;
   const node=goalFind(goalState.tree,selectedGoalId)||goalState.tree;
@@ -5643,9 +6788,9 @@ function renderGoalDetail(){
   const parentCandidates=node.type==='umbrella'?[]:goalFlat(goalState.tree).filter(x=>
     node.type==='overgoal'?x.type==='umbrella':['overgoal','subgoal'].includes(x.type));
   const parentOptions=parentCandidates.map(x=>'<option value="'+x.id+'"'+
-      (x.id===node.parent_id?' selected':'')+'>'+esc(x.title)+' ('+esc(goalTypeLabel(x.type))+')</option>').join('');
+      (x.id===node.parent_id?' selected':'')+'>'+esc(x.title)+' ('+esc(goalTypeLabel(x.type,x))+')</option>').join('');
   $('goal-detail').innerHTML='<div class="cur-head"><span class="cur-label">'+esc(node.title)+'</span>'+
-    '<span class="goal-chip">'+esc(goalTypeLabel(node.type))+'</span><span class="goal-chip">'+esc(node.status)+'</span></div>'+
+    '<span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+esc(node.status)+'</span></div>'+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Task completion</span><span>'+pctText+'</span></div>'+
     '<div class="metric-progress"><i style="width:'+(c.percent||0)+'%"></i></div></div>'+
     goalRelevanceHtml(node)+goalArchivedHistoryHtml(node)+goalOutcomeHtml(node)+
@@ -5665,9 +6810,11 @@ function renderGoalDetail(){
       '<button id="goal-edit-open">Edit Details</button>'+
       '<button id="goal-detail-relevance">Review relevance</button>'+
       '<button id="goal-rename">Rename</button>'+
+      (node.type!=='umbrella'?'<button id="goal-restructure-open">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+
       (childType?'<button id="goal-add-child">Add '+goalTypeLabel(childType)+'</button>':'')+
       (node.type!=='task'&&node.type!=='umbrella'?'<button id="goal-add-task">Add Leaf</button>':'')+
       '<button id="goal-export-notion">Export to Notion</button></div>'+
+    (node.type!=='umbrella'?'<div id="goal-restructure-panel" hidden></div>':'')+
     '<div class="cur-sub">Curiosity context</div><div>'+((node.curiosities||[]).map(x=>
       '<span class="goal-chip">'+esc(x.label)+
       (x.inherited_from_id?' · inherited from '+esc(x.inherited_from_title):
@@ -5698,7 +6845,7 @@ function renderGoalDetail(){
     $('goal-edit-form').innerHTML='<p>Detailed controls are shown in the main panel for now while the recovered Growth view is stabilized.</p>';
   };
   $('goal-rename').onclick=()=>{
-    const title=prompt('Rename this '+goalTypeLabel(node.type)+':',node.title); if(!title||title.trim()===node.title) return;
+    const title=prompt('Rename this '+goalTypeLabel(node.type,node)+':',node.title); if(!title||title.trim()===node.title) return;
     pywebview.api.goal_update(node.id,{title:title.trim()}).then(handleGoalMutation);
   };
   const createChild=(type)=>{
@@ -5707,6 +6854,8 @@ function renderGoalDetail(){
   };
   if($('goal-add-child')) $('goal-add-child').onclick=()=>createChild(childType);
   if($('goal-add-task')) $('goal-add-task').onclick=()=>createChild('task');
+  if($('goal-restructure-open')) $('goal-restructure-open').onclick=()=>
+    renderGoalRestructurePanel(node,$('goal-restructure-panel'));
   if($('goal-move')) $('goal-move').onclick=()=>
     pywebview.api.goal_move(node.id,parseInt($('goal-parent').value,10),
       Math.max(0,(parseInt($('goal-position').value,10)||1)-1)).then(handleGoalMutation);
@@ -5865,6 +7014,30 @@ function focusGoalAIQueueItem(){
 
 function goalProposalSummaryHtml(p){
   const payload=p.payload||{};
+  if(p.type==='restructure_tree'){
+    const preview=payload.preview||{};
+    const structural=preview.structural_changes||[], roles=preview.role_changes||[];
+    return '<div class="cur-text"><b>'+(APP_LANG==='ko'?'전체 경로 구조 변경':'Whole-path restructure')+'</b></div>'+
+      '<div class="hint">'+esc(p.rationale||'')+'</div>'+
+      structural.map(change=>'<div class="goal-recap-item" style="margin-top:8px"><b>'+esc(change.title||'')+'</b><span>'+
+        esc((change.current&&change.current.path)||'')+' → '+esc((change.proposed&&change.proposed.path)||'')+'</span></div>').join('')+
+      roles.map(change=>'<div class="goal-recap-item" style="margin-top:8px"><b>'+esc(change.title||'')+'</b><span>'+
+        (change.current_role===change.proposed_role?(APP_LANG==='ko'?'역할 확인: ':'Role confirmed: '):(APP_LANG==='ko'?'가지 역할: ':'Branch role: '))+
+        esc(goalSemanticRoleLabel(change.current_role))+
+        (change.current_role===change.proposed_role?'':' → '+esc(goalSemanticRoleLabel(change.proposed_role)))+'</span></div>').join('')+
+      '<p class="hint"><b>'+(APP_LANG==='ko'?'모든 노드 ID와 기록 유지':'Every node ID and attached record is preserved')+'</b></p>';
+  }
+  if(p.type==='restructure_node'){
+    const current=payload.current||{}, proposed=payload.proposed||{}, counts=payload.retained_counts||{};
+    const kept=Object.entries(counts).filter(([,value])=>Number(value)>0).map(([key,value])=>
+      '<span class="goal-chip">'+esc(key.replaceAll('_',' '))+' · '+value+'</span>').join('');
+    return '<div class="cur-text"><b>'+(APP_LANG==='ko'?'데이터를 유지하며 구조 변경':'Restructure without losing data')+'</b></div>'+
+      '<div class="hint">'+esc(p.rationale||'')+'</div>'+
+      '<div class="goal-recap-item" style="margin-top:8px"><b>'+(APP_LANG==='ko'?'현재':'Current')+'</b><span>'+esc(current.path||'')+' · '+esc(current.type_label||'')+'</span></div>'+
+      '<div class="goal-recap-item" style="margin-top:8px"><b>'+(APP_LANG==='ko'?'변경 후':'Proposed')+'</b><span>'+esc(proposed.path||'')+' · '+esc(proposed.type_label||'')+'</span></div>'+
+      '<p class="hint"><b>'+(APP_LANG==='ko'?'같은 노드 ID 유지':'Same node ID preserved')+'</b> · '+
+        (APP_LANG==='ko'?'승인하면 유형과 상위 위치가 하나의 트랜잭션에서 함께 변경됩니다.':'Type and parent change together in one transaction when approved.')+'</p><div>'+kept+'</div>';
+  }
   if(p.type==='promote_insight'){
     const target=goalState&&goalState.tree?goalFind(goalState.tree,p.target_node_id):null;
     const confidence=Math.round((payload.confidence||0)*100);
@@ -5891,7 +7064,7 @@ function goalAgentHtml(view,node){
   const proposals=ps.map(p=>'<div class="agent-proposal" data-pid="'+p.id+'">'+
     goalProposalSummaryHtml(p)+'<div class="actions">'+
     '<button class="agent-p-dismiss skip">Dismiss</button><button class="agent-p-refine">Refine</button>'+
-    '<button class="agent-p-approve accent">Approve</button></div></div>').join('');
+    '<button class="agent-p-approve accent">'+(['restructure_node','restructure_tree'].includes(p.type)?(APP_LANG==='ko'?'구조 변경 승인':'Approve restructure'):'Approve')+'</button></div></div>').join('');
   const candidates=mc.map(c=>'<div class="agent-proposal" data-mid="'+c.id+'"><div class="cur-text"><b>'+
     esc(c.category)+' · '+esc(c.attribute)+'</b></div><div>'+esc(c.value)+'</div><div class="actions">'+
     '<button class="agent-m-dismiss skip">Dismiss</button><button class="agent-m-save accent">Save to Memory</button>'+
@@ -5906,7 +7079,7 @@ function goalAgentHtml(view,node){
       'Up to date'+(s.last_run_at?' · last reviewed '+esc(new Date(s.last_run_at).toLocaleString()):''))+
     (s.deferred?' · deferred by the nightly batch limit':'')+'</div><div class="actions"><button id="agent-review-node" title="Ask this node’s agent to reassess only this Root, Branch, or Leaf using its current evidence, questions, proposals, and child reports.">Review node</button>'+
     (node.type!=='task'?'<button id="agent-review-subtree" title="Review this node and every active child below it, bottom-up, then refresh the parent summary.">Review subtree</button>':'')+
-    '<button id="agent-harvest" title="Distill reusable learning from this part of the tree so it can flow upward through the Soul and later inform related branches.">Harvest '+esc(goalTypeLabel(node.type))+'</button>'+
+    '<button id="agent-harvest" title="Distill reusable learning from this part of the tree so it can flow upward through the Soul and later inform related branches.">Harvest '+esc(goalTypeLabel(node.type,node))+'</button>'+
     '<button class="accent" id="agent-open-chat" title="Talk to this node’s bounded agent when you want to clarify context, refine proposals, explore blockers, or stage changes before committing.">Ask Agent</button></div>'+
     (s.next_focus?'<div class="cur-sub">Next focus</div><p>'+esc(s.next_focus)+'</p>':'')+
     (evidence?'<div class="cur-sub">Evidence considered</div><ul>'+evidence+'</ul>':'')+
@@ -6131,14 +7304,14 @@ function renderPlanner(){
   if(ready) $('planner-draft').value=JSON.stringify(plannerSession.draft,null,2);
 }
 
-function openGoalPlanner(itemId,btn){
+function openGoalPlanner(itemId,btn,targetParentId,placement){
   if(!api()) return;
   // Starting a planning session calls the model and then opens a separate
   // chat window — grey the trigger out so the wait is visibly acknowledged.
   const original=btn?btn.textContent:'';
   if(btn){ btn.disabled=true; btn.textContent=(APP_LANG==='ko'?'불러오는 중…':'Loading…'); }
   const restore=()=>{ if(btn){ btn.disabled=false; btn.textContent=original; } };
-  pywebview.api.goal_plan_start(itemId,null).then(r=>{
+  pywebview.api.goal_plan_start(itemId,targetParentId,placement||{}).then(r=>{
     if(!r||r.ok===false){ restore(); toast((r&&r.message)||'Could not start planning.',true); return; }
     plannerSession=r.session;
     return launchAgentWindow('goal-planner',plannerSession.id).then(restore);
@@ -6225,17 +7398,76 @@ const detailsOpenPref=(function(){
   try{ return JSON.parse(localStorage.getItem('ffDetailsOpen')||'{}')||{}; }
   catch(e){ return {}; }
 })();
+function hydrateDurableUiPreferences(){
+  if(!api()||!pywebview.api.ui_preferences_get) return Promise.resolve();
+  return pywebview.api.ui_preferences_get().then(result=>{
+    if(!result||result.ok===false) return;
+    const preferences=result.preferences||{};
+    if(Object.prototype.hasOwnProperty.call(preferences,'mascot_skin')){
+      const saved=preferences.mascot_skin;
+      if(['classic','dark','cat','knight','meditate'].includes(saved)) faerieMascotSkin=saved;
+    }else{
+      persistDurableUiPreference('mascot_skin',faerieMascotSkin);
+    }
+    if(preferences.details_open&&typeof preferences.details_open==='object'){
+      Object.keys(detailsOpenPref).forEach(key=>delete detailsOpenPref[key]);
+      Object.assign(detailsOpenPref,preferences.details_open);
+    }else{
+      persistDurableUiPreference('details_open',detailsOpenPref);
+    }
+    if(preferences.growth_map_layout&&typeof preferences.growth_map_layout==='object'){
+      const layout=preferences.growth_map_layout;
+      goalMapPositions=(layout.positions&&typeof layout.positions==='object')?layout.positions:{};
+      Object.keys(constellationViewState).forEach(key=>delete constellationViewState[key]);
+      if(layout.views&&typeof layout.views==='object') Object.assign(constellationViewState,layout.views);
+    }else{
+      persistDurableUiPreference('growth_map_layout',{
+        positions:goalMapPositions,
+        views:constellationViewState
+      });
+    }
+    try{
+      localStorage.setItem('ffFaerieMascotSkin',faerieMascotSkin);
+      localStorage.setItem('ffDetailsOpen',JSON.stringify(detailsOpenPref));
+      localStorage.setItem(GOAL_MAP_POS_KEY,JSON.stringify(goalMapPositions));
+    }catch(e){}
+    refreshFaerieMascotSetting();
+    document.querySelectorAll('details[data-collapse-key]').forEach(d=>{
+      const key=d.dataset.collapseKey;
+      if(Object.prototype.hasOwnProperty.call(detailsOpenPref,key)) d.open=!!detailsOpenPref[key];
+    });
+  }).catch(()=>{});
+}
 function bindCollapsePrefs(root){
   if(!root) return;
-  root.querySelectorAll('details[data-ckey]').forEach(d=>{
-    const key=d.dataset.ckey;
+  root.querySelectorAll('details').forEach((d,index)=>{
+    if(d.dataset.ffCollapseBound) return;
+    const summary=d.querySelector(':scope > summary');
+    const owner=d.closest('[data-collapse-scope]');
+    const container=d.closest('[id]');
+    const label=String(summary&&summary.textContent||d.className||'details').replace(/\s+/g,' ').trim().slice(0,120);
+    const scope=(owner&&owner.dataset.collapseScope)||(container&&container.id)||'app';
+    const key=d.dataset.ckey||d.dataset.collapseKey||(scope+'::'+label+'::'+index);
+    d.dataset.ffCollapseBound='1';
+    d.dataset.collapseKey=key;
     if(Object.prototype.hasOwnProperty.call(detailsOpenPref,key)) d.open=!!detailsOpenPref[key];
     d.addEventListener('toggle',()=>{
       detailsOpenPref[key]=d.open;
       try{ localStorage.setItem('ffDetailsOpen',JSON.stringify(detailsOpenPref)); }catch(e){}
+      persistDurableUiPreference('details_open',detailsOpenPref);
     });
   });
 }
+
+// Details elements are created throughout the app as views refresh. Binding
+// them centrally keeps a user's collapsed/open choice stable across every
+// tab change, rerender, and app refresh—not only on the Investigations board.
+bindCollapsePrefs(document);
+new MutationObserver(records=>{
+  records.forEach(record=>record.addedNodes.forEach(node=>{
+    if(node&&node.nodeType===1) bindCollapsePrefs(node.matches&&node.matches('details')?node.parentElement:node);
+  }));
+}).observe(document.body,{childList:true,subtree:true});
 
 const curLoopDismissed=new Set(JSON.parse(localStorage.getItem('curLoopDismissed')||'[]'));
 const curLoopOutcomes=new Map(Object.entries(JSON.parse(localStorage.getItem('curLoopOutcomes')||'{}'))
@@ -6522,9 +7754,14 @@ function curQuestionHtml(cur, item){
     '<label class="metric-field" style="margin:8px 0"><span>Assessment rating</span><select class="cur-rating">'+
     Array.from({length:21},(_,i)=>i/2).map(v=>'<option value="'+v+'"'+(v===5?' selected':'')+'>'+v.toFixed(1)+'</option>').join('')+
     '</select><span class="metric-rating">Average</span></label>' : '';
+  const threadPicker=(cur.threads||[]).length?'<div class="actions cur-question-route"><label class="hint">'+
+    (APP_LANG==='ko'?'이 질문의 위치: ':'Question belongs in: ')+'<select class="cur-question-thread">'+
+    '<option value="" '+(!item.thread_id?'selected':'')+'>'+(APP_LANG==='ko'?'상위 탐구 전체':'Parent Investigation / general')+'</option>'+
+    (cur.threads||[]).map(thread=>'<option value="'+thread.id+'" '+(Number(item.thread_id)===Number(thread.id)?'selected':'')+'>'+esc(thread.title)+'</option>').join('')+
+    '</select></label><button type="button" class="cur-question-move">'+(APP_LANG==='ko'?'이동':'Move')+'</button></div>':'';
   return '<div class="cur-item" id="cur-item-'+item.id+'">' +
     '<div class="quick-type">'+(isYesNo?'Quick clarifier':'Reflection prompt')+'</div>'+
-    '<div class="cur-text">'+esc(item.text)+conf+'</div>' +
+    '<div class="cur-text">'+esc(item.text)+conf+'</div>' +threadPicker+
     (isYesNo?'<div class="choice-pills">'+
       '<button type="button" class="cur-quick-answer" data-answer="Yes.">Yes</button>'+
       '<button type="button" class="cur-quick-answer" data-answer="No.">No</button>'+
@@ -6561,6 +7798,15 @@ function bindCurQuestion(cur, item){
     if(savedDraft&&!textarea.value){ textarea.value=savedDraft; autoGrow(textarea); }
   }catch(e){}
   textarea.addEventListener('input',saveDraft);
+  const move=el.querySelector('.cur-question-move');
+  if(move) move.onclick=()=>{
+    const selected=el.querySelector('.cur-question-thread').value;
+    move.disabled=true;move.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'이동 중…':'Moving…');
+    pywebview.api.curiosity_item_thread(item.id,selected||null).then(r=>{
+      if(!r||r.ok===false){move.disabled=false;move.textContent=APP_LANG==='ko'?'이동':'Move';toast((r&&r.message)||'Could not move this question.',true);return;}
+      toast(APP_LANG==='ko'?'질문을 이동했어요.':'Question moved.');loadCuriosity();
+    }).catch(e=>{move.disabled=false;toast('Could not move this question: '+e,true);});
+  };
   el.querySelector('.cur-dismiss').onclick=()=>{
     if(!api()) return;
     pywebview.api.curiosity_dismiss(item.id).then(r=>{
@@ -6629,18 +7875,188 @@ function curSuggestionHtml(item){
     '<div class="cur-text">'+esc(item.text)+conf+'</div>' +
     outcome+
     '<div class="actions">' +
-      '<button class="accent cur-implement">Implement…</button>' +
+      '<button class="accent cur-implement">Review implementation…</button>' +
       '<button class="yes cur-sugg" data-action="tried">Tried it</button>' +
       '<button class="kind cur-sugg" data-action="not_helpful_light">Not helpful (a little)</button>' +
       '<button class="no cur-sugg" data-action="not_helpful_heavy">Not helpful (a lot)</button>' +
       '<button class="skip cur-sugg" data-action="dismissed">Dismiss</button>' +
-    '</div></div>';
+    '</div><div class="cur-overlap-review" hidden></div></div>';
+}
+
+function suggestionOverlapHtml(item,data){
+  const matches=(data&&data.matches||[]);
+  if(!matches.length) return '';
+  return '<div><b>'+(APP_LANG==='ko'?'트리에 이미 있는 작업과 겹칠 수 있어요':'This may overlap work already in your tree')+'</b>'+
+    '<div class="hint">'+(APP_LANG==='ko'
+      ?'이 비율은 완료율이나 병합 진행률이 아니라 문구와 개념의 중복 추정치예요. 업데이트를 승인하거나, 별도로 만들거나, 제안을 닫을 때까지 표시됩니다.'
+      :'This is a wording-and-concept comparison, not merge progress. It remains visible until you approve the update, create separately, or dismiss the suggestion.')+'</div>'+
+    matches.map((match,index)=>{ const type=goalTypeLabel(match.node_type||'task'), counts=match.history_counts||{};
+      const kept=[counts.coach_messages?counts.coach_messages+' coaching messages':'',counts.coach_steps?counts.coach_steps+' coached steps':'',counts.outcomes?counts.outcomes+' outcomes':'',counts.evidence?counts.evidence+' evidence links':'',counts.children?counts.children+' child nodes':''].filter(Boolean).join(', ');
+      return '<div class="cur-overlap-match">'+
+      '<div><span class="cur-overlap-score">'+Math.round(match.similarity*100)+'% '+(APP_LANG==='ko'?'문구·개념 중복 추정':'wording-overlap estimate')+'</span> · <b>'+esc(match.title)+'</b> · '+esc(type)+'</div>'+
+      '<div class="cur-overlap-path">'+esc(match.path||'')+'</div>'+
+      (match.matched_via==='originating_suggestion'
+        ?'<div class="hint"><b>'+(APP_LANG==='ko'?'이전 구현에서 확인됨:':'Recognized from the earlier implementation:')+'</b> '+
+          (APP_LANG==='ko'?'이 항목은 매우 비슷한 Investigation 제안에서 직접 만들어졌어요.':'This node was directly created from a closely related Investigation suggestion.')+'</div>'
+        :'')+
+      (match.description?'<div class="cur-overlap-description">'+esc(match.description.slice(0,420))+'</div>':'')+
+      '<div class="hint"><b>'+(APP_LANG==='ko'?'데이터 보존:':'Data stays attached:')+'</b> '+(APP_LANG==='ko'
+        ?'제목과 방향만 제자리에서 업데이트됩니다. 기존 단계, 완료 상태, 코칭 기록, 증거, 결과 및 하위 항목은 그대로 유지돼요.'
+        :'Only the title and direction are updated in place. Existing steps, completion, coaching history, evidence, outcomes, and children remain attached.')+(kept?' ('+esc(kept)+')':'')+'</div>'+
+      '<div class="hint"><b>'+(APP_LANG==='ko'?'추천:':'Recommended:')+'</b> '+(APP_LANG==='ko'
+        ?'중복 항목을 만들기보다 새 제안의 더 명확한 방향을 이 항목에 통합하세요.'
+        :'Update this '+esc(type)+' with the clearer direction instead of creating duplicate work.')+'</div>'+
+      '<div class="actions"><button type="button" class="accent cur-adapt-leaf" data-match="'+index+'">'+(APP_LANG==='ko'?'이 '+esc(type)+' 수정':'Adapt this '+esc(type))+'</button></div>'+
+      '</div>'; }).join('')+
+    '<div class="actions"><button type="button" class="cur-create-separate">'+(APP_LANG==='ko'?'별도 계획으로 만들기':'Create a separate plan')+'</button>'+
+    '<button type="button" class="skip cur-overlap-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div></div>';
+}
+
+function suggestionNoOverlapHtml(){
+  return '<div><b>'+(APP_LANG==='ko'?'기존 목표와 뚜렷한 중복을 찾지 못했어요':'No clear existing goal match was found')+'</b>'+
+    '<div class="hint">'+(APP_LANG==='ko'
+      ?'아직 아무것도 만들지 않았어요. 계획을 만들기 전에 이 작업이 삶의 어느 영역에 속하는지 먼저 확인할게요.'
+      :'Nothing has been created. Before planning, Faerie will confirm which part of your life should own this work.')+'</div>'+
+    '<div class="actions"><button type="button" class="accent cur-create-new-plan">'+(APP_LANG==='ko'?'배치 선택':'Choose placement')+'</button>'+
+    '<button type="button" class="skip cur-overlap-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div></div>';
+}
+
+function renderSuggestionPlacement(item,data,box){
+  const candidates=(data&&data.candidates)||[], root=data&&data.new_root||{};
+  if(!candidates.length&&!root.eligible){
+    box.innerHTML='<div><b>'+(APP_LANG==='ko'?'아직 안전하게 배치할 수 없어요':'Faerie cannot place this safely yet')+'</b>'+
+      '<div class="hint">'+esc(data.question||(APP_LANG==='ko'
+        ?'Growth에서 이 작업을 소유할 지속적인 삶의 영역을 먼저 만들거나 선택해 주세요.'
+        :'Create or choose a durable life area in Growth before turning this into a plan.'))+'</div>'+
+      '<div class="actions"><button type="button" class="skip cur-overlap-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div></div>';
+    box.querySelector('.cur-overlap-cancel').onclick=()=>{box.hidden=true;box.innerHTML='';};
+    return;
+  }
+  const recommended=String(data.recommended_parent_id==null?'':data.recommended_parent_id);
+  const defaultValue=recommended||(root.eligible?'new-root':String(candidates[0].id));
+  const options=candidates.map(candidate=>'<option value="'+candidate.id+'"'+
+    (String(candidate.id)===defaultValue?' selected':'')+'>'+esc(candidate.path)+' · '+esc(goalTypeLabel(candidate.node_type))+'</option>').join('')+
+    (root.eligible?'<option value="new-root"'+(defaultValue==='new-root'?' selected':'')+'>'+esc((APP_LANG==='ko'?'새 Root: ':'New Root: ')+root.title)+'</option>':'');
+  box.innerHTML='<div><b>'+(APP_LANG==='ko'?'이 계획은 어디에 속하나요?':'Where should this plan live?')+'</b>'+
+    '<div class="hint">'+(APP_LANG==='ko'
+      ?'페어리는 단어가 비슷한 곳이 아니라 이 작업을 장기적으로 소유하는 가장 구체적인 영역을 찾았어요. 임시 프로젝트는 Root가 될 수 없어요.'
+      :'Faerie looked for the most specific enduring area that owns this work—not merely similar wording. A temporary project cannot become a Root.')+'</div>'+
+    (data.rationale?'<div class="cur-overlap-description"><b>'+(APP_LANG==='ko'?'추천 이유: ':'Why this fits: ')+'</b>'+esc(data.rationale)+'</div>':'')+
+    (data.needs_choice?'<div class="cur-overlap-description"><b>'+(APP_LANG==='ko'?'확인 질문: ':'One placement question: ')+'</b>'+esc(data.question||(APP_LANG==='ko'?'이 작업을 소유해야 할 삶의 영역은 어디인가요?':'Which part of your life should own this work?'))+'</div>':'')+
+    '<div class="cur-overlap-form"><label>'+(APP_LANG==='ko'?'상위 영역':'Parent area')+'<select class="cur-placement-parent">'+options+'</select></label>'+
+    '<div class="cur-overlap-description"><b>'+(APP_LANG==='ko'?'만들어질 경로':'Proposed path')+'</b><div class="cur-placement-path"></div></div>'+
+    '<div class="hint cur-placement-root-note"></div>'+
+    '<div class="actions"><button type="button" class="accent cur-placement-confirm">'+(APP_LANG==='ko'?'이 배치로 계획하기':'Continue with this placement')+'</button>'+
+    '<button type="button" class="skip cur-placement-back">'+(APP_LANG==='ko'?'뒤로':'Back')+'</button></div></div></div>';
+  const select=box.querySelector('.cur-placement-parent'), path=box.querySelector('.cur-placement-path');
+  const rootNote=box.querySelector('.cur-placement-root-note');
+  const refresh=()=>{
+    if(select.value==='new-root'){
+      path.textContent=root.path;
+      rootNote.textContent=(APP_LANG==='ko'?'새 Root 지속성 검토: ':'New Root durability check: ')+(root.rationale||root.description);
+    }else{
+      const parent=candidates.find(candidate=>String(candidate.id)===select.value);
+      path.textContent=(parent?parent.path+' › ':'')+data.plan_title;
+      rootNote.textContent='';
+    }
+  };
+  select.onchange=refresh; refresh();
+  box.querySelector('.cur-placement-back').onclick=()=>reviewSuggestionImplementation(item,null,true);
+  box.querySelector('.cur-placement-confirm').onclick=()=>{
+    const button=box.querySelector('.cur-placement-confirm'); button.disabled=true;
+    let targetParentId, placement;
+    if(select.value==='new-root'){
+      targetParentId=data.soul.id;
+      placement={mode:'new_root',root_eligible:true,root_title:root.title,
+        root_description:root.description,rationale:root.rationale,user_confirmed:true};
+    }else{
+      const parent=candidates.find(candidate=>String(candidate.id)===select.value);
+      targetParentId=parent.id;
+      placement={mode:'existing',parent_id:parent.id,parent_path:parent.path,
+        rationale:data.rationale,confidence:data.confidence,user_confirmed:true};
+    }
+    openGoalPlanner(item.id,button,targetParentId,placement);
+  };
+}
+
+function reviewSuggestionPlacement(item,box,button){
+  if(!api()||!pywebview.api.goal_plan_placement) return;
+  if(button){button.disabled=true;button.textContent=APP_LANG==='ko'?'배치 분석 중…':'Finding its place…';}
+  box.hidden=false; box.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'Growth 트리에서 알맞은 위치를 찾는 중…':'Finding the best place in your Growth tree…');
+  pywebview.api.goal_plan_placement(item.id).then(data=>{
+    if(!data||data.ok===false) throw new Error((data&&data.message)||'Could not recommend placement.');
+    renderSuggestionPlacement(item,data,box);
+  }).catch(error=>{if(button)button.disabled=false;toast('Could not recommend placement: '+error,true);});
+}
+
+function renderSuggestionAdaptForm(item,match,box){
+  const type=goalTypeLabel(match.node_type||'task');
+  const current=String(match.description||'').trim();
+  const adapted=(current?current+'\n\n':'')+(APP_LANG==='ko'?'Investigation에서 다듬은 방향:':'Refined direction from Investigation:')+'\n'+item.text;
+  box.innerHTML='<div><b>'+(APP_LANG==='ko'?'기존 '+esc(type)+' 업데이트 제안':'Propose an in-place update to the existing '+esc(type))+'</b>'+
+    '<div class="hint">'+(APP_LANG==='ko'?'새 항목을 만들지 않습니다. Growth에서 승인하면 기존 데이터가 붙어 있는 같은 항목이 업데이트돼요.':'This does not create a new node. Approval updates the same node with all existing data still attached.')+'</div>'+
+    '<div class="cur-overlap-form"><label>'+esc(type)+' '+(APP_LANG==='ko'?'제목':'title')+'<input class="cur-adapt-title" value="'+esc(match.title)+'"></label>'+
+    '<label>'+(APP_LANG==='ko'?'통합된 방향':'Combined direction')+'<textarea class="cur-adapt-description" rows="9">'+esc(adapted)+'</textarea></label>'+
+    '<div class="actions"><button type="button" class="accent cur-adapt-propose">'+(APP_LANG==='ko'?'업데이트 제안 만들기':'Create update proposal')+'</button>'+
+    '<button type="button" class="skip cur-adapt-back">'+(APP_LANG==='ko'?'뒤로':'Back')+'</button></div></div></div>';
+  box.querySelector('.cur-adapt-back').onclick=()=>reviewSuggestionImplementation(item,null,true);
+  box.querySelector('.cur-adapt-propose').onclick=()=>{
+    const button=box.querySelector('.cur-adapt-propose'); button.disabled=true;
+    pywebview.api.curiosity_suggestion_propose_update(
+      item.id,match.goal_id,box.querySelector('.cur-adapt-title').value,
+      box.querySelector('.cur-adapt-description').value).then(result=>{
+        if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not create update proposal.');
+        box.innerHTML='<b>'+(APP_LANG==='ko'?'제자리 업데이트 제안을 만들었어요.':'In-place update proposal created.')+'</b>'+
+          '<div class="hint">'+(APP_LANG==='ko'?'아직 항목은 변경되지 않았고 새 항목도 만들어지지 않았어요. 승인하면 기존 기록을 유지한 채 같은 '+esc(type)+'가 업데이트됩니다.':'Nothing has changed and no new node was created. Approval updates the same '+esc(type)+' while preserving its history.')+'</div>'+
+          '<div class="actions"><button type="button" class="accent cur-apply-update">'+(APP_LANG==='ko'?'지금 업데이트 적용':'Apply update now')+'</button>'+
+          '<button type="button" class="cur-open-growth">'+(APP_LANG==='ko'?'Growth에서 먼저 검토':'Review in Growth first')+'</button></div>';
+        box.querySelector('.cur-apply-update').onclick=()=>{
+          const apply=box.querySelector('.cur-apply-update'); apply.disabled=true;
+          pywebview.api.goal_ai_proposal(result.proposal_id,'approve',null,'').then(applied=>{
+            if(!applied||applied.ok===false) throw new Error((applied&&applied.message)||'Could not apply update.');
+            box.innerHTML='<b>'+(APP_LANG==='ko'?'같은 '+esc(type)+'가 업데이트됐어요.':'The same '+esc(type)+' was updated.')+'</b>'+
+              '<div class="hint">'+(APP_LANG==='ko'?'새 항목은 만들어지지 않았고 기존 단계, 완료 기록, 코칭 및 하위 항목이 그대로 유지됐어요. Growth 지도를 새로 불러왔습니다.':'No new node was created. Existing steps, completion, coaching, and children were preserved, and the Growth map has been refreshed.')+'</div>';
+            loadGoals(); if(currentCuriosityState) loadCuriosity();
+          }).catch(error=>{ apply.disabled=false; toast('Could not apply update: '+error,true); });
+        };
+        box.querySelector('.cur-open-growth').onclick=()=>{
+          selectedGoalId=match.goal_id; switchView('goals'); loadGoals();
+          setTimeout(()=>loadGoalAgent(match.goal_id),350);
+        };
+      }).catch(error=>{ button.disabled=false; toast('Could not create update proposal: '+error,true); });
+  };
+}
+
+function reviewSuggestionImplementation(item,button,reload){
+  if(!api()||!pywebview.api.curiosity_suggestion_overlap) return;
+  const el=$('cur-item-'+item.id), box=el&&el.querySelector('.cur-overlap-review');
+  if(!box) return;
+  if(button){ button.disabled=true; button.textContent=APP_LANG==='ko'?'비교 중…':'Comparing…'; }
+  box.hidden=false; box.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'기존 목표와 비교 중…':'Comparing with existing goals…');
+  pywebview.api.curiosity_suggestion_overlap(item.id).then(data=>{
+    if(button){ button.disabled=false; button.textContent=APP_LANG==='ko'?'구현 검토…':'Review implementation…'; }
+    if(!data||data.ok===false) throw new Error((data&&data.message)||'Could not compare suggestion.');
+    if(!(data.matches||[]).length){
+      box.innerHTML=suggestionNoOverlapHtml();
+      box.querySelector('.cur-create-new-plan').onclick=()=>reviewSuggestionPlacement(item,box,box.querySelector('.cur-create-new-plan'));
+      box.querySelector('.cur-overlap-cancel').onclick=()=>{ box.hidden=true; box.innerHTML=''; };
+      return;
+    }
+    box.innerHTML=suggestionOverlapHtml(item,data);
+    box.querySelectorAll('.cur-adapt-leaf').forEach(adapt=>adapt.onclick=()=>
+      renderSuggestionAdaptForm(item,data.matches[parseInt(adapt.dataset.match,10)],box));
+    box.querySelector('.cur-create-separate').onclick=()=>reviewSuggestionPlacement(item,box,box.querySelector('.cur-create-separate'));
+    box.querySelector('.cur-overlap-cancel').onclick=()=>{ box.hidden=true; box.innerHTML=''; };
+  }).catch(error=>{
+    if(button){ button.disabled=false; button.textContent=APP_LANG==='ko'?'구현 검토…':'Review implementation…'; }
+    box.hidden=true; toast('Could not compare suggestion: '+error,true);
+  });
 }
 
 function bindCurSuggestion(item){
   const el=$('cur-item-'+item.id);
   const implementBtn=el.querySelector('.cur-implement');
-  implementBtn.onclick=()=>openGoalPlanner(item.id,implementBtn);
+  implementBtn.onclick=()=>reviewSuggestionImplementation(item,implementBtn);
   const outcome=el.querySelector('.cur-outcome');
   if(outcome) outcome.onchange=()=>{
     outcome.nextElementSibling.textContent=outcome.value?'Uses explicit outcome evidence':'No mastery change';
@@ -6883,12 +8299,43 @@ function curMetricHtml(cur){
     (logs?'<div class="metric-log">'+logs+'</div>':'')+'</div></details>';
 }
 
+function curThreadsHtml(cur){
+  const threads=cur.threads||[];
+  const ko=APP_LANG==='ko';
+  const rows=threads.map(thread=>{
+    const openQ=thread.open_questions||[], openS=thread.open_suggestions||[];
+    const count=openQ.length+openS.length;
+    return '<details class="metric-panel metric-collapsible cur-thread" data-thread-id="'+thread.id+'" data-ckey="cur-thread-'+thread.id+'">'+
+      '<summary class="metric-summary"><span class="metric-summary-title">'+esc(thread.title)+'</span>'+
+      '<span class="metric-summary-stats"><span>'+count+' '+(ko?'대기 중':'waiting')+'</span><span>'+esc(thread.status)+'</span></span></summary>'+
+      '<div class="metric-body"><p>'+esc(thread.directive)+'</p><div class="actions">'+
+      (thread.status==='active'?'<button class="cur-thread-generate">'+(ko?'이 방향 계속 탐색':'Continue this direction')+'</button>':'')+
+      '<button class="cur-thread-status" data-status="'+(thread.status==='active'?'paused':'active')+'">'+
+      (thread.status==='active'?(ko?'갈래 일시정지':'Pause thread'):(ko?'갈래 재개':'Resume thread'))+'</button>'+
+      '<button class="cur-thread-status skip" data-status="archived">'+(ko?'갈래 보관':'Archive thread')+'</button></div>'+
+      (openQ.length?'<div class="cur-sub">'+(ko?'이 갈래의 질문':'Questions in this thread')+'</div>'+openQ.map(item=>curQuestionHtml(cur,item)).join(''):'')+
+      (openS.length?'<div class="cur-sub">'+(ko?'이 갈래의 제안':'Suggestions in this thread')+'</div>'+openS.map(curSuggestionHtml).join(''):'')+
+      (!count?'<p class="hint">'+(ko?'이 갈래에서 지금 답할 내용은 없어요.':'Nothing is waiting in this thread right now.')+'</p>':'')+
+      ((thread.resolved||[]).length?'<details class="metric-panel"><summary class="metric-summary"><span class="metric-summary-title">'+
+        (ko?'이 갈래에서 최근 해결됨':'Recently resolved in this thread')+'</span></summary><div class="metric-body">'+
+        curResolvedHtml(thread.resolved)+'</div></details>':'')+'</div></details>';
+  }).join('');
+  return '<details class="metric-panel cur-threads" open><summary class="metric-summary"><span class="metric-summary-title">'+
+    (ko?'탐색 갈래':'Exploration Threads')+'</span><span class="metric-summary-stats"><span>'+threads.length+'</span></span></summary>'+
+    '<div class="metric-body"><p class="hint">'+(ko
+      ?'같은 큰 탐구 안에서 서로 다른 증거와 질문을 분리해 추적해요. 각 갈래의 학습은 상위 탐구의 해석에 요약됩니다.'
+      :'Track distinct evidence and questions without splitting the larger Investigation. Learning from each thread rolls up into the parent interpretation.')+
+    '</p>'+rows+'<button class="cur-thread-add accent">'+(ko?'탐색 갈래 추가':'Add Exploration Thread')+'</button></div></details>';
+}
+
 function curCardHtml(cur){
   const star = cur.is_greatest ? '★' : '☆';
   const starClass = cur.is_greatest ? 'cur-star on' : 'cur-star';
   const statusChip = cur.status==='paused'
     ? '<span class="cur-status-chip paused">paused</span>' : '';
-  const openQ = cur.open_questions||[], openS = cur.open_suggestions||[], resolved = cur.resolved||[];
+  const openQ = (cur.open_questions||[]).filter(item=>!item.thread_id);
+  const openS = (cur.open_suggestions||[]).filter(item=>!item.thread_id);
+  const resolved = (cur.resolved||[]).filter(item=>!item.thread_id);
   return '<div class="card" id="cur-'+cur.id+'">' +
     '<div class="cur-head">' +
       '<span class="'+starClass+'" title="'+(cur.is_greatest
@@ -6911,6 +8358,7 @@ function curCardHtml(cur){
     curDocumentContextHtml(cur) +
     curAttachmentHtml(cur) +
     curInteractionPreferencesHtml(cur) +
+    curThreadsHtml(cur) +
     curSynthesisHtml(cur) +
     curClassificationHtml(cur) +
     curLoopHtml(cur) +
@@ -7235,16 +8683,32 @@ function curCandidatePanelHtml(state){
   const active=(state.curiosities||[]).filter(item=>item.status==='active').length;
   const cards=candidates.map(candidate=>{
     const p=candidate.payload||{};
+    const related=(state.curiosities||[]).find(item=>Number(item.id)===Number(p.related_curiosity_id));
+    const directions=(p.directions||[]).map((direction,index)=>{
+      const routeOptions=related
+        ?'<option value="thread" '+(p.recommended_route==='thread'?'selected':'')+'>'+(APP_LANG==='ko'?'‘'+esc(related.label)+'’ 안에 탐색 갈래 만들기':'Create a thread inside “'+esc(related.label)+'”')+'</option>'+
+         '<option value="update" '+(p.recommended_route==='update'?'selected':'')+'>'+(APP_LANG==='ko'?'기존 방향에 새 맥락으로 추가':'Add as context to the existing direction')+'</option>'
+        :'';
+      return '<details class="metric-panel candidate-direction" data-direction-index="'+index+'"><summary class="metric-summary">'+
+        '<span class="metric-summary-title">'+esc(direction.title)+'</span></summary><div class="metric-body"><p>'+esc(direction.question)+'</p>'+
+        (direction.rationale?'<p class="hint">'+esc(direction.rationale)+'</p>':'')+'<div class="actions"><select class="candidate-route">'+routeOptions+
+        '<option value="separate" '+(!related||p.recommended_route==='separate'?'selected':'')+'>'+(APP_LANG==='ko'?'별도의 탐구로 시작':'Start as a separate Investigation')+'</option></select>'+
+        '<button class="candidate-start candidate-direction-start accent">'+(APP_LANG==='ko'?'이 방향 탐색':'Explore this direction')+'</button></div></div></details>';
+    }).join('');
     return '<div class="agent-proposal investigation-candidate" data-candidate-id="'+candidate.id+'">'+
       '<div class="cur-text"><b>'+esc(p.title||'Suggested Investigation')+'</b></div>'+
       '<p>'+esc(p.question||'')+'</p><p class="hint">Why now: '+esc(p.rationale||'')+'</p>'+
       '<p class="hint"><b>What this could change:</b> '+esc(p.what_could_change||'')+'</p>'+
+      (related?'<p class="hint"><b>'+(APP_LANG==='ko'?'겹치는 탐구:':'Related Investigation:')+'</b> '+esc(related.label)+'. '+
+        (APP_LANG==='ko'?'방향마다 기존 탐구의 갈래로 둘지 별도 탐구로 둘지 선택할 수 있어요.':'For each direction, choose whether it belongs inside that Investigation or should stand alone.')+'</p>':'')+
+      directions+
       '<div class="metric-summary-stats"><span>'+esc(p.burden||'medium')+' burden</span>'+
       '<span>'+Math.round(Number(p.expected_usefulness||0)*100)+'% expected usefulness</span>'+
       (p.sensitivity==='sensitive'?'<span>sensitive — starts only with permission</span>':'')+'</div>'+
       '<div class="actions"><button class="candidate-never skip">Never suggest this topic</button>'+
       '<button class="candidate-reject skip">Not relevant</button><button class="candidate-defer">Not now</button>'+
-      '<button class="candidate-refine">Refine</button><button class="candidate-start accent">Start Investigation</button></div></div>';
+      '<button class="candidate-refine">Refine</button>'+
+      (!directions?'<button class="candidate-start accent">Start Investigation</button>':'')+'</div></div>';
   }).join('');
   return '<details class="metric-panel cur-candidate-panel" data-ckey="candidates" open><summary class="metric-summary">'+
     '<span class="metric-summary-title">Possible next Investigations</span>'+
@@ -7267,20 +8731,35 @@ function bindCandidatePanel(state){
     suggest.disabled=true;suggest.textContent='Looking for useful uncertainty…';
     pywebview.api.curiosity_candidate_suggest().then(r=>{
       if(!r||r.ok===false){suggest.disabled=false;toast((r&&r.message)||'Could not suggest Investigations.',true);return;}
-      toast((r.candidates||[]).length?'Investigation suggestions are ready.':'Nothing new is useful enough to suggest right now.');
+      toast(Number(r.routed||0)>0
+        ?(APP_LANG==='ko'?'관련된 새 단서를 기존 탐구에 추가했어요.':'A related new lead was added to an existing Investigation instead of creating a duplicate.')
+        :(r.candidates||[]).length?'Investigation suggestions are ready.':'Nothing new is useful enough to suggest right now.');
       loadCuriosity();
     }).catch(e=>{suggest.disabled=false;toast('Could not suggest Investigations: '+e,true);});
   };
   panel.querySelectorAll('.investigation-candidate').forEach(box=>{
     const id=parseInt(box.dataset.candidateId,10);
     const candidate=(state.investigation_candidates||[]).find(item=>item.id===id);
-    const act=(action,payload)=>pywebview.api.curiosity_candidate_action(id,action,payload||null).then(r=>{
-      if(!r||r.ok===false){toast((r&&r.message)||'Could not update this suggestion.',true);return;}
-      toast(action==='start'?'Investigation started.':action==='defer'?'Suggestion deferred for two weeks.':
+    const act=(action,payload,trigger)=>{
+      const start=trigger||box.querySelector('.candidate-start');
+      const startLabel=start?start.textContent:'';
+      const restoreStart=()=>{
+        box.querySelectorAll('button').forEach(button=>button.disabled=false);
+        if(start) start.textContent=startLabel;
+      };
+      if(action==='start'){
+        box.querySelectorAll('button').forEach(button=>button.disabled=true);
+        if(start) start.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'탐구 시작 중…':'Starting Investigation…');
+      }
+      return pywebview.api.curiosity_candidate_action(id,action,payload||null).then(r=>{
+      if(!r||r.ok===false){if(action==='start') restoreStart();toast((r&&r.message)||'Could not update this suggestion.',true);return;}
+      toast(action==='start'?(r.route==='thread'?(APP_LANG==='ko'?'기존 탐구에 새 탐색 갈래를 만들었어요.':'A new Exploration Thread was added to the related Investigation.'):
+        r.reused?'Related Investigation updated.':'Investigation started.'):action==='defer'?'Suggestion deferred for two weeks.':
         action==='reject'?'Faerie will not repeat this rejected topic.':
         action==='never_ask'?'This topic is permanently blocked from suggestions.':'Suggestion refined.');
       loadCuriosity();
-    }).catch(e=>toast('Could not update this suggestion: '+e,true));
+      }).catch(e=>{ if(action==='start') restoreStart(); toast('Could not update this suggestion: '+e,true); });
+    };
     box.querySelector('.candidate-defer').onclick=()=>act('defer');
     box.querySelector('.candidate-reject').onclick=()=>act('reject');
     box.querySelector('.candidate-never').onclick=()=>act('never_ask');
@@ -7290,10 +8769,114 @@ function bindCandidatePanel(state){
       if(!question||!question.trim()) return;
       act('refine',{...current,question:question.trim()});
     };
-    box.querySelector('.candidate-start').onclick=()=>{
+    const mainStart=box.querySelector('.candidate-start:not(.candidate-direction-start)');
+    if(mainStart) mainStart.onclick=()=>{
       const sensitive=candidate&&candidate.payload&&candidate.payload.sensitivity==='sensitive';
       if(sensitive&&!confirm('This suggestion touches a sensitive topic. Start it only if you want Faerie to explore it now.')) return;
-      act('start',sensitive?{sensitive_permission:true}:null);
+      act('start',sensitive?{sensitive_permission:true}:null,mainStart);
+    };
+    box.querySelectorAll('.candidate-direction-start').forEach(button=>{
+      button.onclick=()=>{
+        const direction=button.closest('.candidate-direction');
+        const sensitive=candidate&&candidate.payload&&candidate.payload.sensitivity==='sensitive';
+        if(sensitive&&!confirm('This suggestion touches a sensitive topic. Start it only if you want Faerie to explore it now.')) return;
+        act('start',{route:direction.querySelector('.candidate-route').value,
+          direction_index:parseInt(direction.dataset.directionIndex,10),
+          sensitive_permission:sensitive},button);
+      };
+    });
+  });
+}
+
+function curRelatedPanelHtml(groups,loading){
+  groups=groups||[];
+  if(loading) return '<div class="card"><p class="hint"><span class="spin"></span> '+
+    (APP_LANG==='ko'?'진행 중인 탐구 사이의 겹침을 비교하고 있어요…':'Comparing active Investigations for overlap…')+'</p></div>';
+  if(!groups.length) return '<div class="actions" style="margin:8px 0 14px"><button id="cur-review-related">'+
+    (APP_LANG==='ko'?'관련 탐구 검토':'Review related Investigations')+'</button></div>';
+  const cards=groups.map((group,index)=>{
+    const members=group.members||[];
+    const options=members.map(item=>'<option value="'+item.id+'" '+
+      (Number(item.id)===Number(group.recommended_target_id)?'selected':'')+'>'+esc(item.label)+'</option>').join('');
+    const rows=members.map(item=>'<div class="resolved-row"><div class="rr-body"><div class="rr-q">'+
+      esc(item.label)+'</div><div class="rr-a">'+esc(item.directive)+'</div></div></div>').join('');
+    return '<div class="agent-proposal cur-related-group" data-group-index="'+index+'"><b>'+
+      (APP_LANG==='ko'?'서로 겹칠 수 있는 탐구':'Investigations that may overlap')+'</b> · '+
+      Math.round(Number(group.similarity||0)*100)+'%<p class="hint">'+
+      (APP_LANG==='ko'?'계속 사용할 하나를 선택하세요. 다른 탐구의 질문, 답변, 해석, 결과와 성장 연결은 그 탐구로 옮겨지고, 중복 껍데기만 보관 처리됩니다.'
+        :'Choose the Investigation that should continue. Questions, answers, interpretations, outcomes, and Growth links from the others will move into it; only the redundant shells are archived.')+
+      '</p>'+rows+'<div class="actions"><label>'+(APP_LANG==='ko'?'계속할 탐구: ':'Keep: ')+
+      '<select class="cur-merge-target">'+options+'</select></label><button class="cur-merge accent">'+
+      (APP_LANG==='ko'?'선택한 탐구로 통합':'Combine into selected Investigation')+'</button></div></div>';
+  }).join('');
+  return '<details class="metric-panel" open><summary class="metric-summary"><span class="metric-summary-title">'+
+    (APP_LANG==='ko'?'관련 탐구 정리':'Related Investigation cleanup')+'</span></summary><div class="metric-body">'+cards+
+    '<button id="cur-review-related">'+(APP_LANG==='ko'?'다시 비교':'Compare again')+'</button></div></details>';
+}
+
+function bindRelatedInvestigationPanel(groups){
+  const panel=$('cur-related'); if(!panel) return;
+  const review=panel.querySelector('#cur-review-related');
+  if(review) review.onclick=()=>{
+    panel.innerHTML=curRelatedPanelHtml([],true);
+    pywebview.api.curiosity_related_investigations().then(r=>{
+      if(!r||r.ok===false){panel.innerHTML=curRelatedPanelHtml([],false);bindRelatedInvestigationPanel([]);toast((r&&r.message)||'Could not compare Investigations.',true);return;}
+      const found=r.groups||[];
+      panel.innerHTML=curRelatedPanelHtml(found,false);bindRelatedInvestigationPanel(found);
+      if(!found.length) toast(APP_LANG==='ko'?'통합할 만큼 비슷한 진행 중 탐구가 없어요.':'No open Investigations are similar enough to combine.');
+    }).catch(e=>{panel.innerHTML=curRelatedPanelHtml([],false);bindRelatedInvestigationPanel([]);toast('Could not compare Investigations: '+e,true);});
+  };
+  const addThread=card.querySelector('.cur-thread-add');
+  if(addThread) addThread.onclick=()=>{
+    const title=prompt(APP_LANG==='ko'?'이 탐색 갈래의 짧은 이름은 무엇인가요?':'What is the short name of this exploration direction?','');
+    if(!title||!title.trim()) return;
+    const directive=prompt(APP_LANG==='ko'?'이 갈래가 알아내야 할 질문은 무엇인가요?':'What question should this thread investigate?','');
+    if(!directive||!directive.trim()) return;
+    addThread.disabled=true;addThread.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'갈래를 만들고 첫 질문을 준비 중…':'Creating the thread and preparing its first questions…');
+    pywebview.api.curiosity_thread_create(cur.id,title.trim(),directive.trim()).then(r=>{
+      if(!r||r.ok===false){addThread.disabled=false;addThread.textContent=APP_LANG==='ko'?'탐색 갈래 추가':'Add Exploration Thread';toast((r&&r.message)||'Could not create the Exploration Thread.',true);return;}
+      toast(APP_LANG==='ko'?'탐색 갈래를 만들었어요.':'Exploration Thread created.');loadCuriosity();
+    }).catch(e=>{addThread.disabled=false;toast('Could not create the Exploration Thread: '+e,true);});
+  };
+  card.querySelectorAll('.cur-thread').forEach(box=>{
+    const threadId=parseInt(box.dataset.threadId,10);
+    const generate=box.querySelector('.cur-thread-generate');
+    if(generate) generate.onclick=()=>{
+      generate.disabled=true;generate.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'이 갈래의 다음 질문 준비 중…':'Preparing the next questions for this thread…');
+      pywebview.api.curiosity_thread_generate(threadId).then(r=>{
+        if(!r||r.ok===false){generate.disabled=false;toast((r&&r.message)||'Could not continue this thread.',true);return;}
+        toast(APP_LANG==='ko'?'갈래의 다음 질문을 준비했어요.':'The thread has its next questions.');loadCuriosity();
+      }).catch(e=>{generate.disabled=false;toast('Could not continue this thread: '+e,true);});
+    };
+    box.querySelectorAll('.cur-thread-status').forEach(button=>button.onclick=()=>{
+      const status=button.dataset.status;
+      if(status==='archived'&&!confirm(APP_LANG==='ko'?'이 갈래를 보관할까요? 답변과 기록은 삭제되지 않아요.':'Archive this thread? Its answers and history will not be deleted.')) return;
+      button.disabled=true;button.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'업데이트 중…':'Updating…');
+      pywebview.api.curiosity_thread_status(threadId,status).then(r=>{
+        if(!r||r.ok===false){button.disabled=false;toast((r&&r.message)||'Could not update this thread.',true);return;}
+        loadCuriosity();
+      }).catch(e=>{button.disabled=false;toast('Could not update this thread: '+e,true);});
+    });
+  });
+  panel.querySelectorAll('.cur-related-group').forEach(box=>{
+    const group=(groups||[])[parseInt(box.dataset.groupIndex,10)];
+    const button=box.querySelector('.cur-merge');
+    button.onclick=()=>{
+      const targetId=parseInt(box.querySelector('.cur-merge-target').value,10);
+      const target=(group.members||[]).find(item=>Number(item.id)===targetId);
+      const sourceIds=(group.members||[]).map(item=>Number(item.id)).filter(id=>id!==targetId);
+      const promptText=APP_LANG==='ko'
+        ?'‘'+(target&&target.label||'')+'’에 기록을 합치고 나머지 중복 탐구를 보관할까요?'
+        :'Move all history into “'+(target&&target.label||'')+'” and archive the redundant Investigations?';
+      if(!confirm(promptText)) return;
+      button.disabled=true;button.innerHTML='<span class="spin"></span> '+
+        (APP_LANG==='ko'?'기록을 보존하며 통합 중…':'Combining while preserving history…');
+      pywebview.api.curiosity_merge(targetId,sourceIds).then(r=>{
+        if(!r||r.ok===false){button.disabled=false;button.textContent=APP_LANG==='ko'?'선택한 탐구로 통합':'Combine into selected Investigation';toast((r&&r.message)||'Could not combine Investigations.',true);return;}
+        toast(APP_LANG==='ko'?'탐구를 통합했고 기록은 계속 연결되어 있어요.':'Investigations combined; their history remains attached.');
+        panel.innerHTML='';
+        loadCuriosity();
+      }).catch(e=>{button.disabled=false;toast('Could not combine Investigations: '+e,true);});
     };
   });
 }
@@ -7303,6 +8886,10 @@ function renderCuriosity(s, images){
   currentCuriosityState=s;
   const candidatePanel=$('cur-candidates');
   if(candidatePanel){candidatePanel.innerHTML=curCandidatePanelHtml(s);bindCandidatePanel(s);bindCollapsePrefs(candidatePanel);}
+  const relatedPanel=$('cur-related');
+  if(relatedPanel&&!relatedPanel.innerHTML.trim()){
+    relatedPanel.innerHTML=curRelatedPanelHtml([],false);bindRelatedInvestigationPanel([]);
+  }
   const list=$('cur-list');
   const curiosities=dedupeCuriositiesForDisplay(s.curiosities||[]);
   if(!curiosities.length){
@@ -7441,7 +9028,7 @@ function boot(tries){
     }catch(e){
       ready=Promise.resolve({profile:'personal',initial_view:'self',backend:'bridge update needed',bootstrap_error:String(e)});
     }
-    ready.then(info=>{
+    ready.then(info=>hydrateDurableUiPreferences().then(()=>info)).then(info=>{
       applyAppBootstrap(info);
       if(info&&info.bootstrap_error){
         toast('Faerie Fire bridge did not finish booting: '+info.bootstrap_error,true);
@@ -7453,6 +9040,63 @@ function boot(tries){
   }
   else if(tries>0) setTimeout(()=>boot(tries-1), 250);
 }
+let textContextTarget=null,textContextSelection='';
+function closeTextContextMenu(){const menu=document.querySelector('.text-context-menu');if(menu)menu.remove();}
+function selectedTextFor(target){
+  if(target&&/^(TEXTAREA|INPUT)$/.test(target.tagName)){
+    const start=Number(target.selectionStart||0),end=Number(target.selectionEnd||0);
+    return String(target.value||'').slice(start,end);
+  }
+  return String(window.getSelection&&window.getSelection().toString()||'');
+}
+function replaceEditableSelection(target,text){
+  if(!target) return;
+  target.focus();
+  if(/^(TEXTAREA|INPUT)$/.test(target.tagName)&&typeof target.setRangeText==='function'){
+    const start=Number(target.selectionStart||0),end=Number(target.selectionEnd||start);
+    target.setRangeText(String(text||''),start,end,'end');
+    target.dispatchEvent(new Event('input',{bubbles:true}));
+  }else if(target.isContentEditable){document.execCommand('insertText',false,String(text||''));}
+}
+function installTextContextMenu(){
+  document.addEventListener('contextmenu',event=>{
+    const target=event.target.closest?event.target.closest('textarea,input,[contenteditable="true"]'):null;
+    const readable=event.target.closest?event.target.closest('.leaf-coach-message,.cc-message,.cur-item,.goal-focus-panel,.card,p,li,pre'):null;
+    textContextTarget=target||readable||event.target;
+    textContextSelection=selectedTextFor(target);
+    event.preventDefault();closeTextContextMenu();
+    const editable=!!target, menu=document.createElement('div');menu.className='text-context-menu';
+    const entries=[];
+    if(textContextSelection) entries.push(['copy',APP_LANG==='ko'?'복사':'Copy']);
+    if(editable&&textContextSelection) entries.push(['cut',APP_LANG==='ko'?'잘라내기':'Cut']);
+    if(editable) entries.push(['paste',APP_LANG==='ko'?'붙여넣기':'Paste']);
+    entries.push(['select',APP_LANG==='ko'?'모두 선택':'Select all']);
+    menu.innerHTML=entries.map(entry=>'<button type="button" data-text-action="'+entry[0]+'">'+entry[1]+'</button>').join('');
+    document.body.appendChild(menu);
+    const width=170,height=Math.max(40,entries.length*36+12);
+    menu.style.left=Math.max(6,Math.min(event.clientX,innerWidth-width-6))+'px';
+    menu.style.top=Math.max(6,Math.min(event.clientY,innerHeight-height-6))+'px';
+    menu.querySelectorAll('[data-text-action]').forEach(button=>button.onclick=()=>{
+      const action=button.dataset.textAction;
+      if(action==='copy'||action==='cut'){
+        if(api()&&pywebview.api.clipboard_write) pywebview.api.clipboard_write(textContextSelection);
+        else navigator.clipboard&&navigator.clipboard.writeText(textContextSelection);
+        if(action==='cut'&&editable) replaceEditableSelection(target,'');
+      }else if(action==='paste'&&editable){
+        const apply=value=>replaceEditableSelection(target,value);
+        if(api()&&pywebview.api.clipboard_read) pywebview.api.clipboard_read().then(result=>apply(result&&result.text||''));
+        else if(navigator.clipboard) navigator.clipboard.readText().then(apply);
+      }else if(action==='select'){
+        if(editable&&target.select) target.select();
+        else{const selection=window.getSelection(),range=document.createRange();range.selectNodeContents(textContextTarget);selection.removeAllRanges();selection.addRange(range);}
+      }
+      closeTextContextMenu();
+    });
+  });
+  document.addEventListener('pointerdown',event=>{if(!event.target.closest('.text-context-menu'))closeTextContextMenu();});
+  window.addEventListener('blur',closeTextContextMenu);
+}
+installTextContextMenu();
 let booted=false;
 function bootOnce(tries){ if(booted) return; booted=true; boot(tries); }
 window.addEventListener('pywebviewready', ()=>bootOnce(40));

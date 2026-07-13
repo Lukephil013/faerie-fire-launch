@@ -13,6 +13,7 @@ from livingpc.curiosity import (CuriosityContext, CuriosityStore, GeneratedItem,
                                 parse_items, reactivate_curiosity, respond_suggestion,
                                 reconcile_synthesis, run_all_active, set_curiosity,
                                 set_curiosity_from_journal, set_greatest,
+                                merge_investigations, related_investigation_groups,
                                 start_investigation_candidate,
                                 suggest_investigation_candidates,
                                 synthesize_curiosity, _classification_origin)
@@ -20,6 +21,7 @@ from livingpc.goals import GoalStore
 from livingpc.inference import InferenceStore
 from livingpc.memory import MemoryStore
 from livingpc import crypto
+from livingpc.companion.history import ChatStore
 
 
 class _FakeModel:
@@ -335,6 +337,45 @@ class TestGeneration(unittest.TestCase):
         texts = [i["text"] for i in self.store.open_items(cid)]
         self.assertEqual(texts, ["above the bar"])
 
+    def test_deep_investigation_refreshes_later_calibration_and_relevant_chat(self):
+        from livingpc.curiosity import _build_context, build_synthesis_prompt
+
+        cid = self.store.add_curiosity(
+            "understand why my energy crashes after client handoffs", "Energy crashes")
+        item_id = self.store.add_item(
+            cid, "question", "What happens after a difficult client handoff?", confidence=.9)
+        self.store.mark_answered(item_id, "I skip food and then lose focus.", None)
+        baseline = self.store.add_synthesis(
+            cid, {"interpretation": "Food may matter.", "confidence": .5},
+            based_on_item_id=item_id)
+        self.store.decide_synthesis(baseline["id"], "approve")
+        self.assertFalse(self.store.synthesis_due(cid)["due"])
+
+        # These arrive only after the Investigation already has deep evidence.
+        self.mem.upsert_core_profile_fact(
+            "Needs & Limits", "non-negotiable constraint",
+            "I need a real lunch before demanding afternoon work.",
+            source_kind="soul_calibration")
+        chats = ChatStore(self.store.db_path)
+        chat_id = chats.create("Energy update")
+        chats.append(chat_id, "user", "My client handoff energy crash is worse after conflict.")
+        chats.append(chat_id, "assistant", "You always fear every client conversation.")
+
+        context = _build_context(self.mem, self.inf, self.store, cid)
+        prompt = build_synthesis_prompt(
+            self.store.get_curiosity(cid), context,
+            [item for item in self.store.items_for_curiosity(cid)
+             if item["status"] == "answered"], None)
+
+        self.assertIn("real lunch", context.core_profile_block)
+        self.assertIn("worse after conflict", context.chat_context_block)
+        self.assertNotIn("always fear", context.chat_context_block)
+        self.assertIn("later Soul Calibration answers", prompt)
+        self.assertIn("worse after conflict", prompt)
+        due = self.store.synthesis_due(cid)
+        self.assertTrue(due["due"])
+        self.assertGreaterEqual(due["new_context"], 2)
+
     def test_suggestion_gate_is_higher_than_question_gate(self):
         cid = self.store.add_curiosity("fitness goals", "fitness")
         model = _FakeModel([
@@ -345,6 +386,31 @@ class TestGeneration(unittest.TestCase):
         self.assertEqual(created, 1)
         texts = [i["text"] for i in self.store.open_items(cid)]
         self.assertEqual(texts, ["grounded pick"])
+
+    def test_near_duplicate_suggestions_keep_only_the_clearer_higher_confidence_one(self):
+        cid = self.store.add_curiosity("test Faerie with friends", "Faerie testing")
+        first = ("After your wife tests Faerie V2, set a concrete date within one week to test it "
+                 "with your friend remotely. Before that test, write down three specific things you "
+                 "are watching for beyond whether they use it unprompted: clarifying questions, "
+                 "helpful features, and suggested changes. This gives a clearer signal than waiting "
+                 "two weeks to see whether they open it.")
+        clearer = ("After your wife tests Faerie V2 this week, set a concrete date within one week "
+                   "to test it with your friend remotely. Before that test, write down three specific "
+                   "signals beyond whether they use it unprompted: clarifying questions about "
+                   "features, helpful investigations or GoalAI moments, and changes they suggest "
+                   "unprompted. This gives a clearer read than waiting two weeks to see whether they "
+                   "opened it.")
+        model = _FakeModel([
+            GeneratedItem("suggestion", first, .85),
+            GeneratedItem("suggestion", clearer, .89),
+        ])
+
+        created = generate_items(self.mem, self.inf, self.store, cid, model, limit=3)
+
+        self.assertEqual(created, 1)
+        suggestions = [item for item in self.store.open_items(cid)
+                       if item["kind"] == "suggestion"]
+        self.assertEqual([item["text"] for item in suggestions], [clearer])
 
     def test_limit_keeps_highest_confidence_first(self):
         cid = self.store.add_curiosity("fitness goals", "fitness")
@@ -624,17 +690,19 @@ class TestGeneration(unittest.TestCase):
                                expected_usefulness=.95)])
         goals = GoalStore(os.path.join(self.tmp.name, "memory.db"))
         try:
-            visible = suggest_investigation_candidates(
+            result = suggest_investigation_candidates(
                 self.store, self.inf, goals, model)
         finally:
             goals.close()
+        visible = result["candidates"]
         self.assertLessEqual(len(visible), 2)
         self.assertEqual(len(self.store.list_curiosities(status="active")), 1)
-        first = next(item for item in visible if item["topic_key"] == "handoff-energy")
-        self.assertIn("third", {item["topic_key"] for item in visible})
-        self.assertNotIn("second", {item["topic_key"] for item in visible})
-        self.assertEqual(first["payload"]["evidence_refs"],
-                         [f"synthesis:{synthesis['id']}"])
+        self.assertEqual(result["routed"], 0)
+        related = next(item for item in visible
+                       if item["topic_key"] == "handoff-energy")
+        self.assertEqual(related["payload"]["related_curiosity_id"], cid)
+        self.assertEqual(related["payload"]["recommended_route"], "thread")
+        self.assertTrue(related["payload"]["directions"])
         self.assertEqual(model.context["capacity"]["candidate_slots"], 2)
 
     def test_candidate_starts_only_after_explicit_action_and_respects_capacity(self):
@@ -650,11 +718,60 @@ class TestGeneration(unittest.TestCase):
         full_candidate = self.store.add_candidate(_candidate_payload("capacity-test"))
         for index in range(4):
             self.store.add_curiosity(f"active {index}", f"active {index}")
-        with self.assertRaises(ValueError):
-            start_investigation_candidate(
-                self.mem, self.inf, self.store, full_candidate["id"],
-                StubCuriosityModel())
-        self.assertEqual(self.store.candidate(full_candidate["id"])["status"], "open")
+        reused = start_investigation_candidate(
+            self.mem, self.inf, self.store, full_candidate["id"],
+            StubCuriosityModel())
+        self.assertTrue(reused["reused"])
+        self.assertEqual(reused["curiosity_id"], result["curiosity_id"])
+        self.assertEqual(self.store.candidate(full_candidate["id"])["status"], "started")
+
+    def test_related_investigations_can_merge_without_losing_history(self):
+        target = self.store.add_curiosity(
+            "understand energy sensitivity around meals", "Energy Sensitivity & Food")
+        source = self.store.add_curiosity(
+            "learn what food patterns cause energy crashes", "Energy & Food Investigation")
+        item_id = self.store.add_item(source, "question", "When does the crash begin?")
+        synthesis = self.store.add_synthesis(source, {
+            "interpretation": "Meal timing may matter.", "confidence": .6})
+        self.store.add_classification_context(source, "Older useful lead")
+        groups = related_investigation_groups(self.store)
+        self.assertEqual({member["id"] for member in groups[0]["members"]},
+                         {target, source})
+
+        merged = merge_investigations(self.store, target, [source])
+        self.assertEqual(merged["archived_ids"], [source])
+        self.assertEqual(self.store.get_curiosity(source)["status"], "archived")
+        self.assertEqual(self.store.get_item(item_id)["curiosity_id"], target)
+        self.assertEqual(self.store.get_synthesis(synthesis["id"])["curiosity_id"], target)
+        notes = [row["note"] for row in self.store.classification_contexts(target, 20)]
+        self.assertTrue(any("Older useful lead" in note for note in notes))
+        self.assertTrue(any("Energy & Food Investigation" in note for note in notes))
+
+    def test_candidate_direction_can_become_a_thread_without_new_investigation(self):
+        parent = self.store.add_curiosity(
+            "understand how Faerie Fire should grow", "Faerie Fire")
+        candidate = self.store.add_candidate(_candidate_payload(
+            "faerie-aesthetic", title="Explore Faerie Fire directions",
+            question="Which direction matters next?", related_curiosity_id=parent,
+            recommended_route="thread", directions=[{
+                "title": "Aesthetic and identity",
+                "question": "What should the voice and ambient UI feel like?",
+                "rationale": "This is distinct from market validation.",
+            }]))
+        result = start_investigation_candidate(
+            self.mem, self.inf, self.store, candidate["id"], StubCuriosityModel(),
+            route="thread", direction_index=0)
+        self.assertEqual(result["curiosity_id"], parent)
+        self.assertEqual(result["route"], "thread")
+        self.assertEqual(len(self.store.list_curiosities(status="active")), 1)
+        thread = self.store.get_thread(result["thread_id"])
+        self.assertEqual(thread["title"], "Aesthetic and identity")
+        self.assertTrue(any(item["thread_id"] == thread["id"]
+                            for item in self.store.items_for_curiosity(parent)))
+        general = self.store.add_item(parent, "question", "A broad question")
+        moved = self.store.assign_item_thread(general, thread["id"])
+        self.assertEqual(moved["thread_id"], thread["id"])
+        self.assertIsNone(self.store.assign_item_thread(general, None)["thread_id"])
 
     def test_sensitive_candidate_requires_explicit_permission(self):
         candidate = self.store.add_candidate(_candidate_payload(

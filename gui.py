@@ -117,6 +117,29 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def ui_preferences_get(self) -> dict:
+        """Return durable visual preferences without logging their contents."""
+        from livingpc.ui_preferences import UiPreferenceStore
+        store = UiPreferenceStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, "preferences": store.get_all()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def ui_preference_set(self, key, value) -> dict:
+        """Persist one allowlisted visual preference across app restarts."""
+        from livingpc.ui_preferences import UiPreferenceStore
+        store = UiPreferenceStore(self.cfg.memory_db_path)
+        try:
+            store.set(str(key or ""), value)
+            return {"ok": True}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
     def app_set_language(self, lang) -> dict:
         """Persist the UI/model language ("en" or "ko"); picked at onboarding
         and changeable later. The JS layer applies it live; Python strings and
@@ -984,6 +1007,7 @@ class GuiApi:
             for row in store.list_curiosities():
                 if row["status"] == "archived":
                     continue
+                store.deduplicate_open_suggestions(row["id"])
                 open_items = store.open_items(row["id"])
                 for item in open_items:
                     item["context_attachments"] = documents.list(
@@ -1009,6 +1033,20 @@ class GuiApi:
                     with open(path, "rb") as handle:
                         preview = "data:image/png;base64," + base64.b64encode(
                             handle.read()).decode("ascii")
+                threads = []
+                for thread in store.threads(row["id"]):
+                    thread_open = [item for item in open_items
+                                   if item.get("thread_id") == thread["id"]]
+                    thread_resolved = [item for item in resolved_items
+                                       if item.get("thread_id") == thread["id"]]
+                    threads.append({
+                        **thread,
+                        "open_questions": [item for item in thread_open
+                                           if item["kind"] == "question"],
+                        "open_suggestions": [item for item in thread_open
+                                             if item["kind"] == "suggestion"],
+                        "resolved": thread_resolved,
+                    })
                 curiosities.append({
                     **row,
                     "open_questions": [i for i in open_items if i["kind"] == "question"],
@@ -1032,6 +1070,7 @@ class GuiApi:
                     "interaction_preferences": store.interaction_preference_block(row["id"]),
                     "attached_goals": attached_by_curiosity.get(row["id"], []),
                     "context_attachments": documents.list("curiosity", row["id"]),
+                    "threads": threads,
                 })
             archived = store.list_curiosities(status="archived")
             return {
@@ -1077,10 +1116,10 @@ class GuiApi:
         inf = InferenceStore(self.cfg.memory_db_path)
         goals = GoalStore(self.cfg.memory_db_path)
         try:
-            candidates = suggest_investigation_candidates(
+            result = suggest_investigation_candidates(
                 store, inf, goals,
                 get_curiosity_model(self.cfg, usage_category="manual"))
-            return {"ok": True, "candidates": candidates}
+            return {"ok": True, **result}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
@@ -1101,10 +1140,12 @@ class GuiApi:
             action = str(action or "")
             if action == "start":
                 model = get_curiosity_model(self.cfg, usage_category="manual")
+                action_payload = payload if isinstance(payload, dict) else {}
                 result = start_investigation_candidate(
                     mem, inf, store, int(candidate_id), model,
-                    sensitive_permission=bool(
-                        isinstance(payload, dict) and payload.get("sensitive_permission")))
+                    sensitive_permission=bool(action_payload.get("sensitive_permission")),
+                    route=action_payload.get("route"),
+                    direction_index=action_payload.get("direction_index"))
                 self._sync_curiosity_notion_quietly(
                     mem, inf, store, result["curiosity_id"], model)
                 return {"ok": True, **result}
@@ -1119,6 +1160,92 @@ class GuiApi:
         finally:
             mem.close()
             inf.close()
+            store.close()
+
+    def curiosity_thread_create(self, curiosity_id, title, directive) -> dict:
+        from livingpc.curiosity import CuriosityStore, generate_items, get_curiosity_model
+        from livingpc.inference import InferenceStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        mem = MemoryStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        try:
+            thread = store.add_thread(int(curiosity_id), str(title), str(directive))
+            created = generate_items(
+                mem, inf, store, int(curiosity_id),
+                get_curiosity_model(self.cfg, usage_category="manual"),
+                thread_id=thread["id"])
+            return {"ok": True, "thread": thread, "created": created}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            inf.close()
+            mem.close()
+            store.close()
+
+    def curiosity_thread_generate(self, thread_id) -> dict:
+        from livingpc.curiosity import CuriosityStore, generate_items, get_curiosity_model
+        from livingpc.inference import InferenceStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        mem = MemoryStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        try:
+            thread = store.get_thread(int(thread_id))
+            if not thread:
+                raise ValueError("Exploration Thread not found")
+            created = generate_items(
+                mem, inf, store, thread["curiosity_id"],
+                get_curiosity_model(self.cfg, usage_category="manual"),
+                thread_id=thread["id"])
+            return {"ok": True, "thread": thread, "created": created}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            inf.close()
+            mem.close()
+            store.close()
+
+    def curiosity_thread_status(self, thread_id, status) -> dict:
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, "thread": store.set_thread_status(
+                int(thread_id), str(status))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def curiosity_item_thread(self, item_id, thread_id=None) -> dict:
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            selected = None if thread_id in {None, "", 0, "0"} else int(thread_id)
+            return {"ok": True, "item": store.assign_item_thread(int(item_id), selected)}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def curiosity_related_investigations(self) -> dict:
+        from livingpc.curiosity import CuriosityStore, related_investigation_groups
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, "groups": related_investigation_groups(store)}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def curiosity_merge(self, target_id, source_ids) -> dict:
+        from livingpc.curiosity import CuriosityStore, merge_investigations
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            result = merge_investigations(
+                store, int(target_id), [int(value) for value in (source_ids or [])])
+            return {"ok": True, **result}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
             store.close()
 
     def curiosity_synthesize(self, curiosity_id) -> dict:
@@ -1554,6 +1681,31 @@ class GuiApi:
             inf.close()
             store.close()
 
+    def curiosity_suggestion_overlap(self, item_id) -> dict:
+        from livingpc.goals import suggestion_leaf_overlaps
+        try:
+            return {"ok": True, **suggestion_leaf_overlaps(self.cfg, int(item_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def curiosity_suggestion_propose_update(self, item_id, goal_id,
+                                            title, description) -> dict:
+        from livingpc.goals import propose_suggestion_leaf_update
+        try:
+            return {"ok": True, **propose_suggestion_leaf_update(
+                self.cfg, int(item_id), int(goal_id),
+                str(title or ""), str(description or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_plan_placement(self, suggestion_item_id) -> dict:
+        from livingpc.goals import get_goal_planner, recommend_suggestion_placement
+        try:
+            return {"ok": True, **recommend_suggestion_placement(
+                self.cfg, get_goal_planner(self.cfg), int(suggestion_item_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     # --- goals / Actualized Self --------------------------------------------
     def goal_state(self) -> dict:
         from livingpc.curiosity import CuriosityStore
@@ -1711,6 +1863,82 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def goal_leaf_step_draft(self, goal_id) -> dict:
+        from livingpc.goal_ai import draft_leaf_steps
+        try:
+            return {"ok": True, "draft": draft_leaf_steps(self.cfg, int(goal_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_merge_proposal(self, target_id, source_id, title="",
+                                 description="", rationale="") -> dict:
+        from livingpc.goal_ai import propose_leaf_boundary_merge
+        try:
+            return propose_leaf_boundary_merge(
+                self.cfg, int(target_id), int(source_id), title=str(title or ""),
+                description=str(description or ""), rationale=str(rationale or ""))
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_rewrite_proposal(self, goal_id, title="", description="",
+                                   rationale="") -> dict:
+        from livingpc.goal_ai import propose_leaf_boundary_rewrite
+        try:
+            return propose_leaf_boundary_rewrite(
+                self.cfg, int(goal_id), title=str(title or ""),
+                description=str(description or ""), rationale=str(rationale or ""))
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_step_coach_open(self, goal_id, step_index) -> dict:
+        from livingpc.goal_ai import open_step_coach
+        try:
+            return {"ok": True, "coach": open_step_coach(
+                self.cfg, int(goal_id), int(step_index))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_step_coach_send(self, goal_id, step_index, text) -> dict:
+        from livingpc.goal_ai import send_step_coach
+        try:
+            return {"ok": True, "coach": send_step_coach(
+                self.cfg, int(goal_id), int(step_index), str(text or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_step_coach_set_status(self, goal_id, step_index, status) -> dict:
+        from livingpc.goal_ai import set_step_coach_status
+        try:
+            return {"ok": True, "coach": set_step_coach_status(
+                self.cfg, int(goal_id), int(step_index), str(status or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_step_coach_confirm_completion(self, goal_id, step_index, confirmed) -> dict:
+        from livingpc.goal_ai import confirm_step_coach_completion
+        try:
+            return {"ok": True, "coach": confirm_step_coach_completion(
+                self.cfg, int(goal_id), int(step_index), bool(confirmed))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_step_coach_revision(self, goal_id, message_id, approved,
+                                 edited_steps=None) -> dict:
+        from livingpc.goal_ai import decide_step_coach_revision
+        try:
+            return {"ok": True, "coach": decide_step_coach_revision(
+                self.cfg, int(goal_id), int(message_id), bool(approved),
+                edited_steps=list(edited_steps) if isinstance(edited_steps, list) else None)}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_step_coach_clear(self, goal_id) -> dict:
+        from livingpc.goal_ai import clear_step_coach
+        try:
+            return {"ok": True, **clear_step_coach(self.cfg, int(goal_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def goal_ai_question(self, question_id, action, answer="") -> dict:
         from livingpc.goal_ai import GoalAgentStore, summarize_goal_answer
         store = GoalAgentStore(self.cfg.memory_db_path)
@@ -1807,6 +2035,55 @@ class GuiApi:
         finally:
             store.close()
 
+    def goal_restructure_preview(self, goal_id, new_type, parent_id,
+                                 position=None) -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, "preview": store.restructure_preview(
+                int(goal_id), str(new_type), int(parent_id),
+                None if position is None else int(position))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_restructure_recommend(self, goal_id) -> dict:
+        from livingpc.goals import get_goal_planner, recommend_goal_restructure
+        try:
+            return {"ok": True, **recommend_goal_restructure(
+                self.cfg, get_goal_planner(self.cfg), int(goal_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_tree_restructure_recommend(self, goal_id) -> dict:
+        from livingpc.goals import get_goal_planner, recommend_goal_tree_restructure
+        try:
+            return {"ok": True, **recommend_goal_tree_restructure(
+                self.cfg, get_goal_planner(self.cfg), int(goal_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_tree_restructure_propose(self, scope_id, changes=None, role_updates=None,
+                                      rationale="") -> dict:
+        from livingpc.goals import propose_goal_tree_restructure
+        try:
+            return {"ok": True, **propose_goal_tree_restructure(
+                self.cfg, int(scope_id), list(changes or []), list(role_updates or []),
+                str(rationale or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_restructure_propose(self, goal_id, new_type, parent_id,
+                                 position=None, rationale="") -> dict:
+        from livingpc.goals import propose_goal_restructure
+        try:
+            return {"ok": True, **propose_goal_restructure(
+                self.cfg, int(goal_id), str(new_type), int(parent_id),
+                None if position is None else int(position), str(rationale or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def goal_link_curiosity(self, goal_id, curiosity_id, linked=True) -> dict:
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)
@@ -1858,13 +2135,15 @@ class GuiApi:
         finally:
             store.close()
 
-    def goal_plan_start(self, suggestion_item_id, target_parent_id=None) -> dict:
+    def goal_plan_start(self, suggestion_item_id, target_parent_id=None,
+                        placement=None) -> dict:
         from livingpc.goals import GoalStore, get_goal_planner, start_planning
         store = GoalStore(self.cfg.memory_db_path)
         try:
             session = start_planning(
                 store, get_goal_planner(self.cfg), int(suggestion_item_id),
-                None if target_parent_id is None else int(target_parent_id))
+                None if target_parent_id is None else int(target_parent_id),
+                dict(placement or {}))
             return {"ok": True, "session": session}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
@@ -2083,6 +2362,28 @@ class GuiApi:
         else:
             subprocess.Popen(["xdg-open", path])
 
+    def clipboard_read(self) -> dict:
+        try:
+            import tkinter as tk
+            root = tk.Tk(); root.withdraw(); root.update()
+            try:
+                value = root.clipboard_get()
+            finally:
+                root.destroy()
+            return {"ok": True, "text": str(value or "")}
+        except Exception:
+            return {"ok": True, "text": ""}
+
+    def clipboard_write(self, text) -> dict:
+        try:
+            import tkinter as tk
+            root = tk.Tk(); root.withdraw()
+            root.clipboard_clear(); root.clipboard_append(str(text or "")); root.update()
+            root.destroy()
+            return {"ok": True}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
 
 def main(argv=None):
     import os
@@ -2099,7 +2400,7 @@ def main(argv=None):
         window = webview.create_window(
             T("Faerie Fire", "페어리 파이어"), url=os.path.join(UI_DIR, "memory.html"), js_api=api,
             width=1500, height=900, min_size=(1024, 720),
-            frameless=False, easy_drag=False, resizable=True,
+            frameless=False, easy_drag=False, resizable=True, text_select=True,
             background_color="#06070f",
         )
         log_diag("gui_startup", "window created, entering webview.start()")

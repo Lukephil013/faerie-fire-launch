@@ -180,10 +180,42 @@ class AgentWindowApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def minimize(self) -> dict:
+        """Minimize without ending the bounded agent session."""
+        try:
+            if self._window is None:
+                return {"ok": False, "message": "window not ready"}
+            self._window.minimize()
+            return {"ok": True}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def close(self) -> bool:
         if self._window is not None:
             self._window.destroy()
         return True
+
+    def clipboard_read(self) -> dict:
+        try:
+            import tkinter as tk
+            root = tk.Tk(); root.withdraw(); root.update()
+            try:
+                value = root.clipboard_get()
+            finally:
+                root.destroy()
+            return {"ok": True, "text": str(value or "")}
+        except Exception:
+            return {"ok": True, "text": ""}
+
+    def clipboard_write(self, text) -> dict:
+        try:
+            import tkinter as tk
+            root = tk.Tk(); root.withdraw()
+            root.clipboard_clear(); root.clipboard_append(str(text or "")); root.update()
+            root.destroy()
+            return {"ok": True}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
 
 def main(argv=None):
@@ -197,7 +229,8 @@ def main(argv=None):
         window = webview.create_window(
             "Faerie Agent", url=os.path.join(UI_DIR, "agent_window.html"), js_api=api,
             width=680, height=720, min_size=(500, 520), frameless=True,
-            easy_drag=False, on_top=True, resizable=True, background_color="#06070f")
+            easy_drag=False, on_top=True, resizable=True, text_select=True,
+            background_color="#06070f")
         api._window = window
         webview.start()
     except Exception as error:

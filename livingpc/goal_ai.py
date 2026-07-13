@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,7 +22,8 @@ HEALTH_STATES = {"unknown", "on-track", "needs-attention", "blocked"}
 PROMOTION_CONFIDENCE_GATE = 0.8
 PROPOSAL_TYPES = {
     "create_child", "update_fields", "pause", "archive",
-    "request_evidence", "start_curiosity", "promote_insight",
+    "request_evidence", "start_curiosity", "promote_insight", "restructure_node",
+    "restructure_tree",
 }
 RELEVANCE_STATES = {"current", "questionable", "outgrown", "unclear"}
 GARDENING_TYPES = {
@@ -30,6 +31,7 @@ GARDENING_TYPES = {
     "attach_evidence", "leave_unchanged",
 }
 ACTIVE_AGENT_STATUSES = {"active"}
+STEP_COACH_STATUSES = {"not_started", "working", "blocked", "completed", "reopened"}
 
 
 def _now() -> str:
@@ -65,6 +67,25 @@ def _fallback_bullets(text: str, limit: int = 6) -> list[str]:
         if len(bullets) >= limit:
             break
     return bullets or ["The user supplied detailed context; consult the exact encrypted answer."]
+
+
+def parse_goal_steps(description: str, limit: int = 12) -> list[str]:
+    """Parse the same explicit numbered/bulleted steps rendered by the Growth UI."""
+    out = []
+    for line in str(description or "").splitlines():
+        match = re.match(r"^\s*(?:[-*•]|\d+[.)]|step\s*\d*[:.])\s+(.*)$", line, re.I)
+        if match and match.group(1).strip():
+            out.append(match.group(1).strip())
+    return out[:limit]
+
+
+def step_fingerprint(text: str) -> str:
+    normalized = " ".join(str(text or "").lower().split())
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def _question_key(text: str) -> str:
+    return " ".join(re.sub(r"[\W_]+", " ", str(text or "").casefold()).split())
 
 
 SCHEMA = """
@@ -146,6 +167,35 @@ CREATE TABLE IF NOT EXISTS goal_agent_message (
     CHECK (role IN ('user','assistant')),
     FOREIGN KEY (node_id) REFERENCES goal_node(id)
 );
+
+CREATE TABLE IF NOT EXISTS goal_step_coach_message (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    step_fingerprint TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK (role IN ('focus','user','assistant')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_goal_step_coach_message_node
+ON goal_step_coach_message(node_id,id);
+
+CREATE TABLE IF NOT EXISTS goal_step_coach_state (
+    node_id INTEGER NOT NULL,
+    step_fingerprint TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    step_text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'not_started',
+    update_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (node_id,step_fingerprint),
+    CHECK (status IN ('not_started','working','blocked','completed','reopened')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_goal_step_coach_state_status
+ON goal_step_coach_state(node_id,status,updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS goal_agent_memory_candidate (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,6 +317,29 @@ class ChatResult:
 
 
 @dataclass
+class LeafStepDraft:
+    input_contract: str
+    output_contract: str
+    steps: list[str] = field(default_factory=list)
+    boundary_note: str = ""
+    overlaps: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class StepCoachReply:
+    reply: str
+    next_action: str = ""
+    question: str = ""
+    examples: list[str] = field(default_factory=list)
+    blocker: str = ""
+    constraint: str = ""
+    decision: str = ""
+    status: str = "working"
+    step_completed: bool = False
+    step_revision: dict | None = None
+
+
+@dataclass
 class HarvestDraft:
     summary: str
     insights: list[dict] = field(default_factory=list)
@@ -318,6 +391,7 @@ class GoalAgentStore:
                 "ALTER TABLE goal_agent_state ADD COLUMN due_state TEXT NOT NULL DEFAULT 'none'")
         if self.auto_ensure:
             self.ensure_agents()
+        self._retire_repeated_dismissed_questions()
         self.conn.commit()
 
     def close(self) -> None:
@@ -474,12 +548,32 @@ class GoalAgentStore:
                 "became_blocked": previous["health"] != "blocked" and report.health == "blocked"}
 
     def _question_exists(self, node_id: int, text: str) -> bool:
-        normalized = " ".join(text.lower().split())
+        normalized = _question_key(text)
         rows = self.conn.execute(
-            "SELECT text FROM goal_agent_question WHERE node_id=? AND status IN ('open','answered')",
+            "SELECT text FROM goal_agent_question WHERE node_id=?",
             (int(node_id),)).fetchall()
-        return any(" ".join((crypto.dec(row["text"]) or "").lower().split()) == normalized
-                   for row in rows)
+        return any(_question_key(crypto.dec(row["text"])) == normalized for row in rows)
+
+    def _retire_repeated_dismissed_questions(self) -> int:
+        """Clean up duplicates created before dismissed questions were suppressive."""
+        rows = self.conn.execute(
+            "SELECT id,node_id,text,status FROM goal_agent_question "
+            "WHERE status IN ('open','dismissed') ORDER BY id").fetchall()
+        dismissed = set()
+        repeated = []
+        for row in rows:
+            key = (int(row["node_id"]), _question_key(crypto.dec(row["text"])))
+            if row["status"] == "dismissed":
+                dismissed.add(key)
+            elif key in dismissed:
+                repeated.append(int(row["id"]))
+        if not repeated:
+            return 0
+        placeholders = ",".join("?" for _ in repeated)
+        self.conn.execute(
+            f"UPDATE goal_agent_question SET status='dismissed',resolved_at=? "
+            f"WHERE id IN ({placeholders})", [_now(), *repeated])
+        return len(repeated)
 
     def add_proposal(self, agent_node_id: int, proposal: AgentProposal, *,
                      assessment_id: int | None = None, commit: bool = True) -> int | None:
@@ -578,6 +672,25 @@ class GoalAgentStore:
         self.conn.commit()
         return int(row["node_id"])
 
+    def dismiss_questions_superseded_by_proposal(self, proposal_id: int) -> int:
+        """Retire open questions from the assessment whose action was accepted.
+
+        Questions and proposals emitted by one report describe the same context
+        snapshot. Once one of that report's actions is approved, its unanswered
+        questions are stale; a later assessment may ask a genuinely new question.
+        """
+        row = self.conn.execute(
+            "SELECT assessment_id FROM goal_agent_proposal WHERE id=?",
+            (int(proposal_id),)).fetchone()
+        if not row or row["assessment_id"] is None:
+            return 0
+        cur = self.conn.execute(
+            "UPDATE goal_agent_question SET status='dismissed',resolved_at=? "
+            "WHERE assessment_id=? AND status='open'",
+            (_now(), int(row["assessment_id"])))
+        self.conn.commit()
+        return int(cur.rowcount)
+
     def reopen_question(self, question_id: int) -> int:
         row = self.conn.execute(
             "SELECT node_id,status FROM goal_agent_question WHERE id=?",
@@ -603,6 +716,7 @@ class GoalAgentStore:
     def _proposal(self, row) -> dict:
         return {"id": row["id"], "agent_node_id": row["agent_node_id"],
                 "target_node_id": row["target_node_id"], "type": row["proposal_type"],
+                "assessment_id": row["assessment_id"],
                 "payload": self._dec_json(row["payload_json"], {}),
                 "rationale": crypto.dec(row["rationale"]) or "", "status": row["status"],
                 "target_version": row["target_version"], "created_at": row["created_at"]}
@@ -853,6 +967,109 @@ class GoalAgentStore:
             (int(node_id), role, crypto.enc(str(content).strip()), _now()))
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def coach_messages(self, node_id: int, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM goal_step_coach_message WHERE node_id=? ORDER BY id DESC LIMIT ?",
+            (int(node_id), int(limit))).fetchall()
+        return [{"id": row["id"], "role": row["role"],
+                 "step_fingerprint": row["step_fingerprint"],
+                 "step_index": row["step_index"],
+                 "payload": self._dec_json(row["payload_json"], {}),
+                 "created_at": row["created_at"]} for row in reversed(rows)]
+
+    def coach_message(self, node_id: int, message_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM goal_step_coach_message WHERE id=? AND node_id=?",
+            (int(message_id), int(node_id))).fetchone()
+        if not row:
+            return None
+        return {"id": row["id"], "role": row["role"],
+                "step_fingerprint": row["step_fingerprint"],
+                "step_index": row["step_index"],
+                "payload": self._dec_json(row["payload_json"], {}),
+                "created_at": row["created_at"]}
+
+    def update_coach_message_payload(self, node_id: int, message_id: int,
+                                     payload: dict) -> None:
+        cur = self.conn.execute(
+            "UPDATE goal_step_coach_message SET payload_json=? "
+            "WHERE id=? AND node_id=? AND role='assistant'",
+            (crypto.enc(_json(dict(payload or {}))), int(message_id), int(node_id)))
+        if cur.rowcount != 1:
+            raise ValueError("Leaf Coach proposal message not found")
+        self.conn.commit()
+
+    def add_coach_message(self, node_id: int, step_index: int, step_text: str,
+                          role: str, payload: dict) -> int:
+        if role not in {"focus", "user", "assistant"}:
+            raise ValueError("invalid coach message role")
+        fingerprint = step_fingerprint(step_text)
+        cur = self.conn.execute(
+            "INSERT INTO goal_step_coach_message "
+            "(node_id,step_fingerprint,step_index,role,payload_json,created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (int(node_id), fingerprint, int(step_index), role,
+             crypto.enc(_json(dict(payload or {}))), _now()))
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def clear_coach_messages(self, node_id: int) -> int:
+        cur = self.conn.execute(
+            "DELETE FROM goal_step_coach_message WHERE node_id=?", (int(node_id),))
+        self.conn.commit()
+        return int(cur.rowcount)
+
+    def coach_states(self, node_id: int, limit: int = 12) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM goal_step_coach_state WHERE node_id=? "
+            "ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'working' THEN 1 "
+            "WHEN 'reopened' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,updated_at DESC LIMIT ?",
+            (int(node_id), int(limit))).fetchall()
+        return [{"node_id": row["node_id"], "step_fingerprint": row["step_fingerprint"],
+                 "step_index": row["step_index"], "step_text": crypto.dec(row["step_text"]) or "",
+                 "status": row["status"], "update": self._dec_json(row["update_json"], {}),
+                 "updated_at": row["updated_at"], "provenance": "leaf_step_coach"}
+                for row in rows]
+
+    def coach_state(self, node_id: int, step_text: str) -> dict | None:
+        fingerprint = step_fingerprint(step_text)
+        row = self.conn.execute(
+            "SELECT * FROM goal_step_coach_state WHERE node_id=? AND step_fingerprint=?",
+            (int(node_id), fingerprint)).fetchone()
+        if not row:
+            return None
+        return {"node_id": row["node_id"], "step_fingerprint": row["step_fingerprint"],
+                "step_index": row["step_index"], "step_text": crypto.dec(row["step_text"]) or "",
+                "status": row["status"], "update": self._dec_json(row["update_json"], {}),
+                "updated_at": row["updated_at"], "provenance": "leaf_step_coach"}
+
+    def update_coach_state(self, node_id: int, step_index: int, step_text: str,
+                           status: str, update: dict | None = None) -> dict:
+        if status not in STEP_COACH_STATUSES:
+            raise ValueError("invalid coach step status")
+        fingerprint = step_fingerprint(step_text)
+        previous = self.coach_state(node_id, step_text)
+        merged = dict(previous.get("update") or {}) if previous else {}
+        for key, value in dict(update or {}).items():
+            cleaned = str(value or "").strip() if key != "examples" else value
+            if cleaned:
+                merged[key] = cleaned
+        if status == "completed" and not merged.get("resolution"):
+            merged["resolution"] = merged.get("decision") or "Completed: " + step_text
+        merged["provenance"] = "leaf_step_coach"
+        merged["updated_at"] = _now()
+        self.conn.execute(
+            "INSERT INTO goal_step_coach_state "
+            "(node_id,step_fingerprint,step_index,step_text,status,update_json,updated_at) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(node_id,step_fingerprint) DO UPDATE SET "
+            "step_index=excluded.step_index,step_text=excluded.step_text,status=excluded.status,"
+            "update_json=excluded.update_json,updated_at=excluded.updated_at",
+            (int(node_id), fingerprint, int(step_index), crypto.enc(step_text), status,
+             crypto.enc(_json(merged)), merged["updated_at"]))
+        self.conn.commit()
+        self.mark_dirty(int(node_id), ancestors=True, reason="Leaf Coach update")
+        return self.coach_state(node_id, step_text)
 
     def add_memory_candidate(self, node_id: int, candidate: dict,
                              message_id: int | None = None) -> int:
@@ -1106,6 +1323,23 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
 
     parent_state = agents.state(node_id)
     parent_last = parent_state.get("last_run_at")
+    coach_rollup_cache = {}
+
+    def coach_rollup(item, limit=8):
+        cache_key = (int(item["id"]), int(limit))
+        if cache_key in coach_rollup_cache:
+            return coach_rollup_cache[cache_key]
+        collected = []
+        if item.get("type") == "task":
+            collected.extend(agents.coach_states(item["id"], limit))
+        for child in item.get("children", []):
+            collected.extend(coach_rollup(child, limit))
+        rank = {"blocked": 0, "working": 1, "reopened": 2,
+                "completed": 3, "not_started": 4}
+        collected.sort(key=lambda update: str(update.get("updated_at") or ""), reverse=True)
+        collected.sort(key=lambda update: rank.get(update.get("status"), 5))
+        coach_rollup_cache[cache_key] = collected[:limit]
+        return coach_rollup_cache[cache_key]
 
     def descendant_is_fresh(item):
         state = agents.state(item["id"])
@@ -1121,6 +1355,7 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
                     "status": item["status"], "completion": item.get("completion"),
                     "mastery": item.get("mastery"),
                     "agent_report": _agent_summary(agents, item["id"]),
+                    "coach_rollup": coach_rollup(item),
                     "cached_unchanged": True, "children": []}
         compact = {"id": item["id"], "type": item["type"], "title": item["title"],
                    "description": item.get("description", ""), "status": item["status"],
@@ -1128,7 +1363,10 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
                    "completion": item.get("completion"), "mastery": item.get("mastery"),
                    "origin": item.get("origin"),
                    "agent_report": _agent_summary(agents, item["id"]),
+                   "coach_rollup": coach_rollup(item),
                    "children": []}
+        if item["type"] == "task":
+            compact["coach_updates"] = agents.coach_states(item["id"], 6)
         for child in item.get("children", []):
             compact["children"].append(subtree(child, depth + 1))
         return compact
@@ -1176,6 +1414,7 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
         "answered_questions": [q for q in agents.questions(node_id, include_resolved=True)
                                if q["status"] == "answered"][-8:],
         "recent_chat": agents.messages(node_id, 12),
+        "coach_updates": agents.coach_states(node_id, 8) if node["type"] == "task" else [],
         "committed_harvests": agents.harvest_context(node_id),
     }
     encoded = _json(context)
@@ -1190,11 +1429,13 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
         context["subtree"] = {
             **context["subtree"],
             "children": [{k: child.get(k) for k in
-                          ("id", "type", "title", "status", "completion", "agent_report")}
+                          ("id", "type", "title", "status", "completion", "agent_report",
+                           "coach_updates", "coach_rollup")}
                          for child in context["subtree"].get("children", [])],
         }
         context["answered_questions"] = clipped(context["answered_questions"][-4:], 700)
         context["recent_chat"] = clipped(context["recent_chat"][-4:], 700)
+        context["coach_updates"] = clipped(context.get("coach_updates", [])[:6], 700)
         context["attached_curiosities"] = clipped(context["attached_curiosities"][:4], 700)
         context["committed_harvests"] = clipped(context["committed_harvests"][:4], 700)
         context["core_profile"] = clipped(context["core_profile"][:30], 1200)
@@ -1214,6 +1455,7 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
             "agent_state": clipped(context["agent_state"], 500),
             "open_proposals": clipped(context["open_proposals"][:3], 350),
             "answered_questions": clipped(context["answered_questions"][-2:], 350),
+            "coach_updates": clipped(context.get("coach_updates", [])[:4], 350),
             "committed_harvests": clipped(context["committed_harvests"][:2], 350),
             "prompt_budget_truncated": True,
         }
@@ -1234,6 +1476,334 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
 
 def context_hash(context: dict) -> str:
     return hashlib.sha256(_json(context).encode()).hexdigest()
+
+
+def build_leaf_step_draft_context(goals: GoalStore, node_id: int,
+                                  *, max_chars: int = 10000) -> dict:
+    """Bounded Root-local context used only to keep Leaf responsibilities distinct."""
+    tree = goals.tree()
+    node = _find(tree, int(node_id))
+    if not node or node.get("type") != "task":
+        raise ValueError("step drafting requires a Leaf")
+    ancestors = _ancestors(goals, node)
+    root = next((item for item in ancestors if item.get("type") == "overgoal"), None)
+    scope = _find(tree, root["id"]) if root else node
+    leaves = []
+
+    def collect(item):
+        if item.get("type") == "task" and item.get("status") == "active":
+            leaves.append(item)
+        for child in item.get("children", []):
+            collect(child)
+
+    collect(scope)
+    priority = {"high": 0, "normal": 1, "low": 2}
+    leaves.sort(key=lambda item: (
+        priority.get(item.get("priority") or "normal", 1),
+        item.get("due_date") or "9999", int(item.get("position") or 0), int(item["id"])))
+    current_index = next((index for index, item in enumerate(leaves)
+                          if int(item["id"]) == int(node_id)), 0)
+    peers = []
+    for index, item in enumerate(leaves):
+        if int(item["id"]) == int(node_id):
+            continue
+        peers.append({
+            "id": int(item["id"]), "order": index + 1,
+            "relation": "earlier" if index < current_index else "later",
+            "title": item.get("title", ""),
+            "responsibility": str(item.get("description") or "")[:1400],
+            "explicit_steps": parse_goal_steps(item.get("description", ""))[:6],
+        })
+    context = {
+        "language": "ko" if lang_is_ko() else "en",
+        "jurisdiction": {"node_id": int(node_id), "node_type": "task",
+                         "purpose": "step-boundary drafting",
+                         "excludes": ["global_memory", "main_chat", "passive_capture",
+                                      "screen_activity", "unrelated_roots"]},
+        "root_intent": {"id": root["id"], "title": root["title"],
+                        "description": root.get("description", "")} if root else {},
+        "ancestor_intent": [{"id": item["id"], "type": item["type"],
+                             "title": item["title"],
+                             "description": item.get("description", "")[:800]}
+                            for item in ancestors],
+        "leaf": {"id": int(node["id"]), "order": current_index + 1,
+                 "title": node.get("title", ""),
+                 "responsibility": str(node.get("description") or "")[:2200]},
+        "peer_leaves": peers[:12],
+    }
+    if len(_json(context)) > max_chars:
+        for peer in context["peer_leaves"]:
+            peer["responsibility"] = peer["responsibility"][:500]
+            peer["explicit_steps"] = peer["explicit_steps"][:3]
+        context["prompt_budget_truncated"] = True
+    return context
+
+
+def draft_leaf_steps(config, node_id: int, *, model=None) -> dict:
+    """Return an unsaved step draft with explicit Root-local handoff boundaries."""
+    goals = GoalStore(config.memory_db_path)
+    try:
+        context = build_leaf_step_draft_context(
+            goals, int(node_id),
+            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+        active = model or get_goal_agent_model(config, "task", manual=True)
+        goals.conn.commit()
+        draft = active.draft_leaf_steps(context)
+        peer_titles = {str(item["id"]): item["title"] for item in context["peer_leaves"]}
+        return {**asdict(draft), "text": "\n".join(
+            f"{index}. {step}" for index, step in enumerate(draft.steps, 1)),
+                "peer_titles": peer_titles}
+    finally:
+        goals.close()
+
+
+def build_step_coach_context(goals: GoalStore, agents: GoalAgentStore,
+                             node_id: int, step_index: int,
+                             *, max_chars: int = 9000) -> dict:
+    """Least-privilege context for execution help on one Leaf step."""
+    tree = goals.tree()
+    node = _find(tree, int(node_id))
+    if not node or node.get("type") != "task":
+        raise ValueError("Leaf Coach requires a Leaf")
+    steps = parse_goal_steps(node.get("description", ""))
+    if not steps:
+        raise ValueError("this Leaf has no explicit steps")
+    if int(step_index) < 0 or int(step_index) >= len(steps):
+        raise ValueError("invalid Leaf step")
+    states = {item["step_fingerprint"]: item for item in agents.coach_states(node_id, 50)}
+    step_views = []
+    for index, text in enumerate(steps):
+        state = states.get(step_fingerprint(text))
+        step_views.append({"index": index, "text": text,
+                           "status": state["status"] if state else "not_started",
+                           "update": state.get("update", {}) if state else {}})
+    curiosity_details = []
+    if node.get("curiosities"):
+        from .curiosity import CuriosityStore
+        curiosities = CuriosityStore(agents.db_path)
+        try:
+            for linked in node["curiosities"][:4]:
+                curiosity = curiosities.get_curiosity(linked["id"])
+                if not curiosity:
+                    continue
+                items = curiosities.items_for_curiosity(linked["id"])[-6:]
+                curiosity_details.append({
+                    "id": curiosity["id"], "label": curiosity["label"],
+                    "directive": curiosity["directive"], "status": curiosity["status"],
+                    "items": [{"kind": item["kind"], "text": item["text"],
+                               "answer": item.get("answer")} for item in items],
+                })
+        finally:
+            curiosities.close()
+    context = {
+        "language": "ko" if lang_is_ko() else "en",
+        "jurisdiction": {"node_id": int(node_id), "node_type": "task",
+                         "excludes": ["siblings", "global_memory", "main_chat",
+                                      "passive_capture", "screen_activity"]},
+        "ancestor_intent": [{"id": item["id"], "type": item["type"],
+                             "title": item["title"],
+                             "description": item.get("description", "")}
+                            for item in _ancestors(goals, node)],
+        "leaf": {key: node.get(key) for key in
+                 ("id", "parent_id", "title", "description", "notes", "status",
+                  "priority", "due_date", "evidence", "origin")},
+        "steps": step_views,
+        "focused_step": step_views[int(step_index)],
+        "attached_curiosities": curiosity_details,
+    }
+    if len(_json(context)) > max_chars:
+        context["attached_curiosities"] = [
+            {**item, "items": item["items"][-2:]} for item in curiosity_details[:2]]
+        context["leaf"]["evidence"] = (context["leaf"].get("evidence") or [])[-4:]
+    if len(_json(context)) > max_chars:
+        context["ancestor_intent"] = [
+            {**item, "description": str(item.get("description") or "")[:400]}
+            for item in context["ancestor_intent"]]
+        context["leaf"]["description"] = str(context["leaf"].get("description") or "")[:1600]
+        context["prompt_budget_truncated"] = True
+    return context
+
+
+def _step_coach_model(config):
+    backend = (getattr(config, "goal_ai_backend", "") or
+               getattr(config, "inference_backend", "claude")).lower()
+    if backend == "stub":
+        return StubGoalAgentModel()
+    model = getattr(config, "goal_ai_leaf_model", "claude-haiku-4-5")
+    return ClaudeGoalAgentModel(model, config, usage_category="manual")
+
+
+def _coach_payload(reply: StepCoachReply) -> dict:
+    return {"text": reply.reply, "next_action": reply.next_action,
+            "question": reply.question, "examples": reply.examples[:4],
+            "step_completed": bool(reply.step_completed),
+            "step_revision": reply.step_revision}
+
+
+def _coach_view(goals: GoalStore, agents: GoalAgentStore, node_id: int,
+                step_index: int) -> dict:
+    context = build_step_coach_context(goals, agents, node_id, step_index)
+    messages = agents.coach_messages(node_id, 80)
+    path = context["ancestor_intent"] + [{"title": context["leaf"]["title"]}]
+    return {"leaf_id": int(node_id), "title": context["leaf"]["title"],
+            "path": [item["title"] for item in path],
+            "steps": context["steps"], "focus_step_index": int(step_index),
+            "messages": messages}
+
+
+def open_step_coach(config, node_id: int, step_index: int, *, model=None) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        context = build_step_coach_context(goals, agents, node_id, step_index)
+        step = context["focused_step"]
+        messages = agents.coach_messages(node_id, 80)
+        fingerprint = step_fingerprint(step["text"])
+        last_fingerprint = messages[-1]["step_fingerprint"] if messages else None
+        needs_reply = not messages or last_fingerprint != fingerprint or messages[-1]["role"] != "assistant"
+        if needs_reply:
+            if last_fingerprint != fingerprint:
+                beginning = ((f"{step_index + 1}/{len(context['steps'])}단계를 시작합니다: "
+                              if context.get("language") == "ko" else
+                              f"Beginning step {step_index + 1} of {len(context['steps'])}: "))
+                agents.add_coach_message(node_id, step_index, step["text"], "focus",
+                                         {"text": beginning + step["text"]})
+            active = model or _step_coach_model(config)
+            conversation = agents.coach_messages(node_id, 12)
+            reply = active.coach(context, conversation, opening=True)
+            agents.add_coach_message(node_id, step_index, step["text"], "assistant",
+                                     _coach_payload(reply))
+        return _coach_view(goals, agents, node_id, step_index)
+    finally:
+        agents.close(); goals.close()
+
+
+def send_step_coach(config, node_id: int, step_index: int, text: str, *, model=None) -> dict:
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("message is required")
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        context = build_step_coach_context(goals, agents, node_id, step_index)
+        step = context["focused_step"]
+        existing = agents.coach_messages(node_id, 1)
+        last = existing[-1] if existing else None
+        retrying = bool(last and last["role"] == "user" and
+                        last["step_fingerprint"] == step_fingerprint(step["text"]) and
+                        str(last.get("payload", {}).get("text") or "").strip() == text)
+        if not retrying:
+            agents.add_coach_message(node_id, step_index, step["text"], "user", {"text": text})
+        conversation = agents.coach_messages(node_id, 12)
+        active = model or _step_coach_model(config)
+        reply = active.coach(context, conversation, opening=False)
+        agents.add_coach_message(node_id, step_index, step["text"], "assistant",
+                                 _coach_payload(reply))
+        agents.update_coach_state(node_id, step_index, step["text"], reply.status,
+                                  {"blocker": reply.blocker,
+                                   "constraint": reply.constraint,
+                                   "decision": reply.decision,
+                                   "next_action": reply.next_action})
+        return _coach_view(goals, agents, node_id, step_index)
+    finally:
+        agents.close(); goals.close()
+
+
+def decide_step_coach_revision(config, node_id: int, message_id: int,
+                               approved: bool, edited_steps=None) -> dict:
+    """Apply one explicitly approved coach step rewrite; rejection changes no goal."""
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        message = agents.coach_message(int(node_id), int(message_id))
+        if not node or node.get("type") != "task" or not message or message["role"] != "assistant":
+            raise ValueError("Leaf Coach step proposal not found")
+        payload = dict(message.get("payload") or {})
+        revision = payload.get("step_revision") if isinstance(
+            payload.get("step_revision"), dict) else None
+        if not revision or payload.get("step_revision_status") in {"approved", "rejected"}:
+            raise ValueError("Leaf Coach step proposal is no longer pending")
+        proposed = edited_steps if isinstance(edited_steps, list) else revision.get("steps")
+        steps = [str(item).strip() for item in (proposed or []) if str(item).strip()][:7]
+        if len(steps) < 2:
+            raise ValueError("a revised Leaf plan needs at least two steps")
+        payload["step_revision_status"] = "approved" if approved else "rejected"
+        payload["step_revision_decided_steps"] = steps
+        agents.update_coach_message_payload(int(node_id), int(message_id), payload)
+        if approved:
+            description = str(node.get("description") or "")
+            preamble = re.split(r"(?im)^\s*steps\s*:\s*$", description, maxsplit=1)[0].rstrip()
+            block = "Steps:\n" + "\n".join(
+                f"{index}. {step}" for index, step in enumerate(steps, 1))
+            updated = (preamble + "\n\n" if preamble else "") + block
+            goals.update(int(node_id), description=updated)
+            note = ("코치가 제안한 새 단계를 승인해 How to do this를 업데이트했습니다."
+                    if lang_is_ko() else
+                    "Approved the coach's revised steps and updated How to do this.")
+            agents.add_coach_message(
+                int(node_id), min(int(message["step_index"]), len(steps) - 1),
+                steps[min(int(message["step_index"]), len(steps) - 1)], "focus", {"text": note})
+        else:
+            note = ("제안된 단계 변경을 적용하지 않았습니다."
+                    if lang_is_ko() else "Kept the current steps; the proposed revision was not applied.")
+            current_steps = parse_goal_steps(node.get("description", ""))
+            if current_steps:
+                index = min(int(message["step_index"]), len(current_steps) - 1)
+                agents.add_coach_message(int(node_id), index, current_steps[index],
+                                         "focus", {"text": note})
+        current = goals.get(int(node_id))
+        current_steps = parse_goal_steps(current.get("description", "")) if current else []
+        focus_index = min(int(message["step_index"]), max(0, len(current_steps) - 1))
+        return _coach_view(goals, agents, int(node_id), focus_index)
+    finally:
+        agents.close(); goals.close()
+
+
+def set_step_coach_status(config, node_id: int, step_index: int, status: str) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        context = build_step_coach_context(goals, agents, node_id, step_index)
+        step = context["focused_step"]
+        agents.update_coach_state(node_id, step_index, step["text"], status)
+        return _coach_view(goals, agents, node_id, step_index)
+    finally:
+        agents.close(); goals.close()
+
+
+def confirm_step_coach_completion(config, node_id: int, step_index: int,
+                                  confirmed: bool) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        context = build_step_coach_context(goals, agents, node_id, step_index)
+        step = context["focused_step"]
+        status = "completed" if confirmed else "working"
+        agents.update_coach_state(node_id, step_index, step["text"], status)
+        if context.get("language") == "ko":
+            text = (f"{step_index + 1}단계를 완료로 표시했습니다."
+                    if confirmed else f"{step_index + 1}단계는 아직 열어 두었습니다.")
+        else:
+            text = (f"Step {step_index + 1} marked complete."
+                    if confirmed else f"Step {step_index + 1} left open.")
+        agents.add_coach_message(node_id, step_index, step["text"], "focus", {"text": text})
+        return _coach_view(goals, agents, node_id, step_index)
+    finally:
+        agents.close(); goals.close()
+
+
+def clear_step_coach(config, node_id: int) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node.get("type") != "task":
+            raise ValueError("Leaf Coach requires a Leaf")
+        cleared = agents.clear_coach_messages(node_id)
+        return {"cleared": cleared}
+    finally:
+        agents.close(); goals.close()
 
 
 ROLE_GUIDANCE = {
@@ -1258,7 +1828,7 @@ Allowed proposal types: create_child, update_fields, pause, archive,
 request_evidence, start_curiosity, promote_insight. Never propose automatic completion or mastery.
 For create_child, type must be overgoal/subgoal/task (Root/Branch/Leaf) and
 priority must be low/normal/high. Use "normal", never "medium". update_fields
-may contain description, notes, priority, or due_date.
+  may contain title, description, notes, priority, or due_date.
 Use promote_insight only when confidence is at least 0.8 that a lesson,
 preference, constraint, blocker, method, or decision matters beyond the current
 node. Its target_node_id must be the current node or an ancestor where the
@@ -1283,6 +1853,53 @@ Return strict JSON: {"reply":str,"proposals":[{"type":str,
 "source_text":str}}.
 """
 
+STEP_COACH_SYSTEM = """You are the execution coach for exactly one Leaf step.
+Use only the supplied Leaf, its ancestor intent, its directly linked Investigation
+context, and this Leaf Coach conversation. You have no access to siblings, global
+memory, the main chat, passive capture, or screen activity. Never imply otherwise.
+You cannot directly mutate goals or write memory. You may propose a replacement
+step list for explicit user review, but it changes nothing until the user approves it.
+You may report
+that the focused step is complete only when the user explicitly says they finished it.
+
+Be unusually practical and hand-holding without being patronizing. Do the ideation,
+comparison, and drafting work before asking the user to remember or invent options.
+For brainstorming, research framing, administrative work, and other generative steps,
+lead with 3-5 plausible, concrete suggestions based on common real-world patterns.
+State that they are examples rather than known user facts. Then ask at most one short
+question about which suggestions fit, what feels wrong, or what should change.
+
+In MODE: opening, provide the useful slate first. Put 2-4 concise selectable responses
+in examples so the user can react with one click. Do not assign preparatory journaling,
+ask them to inventory their memory, open a blank document, or gather files before you
+have supplied useful candidate answers yourself. next_action may be empty on opening.
+
+In MODE: conversation, respond to redirection by discarding the old framing and
+offering a revised slate immediately. Give a physical next action only after the user
+has selected or approved a direction. Keep 2-4 suggested responses available whenever
+they reduce user effort. Reflection should evaluate AI-generated options, not replace
+the AI's work. Avoid arbitrary timers and phrases such as "take 10 minutes" or "stop
+after 5 minutes" unless the user requested a timebox or a real deadline requires one.
+
+When the conversation reveals that the stored How to do this steps are wrong, rigid,
+duplicative, or poorly sequenced, return a complete step_revision with 2-7 replacement
+steps and a short rationale. The UI will ask for approval; never claim it was applied.
+Omit step_revision when the current list remains suitable.
+Set step_completed true only when the user's latest message explicitly says the focused
+step is finished and your reply clearly acknowledges that it appears complete. This is
+a request for the interface to ask the user's permission; never claim that you already
+marked it complete. Never infer completion from confidence, intent, partial progress,
+or a hypothetical statement.
+Record blocker, constraint, and decision only when the user explicitly stated them;
+never infer personality or hidden motives. Use Korean when context.language is "ko".
+
+Return strict JSON:
+{"reply":str,"next_action":str,"question":str,
+"examples":[str],"step_completed":bool,"working_update":{"status":"working"|"blocked",
+"blocker":str,"constraint":str,"decision":str},
+"step_revision":null|{"steps":[str],"rationale":str}}
+"""
+
 ANSWER_SUMMARY_SYSTEM = """Summarize the user's exact answer into 3-7 concise,
 faithful bullet points for a compact evidence display. Preserve decisions,
 constraints, preferences, dates, and important examples. Do not infer beyond
@@ -1293,6 +1910,33 @@ DESCRIPTION_SYSTEM = """Draft a concise description for this goal-tree node.
 Explain what success means and why the node exists in 1-3 plain sentences.
 Use only the supplied bounded hierarchy context. Do not invent facts, dates, or
 commitments. Return strict JSON only: {"description":str}.
+"""
+
+LEAF_STEP_DRAFT_SYSTEM = """Draft executable steps for exactly one Leaf in an
+ordered Root plan. The peer Leaves are supplied only to prevent duplicated work.
+Treat earlier Leaves as producers and later Leaves as consumers. Give this Leaf
+one clear input contract and one clear output contract. Every step must contribute
+only to that output. Never repeat generation, scoring, choosing, validation, or
+publishing that another Leaf owns. If the Leaf's stored description crosses a peer
+boundary, narrow the draft instead of copying the overlap.
+
+Return strict JSON only:
+{"input_contract":str,"output_contract":str,"boundary_note":str,
+"steps":[str],"overlaps":[{"node_id":int,"score":0-1,"reason":str,
+"recommendation":"keep_separate"|"narrow"|"merge",
+"merged_title":str?,"merged_description":str?,
+"revised_title":str?,"revised_description":str?}]}
+
+Rules:
+- Return 3-5 concrete physical steps, in order. Do not add arbitrary time boxes;
+  include time only when it is an actual constraint supplied by context.
+- Do not invent completed work or user facts.
+- Report overlap when responsibilities or outputs substantially coincide, not
+  merely because two Leaves share a topic.
+- For narrow, include a revised title and description with the unique boundary.
+- Recommend merge only when separating the outputs creates repeated work; for
+  merge, include the proposed combined title and description.
+- Use Korean when context.language is "ko".
 """
 
 HARVEST_SYSTEM = """You distill reusable learning from one bounded goal-tree
@@ -1406,6 +2050,69 @@ def parse_chat(text: str, node_id: int) -> ChatResult | None:
     return ChatResult(reply, _parse_proposals(data.get("proposals"), node_id), candidate)
 
 
+def parse_leaf_step_draft(text: str, allowed_peer_ids: set[int]) -> LeafStepDraft | None:
+    data = _extract_json(text)
+    input_contract = str(data.get("input_contract") or "").strip()
+    output_contract = str(data.get("output_contract") or "").strip()
+    steps = [str(item).strip() for item in (data.get("steps") or [])
+             if str(item).strip()][:5]
+    if not input_contract or not output_contract or not 3 <= len(steps) <= 5:
+        return None
+    overlaps = []
+    for item in data.get("overlaps") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            node_id = int(item.get("node_id"))
+            score = max(0.0, min(1.0, float(item.get("score", 0))))
+        except (TypeError, ValueError):
+            continue
+        recommendation = str(item.get("recommendation") or "").strip()
+        if node_id not in allowed_peer_ids or recommendation not in {
+                "keep_separate", "narrow", "merge"}:
+            continue
+        overlaps.append({"node_id": node_id, "score": score,
+                         "reason": str(item.get("reason") or "").strip(),
+                         "recommendation": recommendation,
+                         "merged_title": str(item.get("merged_title") or "").strip(),
+                         "merged_description": str(item.get("merged_description") or "").strip(),
+                         "revised_title": str(item.get("revised_title") or "").strip(),
+                         "revised_description": str(item.get("revised_description") or "").strip()})
+    return LeafStepDraft(input_contract, output_contract, steps,
+                         str(data.get("boundary_note") or "").strip(), overlaps[:4])
+
+
+def parse_step_coach(text: str, *, opening: bool = False) -> StepCoachReply | None:
+    data = _extract_json(text)
+    reply = str(data.get("reply") or "").strip()
+    next_action = str(data.get("next_action") or "").strip()
+    if not reply:
+        return None
+    question = str(data.get("question") or "").strip()
+    examples = [str(item).strip() for item in (data.get("examples") or [])
+                if str(item).strip()][:4]
+    if opening and (not question or next_action or len(examples) < 2):
+        return None
+    update = data.get("working_update") if isinstance(data.get("working_update"), dict) else {}
+    status = str(update.get("status") or "working").strip().lower()
+    if status not in {"working", "blocked"}:
+        status = "working"
+    revision = data.get("step_revision") if isinstance(data.get("step_revision"), dict) else None
+    if revision is not None:
+        revised_steps = [str(item).strip() for item in (revision.get("steps") or [])
+                         if str(item).strip()][:7]
+        rationale = str(revision.get("rationale") or "").strip()
+        revision = ({"steps": revised_steps, "rationale": rationale}
+                    if len(revised_steps) >= 2 and rationale else None)
+    return StepCoachReply(
+        reply=reply, next_action=next_action, question=question,
+        examples=examples[:4], blocker=str(update.get("blocker") or "").strip(),
+        constraint=str(update.get("constraint") or "").strip(),
+        decision=str(update.get("decision") or "").strip(), status=status,
+        step_completed=data.get("step_completed") is True,
+        step_revision=revision)
+
+
 def parse_harvest(text: str, *, allow_routes: bool) -> HarvestDraft | None:
     data = _extract_json(text)
     summary = str(data.get("summary") or "").strip()
@@ -1490,6 +2197,49 @@ class StubGoalAgentModel:
                           "I can assess its evidence or help shape a proposal.",
                           memory_candidate=candidate)
 
+    def draft_leaf_steps(self, context: dict) -> LeafStepDraft:
+        node = context["leaf"]
+        if context.get("language") == "ko":
+            return LeafStepDraft(
+                "이전 Leaf의 명시적 결과물", "이 Leaf만 책임지는 하나의 완료된 결과물",
+                ["필요한 이전 결과물을 한곳에 여세요.",
+                 f"이전 결과물을 사용해 {node['title']}의 고유한 결과물을 만드세요.",
+                 "결과물이 출력 계약을 충족하는지 한 번 확인하고 다음 Leaf로 넘기세요."],
+                "다른 Leaf가 맡은 선택이나 게시 작업을 반복하지 않습니다.")
+        return LeafStepDraft(
+            "The explicit output from the preceding Leaf",
+            "One completed artifact owned only by this Leaf",
+            ["Open the preceding Leaf's finished output in one place.",
+             f"Produce the unique output for {node['title']} using that input.",
+             "Check the output contract once, then hand the artifact to the next Leaf."],
+            "Do not repeat selection or publishing owned by another Leaf.")
+
+    def coach(self, context: dict, messages: list[dict], *, opening: bool = False) -> StepCoachReply:
+        step = context["focused_step"]["text"]
+        if context.get("language") == "ko":
+            if opening:
+                return StepCoachReply(
+                    "먼저 흔히 자동화 가치가 큰 관리 업무 후보를 좁혀볼게요. 반복 입력, 정기 보고서, 이메일 분류, 일정 조율처럼 규칙이 분명하고 자주 반복되는 업무부터 보는 것이 좋아요.",
+                    question="이 중 실제로 가장 가까운 방향은 무엇인가요?",
+                    examples=["반복 데이터 입력", "정기 보고서 만들기", "이메일 분류와 답장 초안", "일정 조율과 알림"])
+            return StepCoachReply(
+                "이 단계에서 지금 막히는 지점을 하나만 확인해볼게요.",
+                "이 단계에 필요한 첫 번째 빈 문서나 화면을 여세요.",
+                "지금 가장 어려운 것은 시작, 선택, 작성 중 무엇인가요?",
+                ["어디서 시작할지 모르겠어요", "선택지가 너무 많아요", "첫 문장을 쓰기 어려워요"])
+        if opening:
+            return StepCoachReply(
+                "Here are the most common high-value admin candidates first: repeated data entry, recurring report generation, inbox sorting and reply drafts, and scheduling or reminder coordination. These are examples, not assumptions about your work.",
+                question="Which of these is closest to the kind of work you want to automate?",
+                examples=["Repeated data entry", "Recurring reports",
+                          "Inbox sorting and reply drafts", "Scheduling and reminders"])
+        return StepCoachReply(
+            f"Let’s make this step concrete: {step}",
+            "Open the exact document or screen needed for this step.",
+            "Which part is stopping you right now: starting, choosing, or writing?",
+            ["I do not know where to start", "There are too many choices",
+             "I need an example of the first sentence"])
+
     def harvest(self, context: dict, instruction: str = "") -> HarvestDraft:
         node = context["node"]
         brief = context.get("agent_state", {}).get("brief") or node.get("description") or node["title"]
@@ -1561,6 +2311,23 @@ class ClaudeGoalAgentModel:
             context["node"]["id"])
         if not result:
             raise ValueError("GoalAI returned an invalid chat response")
+        return result
+
+    def draft_leaf_steps(self, context: dict) -> LeafStepDraft:
+        allowed = {int(item["id"]) for item in context.get("peer_leaves", [])}
+        result = parse_leaf_step_draft(
+            self._call(LEAF_STEP_DRAFT_SYSTEM, "CONTEXT:\n" + _json(context)), allowed)
+        if not result:
+            raise ValueError("GoalAI returned an invalid boundary-aware step draft")
+        return result
+
+    def coach(self, context: dict, messages: list[dict], *, opening: bool = False) -> StepCoachReply:
+        prompt = ("MODE: " + ("opening" if opening else "conversation") +
+                  "\nCONTEXT:\n" + _json(context) +
+                  "\nLEAF COACH CONVERSATION:\n" + _json(messages[-12:]))
+        result = parse_step_coach(self._call(STEP_COACH_SYSTEM, prompt), opening=opening)
+        if not result:
+            raise ValueError("Leaf Coach returned an invalid response")
         return result
 
     def harvest(self, context: dict, instruction: str = "") -> HarvestDraft:
@@ -1859,6 +2626,76 @@ def _validate_merge_sources(goals: GoalStore, target: dict, data: dict) -> list[
     return sources
 
 
+def propose_leaf_boundary_merge(config, target_id: int, source_id: int, *,
+                                title: str = "", description: str = "",
+                                rationale: str = "") -> dict:
+    """Create an approval-only merge proposal from an explicit boundary review."""
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        target, source = goals.get(int(target_id)), goals.get(int(source_id))
+        if not target or not source or target["type"] != "task" or source["type"] != "task":
+            raise ValueError("boundary merge requires two Leaves")
+        if (target["parent_id"] != source["parent_id"] or target["status"] != "active"
+                or source["status"] == "archived"):
+            raise ValueError("boundary merge requires sibling Leaves with an active target")
+        title = " ".join(str(title or target["title"]).split())
+        description = str(description or target.get("description") or "").strip()
+        rationale = str(rationale or (
+            "These Leaves produce substantially overlapping outputs; combine their "
+            "responsibilities so the user performs the work once.")).strip()
+        refs = [f"goal-node:{target['id']}", f"goal-node:{source['id']}"]
+        review = RelevanceReview(
+            "questionable", .5, 1.0, rationale,
+            "A Root-local boundary review found repeated responsibility between two Leaves.",
+            "The useful intent and history from both Leaves should remain attached.", refs,
+            [GardeningProposal("merge", int(target_id), {
+                "source_node_ids": [int(source_id)], "title": title,
+                "description": description}, rationale, refs)])
+        result = agents.save_relevance_review(
+            int(target_id), review,
+            hashlib.sha256(_json({"target": target["id"], "source": source["id"],
+                                  "target_version": target["updated_at"],
+                                  "source_version": source["updated_at"]}).encode()).hexdigest(),
+            "leaf-boundary-review", allowed_evidence_refs=set(refs))
+        return {"ok": True, **result, "target_id": int(target_id),
+                "source_id": int(source_id)}
+    finally:
+        agents.close(); goals.close()
+
+
+def propose_leaf_boundary_rewrite(config, node_id: int, *, title: str = "",
+                                  description: str = "", rationale: str = "") -> dict:
+    """Create an approval-only rewrite that narrows one Leaf's responsibility."""
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node["type"] != "task" or node["status"] == "archived":
+            raise ValueError("boundary rewrite requires a current Leaf")
+        title = " ".join(str(title or node["title"]).split())
+        description = str(description or "").strip()
+        if not description:
+            raise ValueError("a narrowed Leaf description is required")
+        rationale = str(rationale or (
+            "Narrow this Leaf to one output so neighboring Leaves do not repeat its work.")).strip()
+        refs = [f"goal-node:{node['id']}"]
+        review = RelevanceReview(
+            "questionable", .5, 1.0, rationale,
+            "A Root-local boundary review found that this Leaf crosses into a neighboring output.",
+            "The Leaf remains useful when narrowed to its own handoff artifact.", refs,
+            [GardeningProposal("rewrite", int(node_id), {
+                "title": title, "description": description}, rationale, refs)])
+        result = agents.save_relevance_review(
+            int(node_id), review,
+            hashlib.sha256(_json({"node": node["id"], "version": node["updated_at"],
+                                  "title": title, "description": description}).encode()).hexdigest(),
+            "leaf-boundary-review", allowed_evidence_refs=set(refs))
+        return {"ok": True, **result, "node_id": int(node_id)}
+    finally:
+        agents.close(); goals.close()
+
+
 def decide_gardening_proposal(config, proposal_id: int, action: str, *,
                               payload: dict | None = None,
                               rationale: str = "") -> dict:
@@ -1924,6 +2761,23 @@ def decide_gardening_proposal(config, proposal_id: int, action: str, *,
                         "(goal_id,source_kind,source_id,label,created_at) VALUES (?,?,?,?,?)",
                         (target["id"], ev["source_kind"], ev["source_id"],
                          ev["label"], ev["created_at"]))
+                # Execution history follows an absorbed Leaf. Raw transcripts
+                # remain encrypted; conflicting step summaries keep the target's
+                # version while all coach messages and outcomes are retained.
+                goals.conn.execute(
+                    "UPDATE goal_step_coach_message SET node_id=? WHERE node_id=?",
+                    (target["id"], source["id"]))
+                goals.conn.execute(
+                    "INSERT OR IGNORE INTO goal_step_coach_state "
+                    "(node_id,step_fingerprint,step_index,step_text,status,update_json,updated_at) "
+                    "SELECT ?,step_fingerprint,step_index,step_text,status,update_json,updated_at "
+                    "FROM goal_step_coach_state WHERE node_id=?",
+                    (target["id"], source["id"]))
+                goals.conn.execute(
+                    "DELETE FROM goal_step_coach_state WHERE node_id=?", (source["id"],))
+                goals.conn.execute(
+                    "UPDATE experiment_outcome SET goal_id=? WHERE goal_id=?",
+                    (target["id"], source["id"]))
                 goals.conn.commit()
                 goals.update(source["id"], status="archived")
             changes = {key: data[key] for key in ("title", "description")
@@ -2187,12 +3041,141 @@ def decide_proposal(config, proposal_id: int, action: str,
                          due_date=data.get("due_date"))
         elif kind == "update_fields":
             changes = {k: v for k, v in data.items()
-                       if k in {"description", "notes", "priority", "due_date"}}
+                       if k in {"title", "description", "notes", "priority", "due_date"}}
             if "priority" in changes:
                 changes["priority"] = _normalize_priority(changes["priority"])
             if not changes:
                 raise ValueError("proposal has no supported fields")
             goals.update(target["id"], **changes)
+            source_item_id = data.get("source_curiosity_item_id")
+            try:
+                source_item_id = int(source_item_id) if source_item_id is not None else None
+            except (TypeError, ValueError):
+                source_item_id = None
+            if source_item_id is not None:
+                source = goals.conn.execute(
+                    "SELECT curiosity_id,status FROM curiosity_item WHERE id=? AND kind='suggestion'",
+                    (source_item_id,)).fetchone()
+                if source and source["status"] == "open":
+                    now = _now()
+                    goals.conn.execute(
+                        "UPDATE curiosity_item SET status='tried',resolved_at=?,"
+                        "implementation_goal_id=? WHERE id=?",
+                        (now, target["id"], source_item_id))
+                    goals.conn.execute(
+                        "INSERT OR IGNORE INTO goal_evidence_link "
+                        "(goal_id,source_kind,source_id,label,created_at) VALUES (?,?,?,?,?)",
+                        (target["id"], "curiosity_suggestion", str(source_item_id),
+                         crypto.enc("Merged Investigation suggestion"), now))
+                    goals.conn.commit()
+                    goals.link_curiosity(target["id"], int(source["curiosity_id"]))
+        elif kind == "restructure_tree":
+            changes = list(data.get("changes") or [])
+            role_updates = list(data.get("role_updates") or [])
+            expected_versions = dict(data.get("expected_versions") or {})
+            if not changes and not role_updates:
+                raise ValueError("whole-tree restructure proposal has no changes")
+            for raw_id, expected in expected_versions.items():
+                try:
+                    watched_id = int(raw_id)
+                except (TypeError, ValueError):
+                    raise ValueError("whole-tree restructure has an invalid version boundary")
+                watched = goals.get(watched_id)
+                if not watched or watched["updated_at"] != expected:
+                    agents.resolve_proposal(proposal_id, "stale")
+                    raise ValueError("the Growth path changed since this review; run it again")
+
+            def tree_ancestor_ids(start_id: int | None) -> list[int]:
+                result, current = [], int(start_id or 0)
+                while current and current not in result:
+                    result.append(current)
+                    row = goals.conn.execute(
+                        "SELECT parent_id FROM goal_node WHERE id=?", (current,)).fetchone()
+                    current = int(row["parent_id"]) if row and row["parent_id"] else 0
+                return result
+
+            affected_before: set[int] = set()
+            for item in changes:
+                affected_before.update(tree_ancestor_ids(item.get("goal_id")))
+                affected_before.update(tree_ancestor_ids(item.get("parent_id")))
+            for item in role_updates:
+                affected_before.update(tree_ancestor_ids(item.get("goal_id")))
+            try:
+                goals.conn.execute("BEGIN IMMEDIATE")
+                migration = goals.restructure_batch(
+                    changes, role_updates, proposal_id=int(proposal_id),
+                    rationale=proposal["rationale"], commit=False)
+                affected = affected_before | set(migration["affected_node_ids"])
+                for node_id in migration["affected_node_ids"]:
+                    affected.update(tree_ancestor_ids(node_id))
+                if affected:
+                    placeholders = ",".join("?" for _ in affected)
+                    goals.conn.execute(
+                        f"UPDATE goal_agent_proposal SET status='stale',resolved_at=? "
+                        f"WHERE id!=? AND status='open' AND "
+                        f"(agent_node_id IN ({placeholders}) OR target_node_id IN ({placeholders}))",
+                        [_now(), int(proposal_id), *sorted(affected), *sorted(affected)])
+                goals.conn.execute(
+                    "UPDATE goal_agent_proposal SET status='approved',resolved_at=? "
+                    "WHERE id=? AND status='open'", (_now(), int(proposal_id)))
+                goals.conn.commit()
+            except Exception:
+                goals.conn.rollback()
+                raise
+            return {"ok": True, "status": "approved", "tree": goals.tree(),
+                    "restructure_tree": migration}
+        elif kind == "restructure_node":
+            try:
+                new_type = str(data.get("new_type") or "")
+                parent_id = int(data.get("parent_id"))
+                position = (None if data.get("position") is None
+                            else int(data.get("position")))
+            except (TypeError, ValueError):
+                raise ValueError("restructure proposal has an invalid destination")
+
+            def ancestor_ids(start_id: int | None) -> list[int]:
+                result, current = [], int(start_id or 0)
+                while current and current not in result:
+                    result.append(current)
+                    row = goals.conn.execute(
+                        "SELECT parent_id FROM goal_node WHERE id=?", (current,)).fetchone()
+                    current = int(row["parent_id"]) if row and row["parent_id"] else 0
+                return result
+
+            affected_before = set(ancestor_ids(target["id"]))
+            affected_before.update(ancestor_ids(parent_id))
+            try:
+                goals.conn.execute("BEGIN IMMEDIATE")
+                migration = goals.restructure(
+                    target["id"], new_type, parent_id, position,
+                    proposal_id=int(proposal_id), rationale=proposal["rationale"],
+                    commit=False)
+                affected = affected_before | set(migration["affected_node_ids"])
+                affected.update(ancestor_ids(target["id"]))
+                placeholders = ",".join("?" for _ in affected)
+                if affected:
+                    goals.conn.execute(
+                        f"UPDATE goal_agent_proposal SET status='stale',resolved_at=? "
+                        f"WHERE id!=? AND status='open' AND "
+                        f"(agent_node_id IN ({placeholders}) OR target_node_id IN ({placeholders}))",
+                        [_now(), int(proposal_id), *sorted(affected), *sorted(affected)])
+                goals.conn.execute(
+                    "UPDATE goal_agent_proposal SET status='approved',resolved_at=? "
+                    "WHERE id=? AND status='open'", (_now(), int(proposal_id)))
+                superseded_questions = 0
+                if proposal.get("assessment_id") is not None:
+                    cur = goals.conn.execute(
+                        "UPDATE goal_agent_question SET status='dismissed',resolved_at=? "
+                        "WHERE assessment_id=? AND status='open'",
+                        (_now(), int(proposal["assessment_id"])))
+                    superseded_questions = int(cur.rowcount)
+                goals.conn.commit()
+            except Exception:
+                goals.conn.rollback()
+                raise
+            return {"ok": True, "status": "approved", "tree": goals.tree(),
+                    "superseded_questions": superseded_questions,
+                    "restructure": migration}
         elif kind == "pause":
             goals.update(target["id"], status="paused")
         elif kind == "archive":
@@ -2247,8 +3230,10 @@ def decide_proposal(config, proposal_id: int, action: str,
             agents.commit_harvest(harvest["id"])
             agents.mark_dirty(target["id"])
         agents.resolve_proposal(proposal_id, "approved")
+        superseded_questions = agents.dismiss_questions_superseded_by_proposal(proposal_id)
         agents.mark_dirty(target["id"])
-        response = {"ok": True, "status": "approved", "tree": goals.tree()}
+        response = {"ok": True, "status": "approved", "tree": goals.tree(),
+                    "superseded_questions": superseded_questions}
         if kind == "promote_insight":
             response["harvest_id"] = harvest["id"]
         return response

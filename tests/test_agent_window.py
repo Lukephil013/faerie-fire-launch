@@ -1,5 +1,6 @@
 import os
 import tempfile
+from pathlib import Path
 
 from agent_window import AgentWindowApi
 from livingpc.config import Config
@@ -66,3 +67,32 @@ def test_harvest_native_window_commits_edited_draft():
         api = AgentWindowApi("goal-harvest", harvest["id"], cfg)
         result = api.commit({"draft": {"summary": "edited", "insights": [], "routes": []}})
         assert result["ok"] and result["harvest"]["draft"]["summary"] == "edited"
+
+
+def test_native_agent_window_can_minimize_and_close_even_while_working():
+    class FakeWindow:
+        minimized = False
+        destroyed = False
+
+        def minimize(self):
+            self.minimized = True
+
+        def destroy(self):
+            self.destroyed = True
+
+    with tempfile.TemporaryDirectory() as folder:
+        api = AgentWindowApi("goal-planner", 1, _cfg(folder))
+        window = FakeWindow()
+        api._window = window
+        assert api.minimize()["ok"] and window.minimized
+        assert api.close() and window.destroyed
+
+    html = Path("livingpc/ui/agent_window.html").read_text(encoding="utf-8")
+    assert 'id="minimize"' in html
+    assert 'id="close"' in html and 'aria-label="Close agent">×' in html
+    assert "['close','minimize','expand']" in html
+    assert "user-select:text" in html and "text-context-menu" in html
+    assert "clipboard_write" in html and "clipboard_read" in html
+
+    source = Path("agent_window.py").read_text(encoding="utf-8")
+    assert "text_select=True" in source

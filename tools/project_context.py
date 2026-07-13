@@ -64,11 +64,12 @@ AREAS = {
         ("tests/test_filing.py", "tests/test_skills.py"),
     ),
     "review": Area(
-        "pywebview GUI owns persistent inference investigations and memory review; accepted "
+        "pywebview GUI owns persistent inference investigations with bounded Exploration Threads and memory review; accepted "
         "canonical beliefs absorb repeated candidates; native agent windows stage changes for one "
         "explicit commit; approved curiosity profiles produce local daily mastery snapshots; the "
         "encrypted Soul/Root/Branch/Leaf tree keeps completion separate from mastery while bounded "
-        "GoalAI agents report and harvest upward, with Soul-approved crossover routes; one claimed "
+        "GoalAI agents report and harvest upward, Leaf Coach transcripts stay Leaf-local while "
+        "bounded execution updates flow through ancestors, and crossover remains Soul-approved; one claimed "
         "8 PM daily cycle runs incremental inference, curiosities, and dirty GoalAI paths before "
         "housekeeping, while metadata-only usage accounting tracks tokens and estimated cost.",
         ("gui.py", "agent_window.py", "run_triage.py", "livingpc/memory.py", "livingpc/triage/types.py",
@@ -85,7 +86,7 @@ AREAS = {
          "assets/notion/life-hub-footer.png", "assets/notion/curiosity-cover-journal.png",
          "assets/notion/curiosity-cover-observatory.png",
          "assets/notion/curiosity-cover-ripples.png",
-         "livingpc/ui/__init__.py", "livingpc/ui/memory.html",
+         "livingpc/ui/__init__.py", "livingpc/ui_preferences.py", "livingpc/ui/memory.html",
          "livingpc/ui/agent_window.html"),
         ("tests/test_memory.py", "tests/test_rejections.py",
          "tests/test_triage.py", "tests/test_inference.py",
@@ -95,7 +96,8 @@ AREAS = {
          "tests/test_curiosity_metrics.py", "tests/test_context_attachment.py",
          "tests/test_inference_scheduler.py",
          "tests/test_reflection_cadence.py", "tests/test_upward_spiral_journeys.py",
-         "tests/test_notion_sync.py", "tests/test_goals.py", "tests/test_goal_ai.py"),
+         "tests/test_notion_sync.py", "tests/test_goals.py", "tests/test_goal_ai.py",
+         "tests/test_ui_preferences.py"),
     ),
     "storage": Area(
         "capture writes data/living_computer.db; approved facts and pending proposals use data/memory.db; "

@@ -91,6 +91,22 @@ class ChatStore:
         return [{"role": row["role"], "content": crypto.dec(row["content"])}
                 for row in rows]
 
+    def recent_user_messages(self, limit: int = 80) -> list[dict]:
+        """Recent user-authored context across chats, newest first.
+
+        Consumers must still relevance-filter and bound this data. Assistant
+        replies are intentionally excluded so model prose never becomes user
+        evidence merely because it appeared in chat.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id,chat_id,content,created_at FROM companion_message "
+                "WHERE role='user' ORDER BY id DESC LIMIT ?", (max(0, int(limit)),)
+            ).fetchall()
+        return [{"id": int(row["id"]), "chat_id": row["chat_id"],
+                 "content": crypto.dec(row["content"]) or "",
+                 "created_at": row["created_at"]} for row in rows]
+
     def append(self, chat_id: str, role: str, content: str) -> None:
         if role not in {"user", "assistant"}:
             raise ValueError(f"invalid chat role: {role}")
