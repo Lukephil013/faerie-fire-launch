@@ -342,12 +342,25 @@ class GuiApi:
             return stored
         return None
 
+    def _portrait_focus(self, mem: MemoryStore) -> dict:
+        def _num(key: str, default: float) -> float:
+            try:
+                return float(mem.get_meta(key, str(default)))
+            except (TypeError, ValueError):
+                return default
+        return {
+            "x": max(0.0, min(1.0, _num("portrait_focus_x", 0.5))),
+            "y": max(0.0, min(1.0, _num("portrait_focus_y", 0.5))),
+            "zoom": max(1.0, min(4.0, _num("portrait_zoom", 1.0))),
+        }
+
     def self_portrait_state(self) -> dict:
         try:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
                 animation = mem.get_meta("portrait_animation", "still") or "still"
                 path = self._portrait_image_path(mem)
+                focus = self._portrait_focus(mem)
             finally:
                 mem.close()
             image_data_url = None
@@ -357,7 +370,27 @@ class GuiApi:
                 with open(path, "rb") as handle:
                     image_data_url = (f"data:{media_type};base64,"
                                        + base64.b64encode(handle.read()).decode("ascii"))
-            return {"ok": True, "animation": animation, "image_data_url": image_data_url}
+            return {"ok": True, "animation": animation, "image_data_url": image_data_url,
+                    "focus_x": focus["x"], "focus_y": focus["y"], "zoom": focus["zoom"]}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def self_portrait_set_focus(self, x, y, zoom) -> dict:
+        try:
+            fx = max(0.0, min(1.0, float(x)))
+            fy = max(0.0, min(1.0, float(y)))
+            fz = max(1.0, min(4.0, float(zoom)))
+        except (TypeError, ValueError):
+            return {"ok": False, "message": "invalid crop values"}
+        try:
+            mem = MemoryStore(self.cfg.memory_db_path)
+            try:
+                mem.set_meta("portrait_focus_x", str(round(fx, 4)))
+                mem.set_meta("portrait_focus_y", str(round(fy, 4)))
+                mem.set_meta("portrait_zoom", str(round(fz, 4)))
+            finally:
+                mem.close()
+            return {"ok": True, "focus_x": fx, "focus_y": fy, "zoom": fz}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
@@ -409,11 +442,15 @@ class GuiApi:
             mem = MemoryStore(self.cfg.memory_db_path)
             try:
                 mem.set_meta("portrait_image_path", saved_path)
+                # New photo — any previous crop/pan/zoom no longer makes sense.
+                mem.set_meta("portrait_focus_x", "0.5")
+                mem.set_meta("portrait_focus_y", "0.5")
+                mem.set_meta("portrait_zoom", "1.0")
             finally:
                 mem.close()
             media_type = self._PORTRAIT_IMAGE_TYPES[ext]
             image_data_url = f"data:{media_type};base64," + base64.b64encode(data).decode("ascii")
-            return {"ok": True, "image_data_url": image_data_url}
+            return {"ok": True, "image_data_url": image_data_url, "focus_x": 0.5, "focus_y": 0.5, "zoom": 1.0}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 

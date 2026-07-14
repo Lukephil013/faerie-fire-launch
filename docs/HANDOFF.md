@@ -6,38 +6,27 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 ## Start Here
 
 - Branch: `main`
-- Parent HEAD: `8e012c9`
-- Generated UTC: `2026-07-14T20:37:45+00:00`
-- Changed areas: agent-context, diagnostics, filing, review, storage
+- Parent HEAD: `a4621ab`
+- Generated UTC: `2026-07-14T23:09:12+00:00`
+- Changed areas: review
 - Read the latest commit message, then run the narrow context command below.
 - Do not scan README, FEATURES, design documents, or devlogs unless the task requires history.
 
 ## Changed Files In This Commit
 
-- `docs/GOALS_CURIOSITIES.md`
 - `gui.py`
-- `livingpc/config.py`
-- `livingpc/goal_ai.py`
-- `livingpc/goals.py`
-- `livingpc/ui/agent_window.html`
-- `livingpc/ui/assets/fonts/AtkinsonHyperlegible-Bold.ttf`
-- `livingpc/ui/assets/fonts/AtkinsonHyperlegible-Regular.ttf`
-- `livingpc/ui/assets/fonts/OFL.txt`
-- `livingpc/ui/assistant.html`
-- `livingpc/ui/capture.html`
+- `livingpc/ui/assets/icons/brand-emblem.png`
+- `livingpc/ui/assets/icons/golden-trim.png`
+- `livingpc/ui/assets/icons/milestone-star.png`
+- `livingpc/ui/assets/icons/nav-command-center.png`
+- `livingpc/ui/assets/icons/nav-growth.png`
+- `livingpc/ui/assets/icons/nav-investigations.png`
+- `livingpc/ui/assets/icons/sparkle-accent.png`
 - `livingpc/ui/memory.html`
-- `tests/test_agent_window.py`
-- `tests/test_goal_ai.py`
-- `tests/test_goals.py`
-- `tests/test_memory_html_ui.py`
-- `tests/test_ui_bridges.py`
 
 ## Context Commands
 
-- `python tools/project_context.py diagnostics`
-- `python tools/project_context.py filing`
 - `python tools/project_context.py review`
-- `python tools/project_context.py storage`
 
 ## Verification
 
@@ -47,6 +36,6 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 
 ## Recent History Before This Commit
 
+- a4621ab Update 2026-07-14
 - 8e012c9 Update 2026-07-13
 - 857493d Update 2026-07-12
-- 0d653e2 Update 2026-07-11

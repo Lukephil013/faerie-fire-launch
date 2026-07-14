@@ -262,43 +262,46 @@
       opacity:.85; transform:translateY(-5px); }
   }
 
-  #app { position:relative; z-index:2; display:grid; grid-template-columns:190px minmax(0,1fr);
+  #app { position:relative; z-index:2; display:grid; grid-template-columns:308px minmax(0,1fr);
     grid-template-rows:auto 1fr; height:100vh; }
-  header { grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:flex-start;
-    gap:4px; padding:22px 14px 8px; background:rgba(23,28,25,.94);
+  header { grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:stretch;
+    gap:10px; padding:20px 16px 10px; background:rgba(23,28,25,.94);
     border-right:1px solid rgba(255,255,255,.07); }
-  header .logo { font-size:19px; font-weight:600; color:var(--green);
+  header .brand { display:flex; align-items:center; gap:9px; }
+  header .brand img { width:28px; height:28px; object-fit:contain; flex:0 0 28px;
+    filter:drop-shadow(0 0 8px rgba(83,231,192,.45)); }
+  header .logo { font-size:18px; font-weight:600; color:var(--green);
     text-shadow:0 0 14px rgba(47,227,160,.42); letter-spacing:.3px; }
   header .sub { display:none; }
-  header .header-refresh { position:fixed; left:14px; bottom:18px; z-index:35; margin-left:0;
-    width:34px; height:34px; padding:0; border-radius:999px;
-    display:grid; place-items:center; font-size:16px; line-height:1; }
-  header .header-refresh.spinning { animation:header-refresh-spin .6s linear; }
-  @keyframes header-refresh-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-  header .settings-cog { position:fixed; left:58px; bottom:18px; z-index:35;
-    width:34px; height:34px; padding:0; border-radius:999px;
-    display:grid; place-items:center; font-size:17px; line-height:1; }
   header .backend { display:none; }
 
   nav { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:2px;
-    padding:8px 9px 74px; align-items:stretch; flex-wrap:nowrap;
+    padding:8px 9px 0; align-items:stretch; flex-wrap:nowrap; overflow-y:auto; overflow-x:hidden;
     background:rgba(23,28,25,.94); border-right:1px solid rgba(255,255,255,.07); }
   nav .tab { display:flex; align-items:center; gap:10px; min-height:34px; box-sizing:border-box;
     font-size:13px; letter-spacing:0; padding:7px 10px; border-radius:7px;
     cursor:pointer; color:rgba(239,244,241,.9); background:transparent; border:0;
     transition:background .15s ease,color .15s ease; user-select:none; text-align:left; }
-  nav .tab::before,.group-label::before { width:15px; flex:0 0 15px; text-align:center;
+  nav .tab .nav-icon { width:17px; height:17px; object-fit:contain; flex:0 0 17px; opacity:.82; }
+  nav .tab.active .nav-icon { opacity:1; filter:drop-shadow(0 0 5px rgba(47,227,160,.5)); }
+  .group-label::before { width:15px; flex:0 0 15px; text-align:center;
     color:rgba(226,237,231,.82); font-family:var(--app-font); font-size:14px; }
-  nav .tab[data-view="self"]::before { content:'◉'; }
-  nav .tab[data-view="goals"]::before { content:'◇'; }
-  nav .tab[data-view="curiosity"]::before { content:'◎'; }
-  nav .tab[data-view="inferences"]::before { content:'⌁'; }
-  nav .tab[data-view="clarify"]::before { content:'?'; }
-  nav .tab[data-view="memory"]::before { content:'▤'; }
+  nav .tab[data-view="inferences"]::before { content:'⌁'; width:15px; flex:0 0 15px; text-align:center; }
+  nav .tab[data-view="clarify"]::before { content:'?'; width:15px; flex:0 0 15px; text-align:center; }
+  nav .tab[data-view="memory"]::before { content:'▤'; width:15px; flex:0 0 15px; text-align:center; }
   nav .tab:hover { background:rgba(255,255,255,.055); color:#fff; }
   nav .tab.active { color:#fff; font-weight:600; background:rgba(255,255,255,.085);
     box-shadow:inset 2px 0 0 var(--green); }
-  nav .tab.active::before { color:var(--cyan); }
+  #self-rail-dashboard { display:flex; flex-direction:column; gap:14px; margin:14px 0 6px; }
+  .rail-footer { display:flex; align-items:center; gap:8px; margin-top:auto;
+    padding:12px 2px 16px; }
+  .rail-footer .header-refresh, .rail-footer .settings-cog { position:static; margin:0;
+    width:32px; height:32px; padding:0; border-radius:999px;
+    display:grid; place-items:center; font-size:15px; line-height:1; flex:0 0 auto; }
+  .rail-footer .header-refresh.spinning { animation:header-refresh-spin .6s linear; }
+  @keyframes header-refresh-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  .rail-tagline { flex:1; min-width:0; font-style:italic; color:var(--green); font-size:11.5px;
+    opacity:.85; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .nav-group { position:relative; }
   .nav-group summary { list-style:none; }
   .nav-group summary::-webkit-details-marker { display:none; }
@@ -364,12 +367,35 @@
     border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow:0 8px 24px var(--shadow);
     -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
   .self-identity-card { padding:12px; }
+  .self-portrait-frame { border-width:22px; border-style:solid; border-color:transparent;
+    border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 22px / 0 stretch;
+    border-radius:0; padding:0; background:transparent; box-shadow:none; }
+  .self-portrait-frame .self-portrait { margin:0; border:none; }
   .self-identity-summary { padding:2px 0 0; }
   .self-identity-summary h3 { margin:0 0 8px; font-size:13px; color:var(--green);
     letter-spacing:1.6px; text-transform:uppercase; }
   .self-rank { display:flex; justify-content:space-between; align-items:center; color:var(--green);
     font-size:12px; letter-spacing:1px; text-transform:uppercase; font-weight:700; }
-  .self-portrait { height:420px; margin:10px 0 12px; border-radius:4px; overflow:hidden;
+  .self-id-header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .self-id-avatar { position:relative; flex:0 0 40px; width:40px; height:40px; border-radius:999px;
+    overflow:hidden; border:1px solid rgba(112,214,158,.35); background:rgba(255,255,255,.04); }
+  .self-id-avatar img { width:100%; height:100%; object-fit:cover; }
+  .self-id-avatar .dot { position:absolute; top:-1px; right:-1px; width:10px; height:10px; border-radius:999px;
+    background:var(--green); border:2px solid rgba(9,20,14,.92); }
+  .self-id-name-wrap { min-width:0; }
+  .self-id-name { font-weight:700; font-size:14px; color:var(--fg); letter-spacing:.3px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .self-id-rank { font-size:11px; color:var(--green); letter-spacing:1px; text-transform:uppercase; margin-top:2px; }
+  .self-xp-next { font-size:11.5px; color:var(--muted); margin:8px 0 6px; }
+  .self-xp-bar { height:7px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; }
+  .self-xp-bar i { display:block; height:100%; border-radius:999px;
+    background:linear-gradient(90deg,#2fe3a0,#53e7c0); box-shadow:0 0 8px rgba(47,227,160,.4); }
+  .self-xp-count { text-align:right; font-size:11px; color:var(--muted); margin-top:4px; }
+  .widget-icon { width:14px; height:14px; object-fit:contain; margin-right:6px; vertical-align:-2px; }
+  .thread-row { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:12.5px; color:var(--fg); }
+  .thread-row i { width:6px; height:6px; border-radius:999px; background:var(--green); flex:0 0 6px; }
+  .milestone-level { font-size:18px; font-weight:700; color:var(--green); margin-top:4px; }
+  .self-portrait { height:220px; margin:0; border-radius:4px; overflow:hidden;
     border:1px solid rgba(112,214,158,.28); background-image:
       linear-gradient(180deg,rgba(217,255,221,.18),rgba(2,10,6,.12)),
       var(--portrait-image,url("assets/backgrounds/forest-ruins-main.jpg"));
@@ -378,6 +404,16 @@
   .self-portrait::before { content:''; position:absolute; inset:0; z-index:1;
     background:radial-gradient(circle at 62% 2%,rgba(197,255,184,.2),transparent 34%),
       linear-gradient(180deg,transparent 48%,rgba(2,8,5,.18)); pointer-events:none; }
+  .self-portrait-img { position:absolute; top:0; left:0; z-index:0; display:none;
+    transform-origin:0 0; pointer-events:none; user-select:none; -webkit-user-drag:none; }
+  .portrait-crop-frame { position:relative; width:100%; aspect-ratio:280/220; overflow:hidden;
+    border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); cursor:grab; margin:10px 0; }
+  .portrait-crop-frame.dragging { cursor:grabbing; }
+  .portrait-crop-frame img { position:absolute; top:0; left:0; transform-origin:0 0;
+    pointer-events:none; user-select:none; -webkit-user-drag:none; }
+  .portrait-crop-zoom-row { display:flex; align-items:center; gap:10px; color:var(--muted);
+    font-size:12px; }
+  .portrait-crop-zoom-row input[type="range"] { flex:1; }
   .self-portrait-edit { position:absolute; z-index:11; top:10px; right:10px; width:34px; height:34px;
     padding:0; display:flex; align-items:center; justify-content:center; border-radius:999px;
     opacity:0; transform:translateY(-3px); background:rgba(2,12,8,.72);
@@ -484,18 +520,15 @@
   .self-pursuit-title { font-weight:700; margin-bottom:7px; }
   .self-pursuit-meta { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
   .command-tools { display:none; }
-  .command-center-shell { display:grid;
-    grid-template-columns:minmax(260px,320px) minmax(460px,1fr) minmax(270px,330px);
-    gap:18px; align-items:start; overflow:visible; padding-bottom:36px; }
-  .command-center-shell.no-sidebar { grid-template-columns:minmax(260px,320px) minmax(0,1fr); }
-  .command-portrait-col { overflow:visible;
-    display:flex; flex-direction:column; gap:16px; padding-right:8px; box-sizing:border-box; }
   .command-chat-col { display:flex; flex-direction:column; gap:16px;
-    overflow:visible; padding-right:0; box-sizing:border-box; }
+    overflow:visible; padding-right:0; box-sizing:border-box; padding-bottom:36px; }
   .command-chat-panel,.command-side { background:linear-gradient(135deg,rgba(8,24,16,.68),rgba(4,13,10,.54));
     border:1px solid var(--line); border-radius:18px; box-shadow:0 16px 44px rgba(0,0,0,.32); }
   .command-chat-panel { flex:0 0 auto; height:max(860px,calc(100vh - 44px)); min-height:760px;
-    display:grid; grid-template-columns:200px minmax(0,1fr); overflow:hidden; }
+    display:grid; grid-template-columns:200px minmax(0,1fr); overflow:hidden;
+    border-width:22px; border-style:solid; border-color:transparent;
+    border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 22px / 0 stretch;
+    border-radius:0; }
   .cc-chat-list { min-width:0; border-right:1px solid var(--line2); padding:14px; overflow:auto; }
   .cc-chat-list-head { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:12px; }
   .cc-chat-list-head b { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -518,7 +551,8 @@
   .command-chat-panel.chat-list-collapsed #cc-new-chat,
   .command-chat-panel.chat-list-collapsed #cc-chat-list,
   .command-chat-panel.chat-list-collapsed #cc-delete-chat { display:none; }
-  .command-chat-panel.chat-list-collapsed .cc-chat-list { padding:14px 4px; }
+  .command-chat-panel.chat-list-collapsed .cc-chat-list { padding:14px 4px; overflow:hidden;
+    border-right-color:transparent; }
   .cc-chat-item { width:100%; text-align:left; margin:5px 0; padding:10px 12px; border-radius:11px;
     color:var(--muted); background:rgba(255,255,255,.035); border:1px solid transparent; }
   .cc-chat-item.active { color:#032118; background:linear-gradient(90deg,#2fe3a0,#53e7c0); font-weight:800; }
@@ -533,12 +567,11 @@
     background:rgba(255,255,255,.05); border:1px solid var(--line2); color:var(--muted); }
   .cc-fullscreen-btn:hover { color:var(--green); border-color:rgba(112,214,158,.5); background:rgba(255,255,255,.1); }
   body.chat-fullscreen header, body.chat-fullscreen nav,
-  body.chat-fullscreen .command-portrait-col, body.chat-fullscreen .command-side,
   body.chat-fullscreen .command-investigations-panel { display:none !important; }
+  body.chat-fullscreen #app { grid-template-columns:0 minmax(0,1fr); }
   body.chat-fullscreen .view.active { padding:0; }
   body.chat-fullscreen .view > * { max-width:none; }
-  body.chat-fullscreen .command-center-shell { grid-template-columns:1fr; max-height:100vh; gap:0; }
-  body.chat-fullscreen .command-chat-col { max-height:100vh; padding-right:0; gap:0; }
+  body.chat-fullscreen .command-chat-col { max-height:100vh; padding-right:0; gap:0; padding-bottom:0; }
   body.chat-fullscreen .command-chat-panel { height:100vh; min-height:0; border-radius:0; border:none; }
   .cc-log { flex:1; min-height:300px; overflow:auto; padding:22px 24px; display:flex; flex-direction:column; gap:16px;
     user-select:text; }
@@ -546,7 +579,8 @@
     background:rgba(255,255,255,.045); line-height:1.6; font-size:14px; white-space:pre-wrap; overflow-wrap:anywhere;
     user-select:text; cursor:text; }
   .cc-message.user { align-self:flex-end; background:rgba(47,227,160,.12); border-color:rgba(83,231,192,.32); }
-  .cc-message.assistant { align-self:flex-start; }
+  .cc-message.assistant { align-self:flex-start; background:none; border-color:transparent;
+    padding:2px 4px; max-width:88%; box-shadow:none; }
   .cc-empty { margin:auto; max-width:520px; text-align:center; color:var(--muted); line-height:1.65; }
   .cc-compose { border-top:1px solid var(--line2); padding:18px 24px 20px; }
   .cc-attachments { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
@@ -623,22 +657,15 @@
   body.profile-launch #goal-backfill-origin, body.profile-launch #goal-view-list,
   body.profile-launch #goal-open-map { display:none !important; }
   @media(max-width:1080px){
-    #app{display:flex;flex-direction:column}
-    header{display:flex;flex-direction:row;align-items:baseline;padding:17px 22px 11px;border-right:0}
-    header .sub{display:none}
-    header .header-refresh{position:static;margin-left:auto}
-    header .settings-cog{position:static}
-    nav{display:flex;flex-direction:row;gap:3px;padding:0 22px 12px;align-items:center;flex-wrap:wrap;border-right:0}
-    nav .tab{text-align:left}
+    #app{display:flex;flex-direction:column;height:auto;min-height:100vh}
+    header{border-right:0}
+    nav{border-right:0;max-height:60vh}
     .nav-menu{top:calc(100% + 6px);left:0}
     .view{flex:1;padding:4px 22px 22px}
-    .command-center-shell{grid-template-columns:1fr;max-height:none}
     .command-chat-panel{grid-template-columns:1fr;min-height:620px;height:auto}
     .cc-chat-list{border-right:none;border-bottom:1px solid var(--line2);max-height:150px}
-    .command-side{max-height:none}
-    .command-portrait-col{max-height:none}
-    .command-portrait-col .self-portrait{height:260px}
     .command-chat-col{max-height:none}
+    .self-portrait{height:260px}
   }
   .soul-calibration-drawer { width:min(640px,92vw); }
   .soul-calibration-field { margin:12px 0; }
@@ -1613,15 +1640,16 @@
 </div>
 <div id="app">
   <header>
-    <span class="logo">✦ Faerie Fire</span>
-    <button class="header-refresh" id="header-refresh-self" title="Refresh dashboard">⟳</button>
-    <button class="settings-cog" id="settings-cog" title="Settings and tools">⚙</button>
+    <div class="brand"><img src="assets/icons/brand-emblem.png" alt=""><span class="logo">Faerie Fire</span></div>
+    <div class="self-panel self-identity-card">
+      <div id="self-level-widget" class="self-empty">Loading…</div>
+    </div>
     <span class="backend" id="backend" hidden></span>
   </header>
   <nav>
-    <div class="tab active" data-view="self" data-group="self">Command Center</div>
-    <div class="tab" data-view="goals" data-group="growth">Growth</div>
-    <div class="tab" data-view="curiosity" data-group="growth">Investigations</div>
+    <div class="tab active" data-view="self" data-group="self"><img class="nav-icon" src="assets/icons/nav-command-center.png" alt="">Command Center</div>
+    <div class="tab" data-view="goals" data-group="growth"><img class="nav-icon" src="assets/icons/nav-growth.png" alt="">Growth</div>
+    <div class="tab" data-view="curiosity" data-group="growth"><img class="nav-icon" src="assets/icons/nav-investigations.png" alt="">Investigations</div>
     <details class="nav-group" data-group="knowledge">
       <summary class="group-label">Knowledge</summary>
       <div class="nav-menu">
@@ -1630,6 +1658,47 @@
         <div class="tab" data-view="memory" data-group="knowledge">Memory</div>
       </div>
     </details>
+
+    <div id="self-rail-dashboard">
+      <div class="self-panel self-identity-card self-portrait-frame">
+        <div class="self-portrait anim-still" id="self-portrait">
+          <img id="self-portrait-img" class="self-portrait-img" alt="" draggable="false">
+          <div class="portrait-rays"></div>
+          <div class="portrait-motes"></div>
+          <div class="portrait-wind"></div>
+          <div class="portrait-droplets"></div>
+          <div class="portrait-aurora"></div>
+          <span class="self-portrait-sparkle">✦</span>
+          <button class="self-portrait-edit" id="self-portrait-edit-btn" title="Customize portrait">✎</button>
+          <div class="self-customizer" id="self-customizer">
+            <label>Ambient effect</label>
+            <select id="self-portrait-anim">
+              <option value="still">Still</option>
+              <option value="sunshafts">Sunshafts</option>
+              <option value="motes">Motes</option>
+              <option value="fireflies">Fireflies</option>
+              <option value="breeze">Breeze</option>
+              <option value="rain">Rain</option>
+              <option value="dreamlight">Dreamlight</option>
+              <option value="living">Living (all)</option>
+            </select>
+            <div class="actions" style="margin-top:10px">
+              <button id="self-portrait-upload-btn" style="flex:1">Change image…</button>
+              <button id="self-portrait-reposition-btn" style="flex:1">Crop / reposition…</button>
+            </div>
+            <p class="hint">Pick a photo or a scene that feels like you right now. The ambient effect layers softly over it.</p>
+          </div>
+        </div>
+      </div>
+      <div id="self-profile-widgets" class="self-empty">Loading your daily command widgets…</div>
+      <aside id="self-dashboard" class="command-side self-empty">Loading your daily command widgets…</aside>
+    </div>
+
+    <div class="rail-footer">
+      <button class="header-refresh" id="header-refresh-self" title="Refresh dashboard">⟳</button>
+      <button class="settings-cog" id="settings-cog" title="Settings and tools">⚙</button>
+      <span class="rail-tagline">Stay curious, seeker.</span>
+    </div>
   </nav>
 
   <aside class="planner-drawer toolbox-drawer" id="settings-drawer">
@@ -1687,80 +1756,66 @@
     <div id="soul-cal-body"><div class="hint">Loading…</div></div>
   </aside>
 
+  <aside class="planner-drawer" id="portrait-crop-drawer">
+    <div class="cur-head">
+      <span class="cur-label">Crop / reposition portrait</span>
+      <button id="portrait-crop-close" style="margin-left:auto">Close</button>
+    </div>
+    <p class="hint">Drag the image to pan it, use the slider to zoom. This only changes what shows
+      through the frame — your original photo is kept untouched.</p>
+    <div class="portrait-crop-frame" id="portrait-crop-frame">
+      <img id="portrait-crop-img" alt="" draggable="false">
+    </div>
+    <label class="portrait-crop-zoom-row">Zoom
+      <input type="range" id="portrait-crop-zoom" min="1" max="3" step="0.02" value="1">
+    </label>
+    <div class="actions" style="margin-top:12px">
+      <button type="button" id="portrait-crop-reset" class="skip">Reset</button>
+      <button type="button" id="portrait-crop-save" class="accent" style="margin-left:auto">Save</button>
+    </div>
+  </aside>
+
   <div class="view active" id="view-self">
     <div class="toolbar command-tools">
       <button class="personal-only" id="self-database-rescue">Database rescue</button>
       <span id="self-status" class="hint" style="margin:0"></span>
     </div>
-    <div class="command-center-shell">
-      <aside class="command-portrait-col">
-        <div class="self-panel self-identity-card">
-          <div id="self-level-widget" class="self-empty">Loading…</div>
-          <div class="self-portrait anim-still" id="self-portrait">
-            <div class="portrait-rays"></div>
-            <div class="portrait-motes"></div>
-            <div class="portrait-wind"></div>
-            <div class="portrait-droplets"></div>
-            <div class="portrait-aurora"></div>
-            <span class="self-portrait-sparkle">✦</span>
-            <button class="self-portrait-edit" id="self-portrait-edit-btn" title="Customize portrait">✎</button>
-            <div class="self-customizer" id="self-customizer">
-              <label>Ambient effect</label>
-              <select id="self-portrait-anim">
-                <option value="still">Still</option>
-                <option value="sunshafts">Sunshafts</option>
-                <option value="motes">Motes</option>
-                <option value="fireflies">Fireflies</option>
-                <option value="breeze">Breeze</option>
-                <option value="rain">Rain</option>
-                <option value="dreamlight">Dreamlight</option>
-                <option value="living">Living (all)</option>
-              </select>
-              <button id="self-portrait-upload-btn" style="width:100%;margin-top:10px">Change image…</button>
-              <p class="hint">Pick a photo or a scene that feels like you right now. The ambient effect layers softly over it.</p>
-            </div>
+    <div class="command-chat-col">
+      <section class="command-chat-panel" aria-label="Command Center chat">
+        <aside class="cc-chat-list">
+          <div class="cc-chat-list-head">
+            <button id="cc-chat-list-collapse" class="cc-chat-list-toggle" type="button" title="Hide conversations">«</button>
+            <b>Conversations</b>
+            <button id="cc-new-chat" class="cc-new-chat-btn" type="button" title="New conversation">+</button>
           </div>
-        </div>
-        <div id="self-profile-widgets" class="self-empty">Loading your daily command widgets…</div>
-      </aside>
-      <div class="command-chat-col">
-        <section class="command-chat-panel" aria-label="Command Center chat">
-          <aside class="cc-chat-list">
-            <div class="cc-chat-list-head">
-              <button id="cc-chat-list-collapse" class="cc-chat-list-toggle" type="button" title="Hide conversations">«</button>
-              <b>Conversations</b>
-              <button id="cc-new-chat" class="cc-new-chat-btn" type="button" title="New conversation">+</button>
+          <div id="cc-chat-list"><div class="hint">Loading chats…</div></div>
+          <button id="cc-delete-chat" class="skip" style="width:100%;margin-top:10px">Delete current</button>
+        </aside>
+        <main class="cc-chat-main">
+          <div class="cc-chat-head">
+            <div class="cc-chat-head-text">
+              <h2>✦ Command Center</h2>
+              <p>Talk with Faerie here. This is the single chat surface; it can use memory, investigations, Growth context, attachments, and filing commands.</p>
             </div>
-            <div id="cc-chat-list"><div class="hint">Loading chats…</div></div>
-            <button id="cc-delete-chat" class="skip" style="width:100%;margin-top:10px">Delete current</button>
-          </aside>
-          <main class="cc-chat-main">
-            <div class="cc-chat-head">
-              <div class="cc-chat-head-text">
-                <h2>✦ Command Center</h2>
-                <p>Talk with Faerie here. This is the single chat surface; it can use memory, investigations, Growth context, attachments, and filing commands.</p>
-              </div>
-              <button id="cc-fullscreen-toggle" class="cc-fullscreen-btn" type="button" title="Expand chat">⛶</button>
+            <button id="cc-fullscreen-toggle" class="cc-fullscreen-btn" type="button" title="Expand chat">⛶</button>
+          </div>
+          <div id="cc-log" class="cc-log"><div class="cc-empty">Loading the thread…</div></div>
+          <div id="cc-proposal" class="cc-proposal" style="display:none"></div>
+          <div class="cc-compose">
+            <div id="cc-attachments" class="cc-attachments"></div>
+            <div class="cc-compose-input-wrap">
+              <button id="cc-attach" class="cc-icon-btn cc-attach-btn" type="button" title="Attach file">+</button>
+              <textarea id="cc-input" placeholder="Ask Faerie, paste a thought, or use /file to save a brain dump…"></textarea>
+              <button id="cc-send" class="cc-icon-btn cc-send-btn" type="button" title="Send">➤</button>
             </div>
-            <div id="cc-log" class="cc-log"><div class="cc-empty">Loading the thread…</div></div>
-            <div id="cc-proposal" class="cc-proposal" style="display:none"></div>
-            <div class="cc-compose">
-              <div id="cc-attachments" class="cc-attachments"></div>
-              <div class="cc-compose-input-wrap">
-                <button id="cc-attach" class="cc-icon-btn cc-attach-btn" type="button" title="Attach file">+</button>
-                <textarea id="cc-input" placeholder="Ask Faerie, paste a thought, or use /file to save a brain dump…"></textarea>
-                <button id="cc-send" class="cc-icon-btn cc-send-btn" type="button" title="Send">➤</button>
-              </div>
-              <span id="cc-status" class="hint" style="margin:6px 0 0;display:block"></span>
-            </div>
-          </main>
-        </section>
-        <section class="command-investigations-panel" aria-label="Investigations">
-          <div class="command-section-divider"><span>Investigations</span></div>
-          <div id="self-investigations-cards" class="self-empty">Loading investigations…</div>
-        </section>
-      </div>
-      <aside id="self-dashboard" class="command-side self-empty">Loading your daily command widgets…</aside>
+            <span id="cc-status" class="hint" style="margin:6px 0 0;display:block"></span>
+          </div>
+        </main>
+      </section>
+      <section class="command-investigations-panel" aria-label="Investigations">
+        <div class="command-section-divider"><span>Investigations</span></div>
+        <div id="self-investigations-cards" class="self-empty">Loading investigations…</div>
+      </section>
     </div>
   </div>
 
@@ -3546,6 +3601,8 @@ function activateView(name){
     if(groupEl){ groupEl.classList.add('active'); groupEl.open=true; }
   }
   $('view-'+name).classList.add('active');
+  const railDash=$('self-rail-dashboard');
+  if(railDash) railDash.style.display=(name==='self')?'':'none';
   if(name==='self') loadCommandCenter();
   if(name==='memory') loadMemory();
   if(name==='timeline') loadTimeline();
@@ -4188,8 +4245,26 @@ function bindCommandCenter(){
       pywebview.api.self_portrait_upload().then(r=>{
         btn.disabled=false; btn.textContent='Change image…';
         if(!r||r.ok===false){ if(r&&r.message) toast(r.message,true); return; }
-        if(r.image_data_url) portrait.style.setProperty('--portrait-image','url("'+r.image_data_url+'")');
+        if(r.image_data_url){
+          portrait.style.setProperty('--portrait-image','url("'+r.image_data_url+'")');
+          portraitImageDataUrl=r.image_data_url;
+          portraitFocus.x=(typeof r.focus_x==='number')?r.focus_x:0.5;
+          portraitFocus.y=(typeof r.focus_y==='number')?r.focus_y:0.5;
+          portraitFocus.zoom=(typeof r.zoom==='number')?r.zoom:1;
+          const img=$('self-portrait-img');
+          if(img){
+            img.style.display='block';
+            img.onload=()=>fitImageInFrame(img, portrait, portraitFocus.x, portraitFocus.y, portraitFocus.zoom);
+            img.src=r.image_data_url;
+            if(img.complete&&img.naturalWidth) fitImageInFrame(img, portrait, portraitFocus.x, portraitFocus.y, portraitFocus.zoom);
+          }
+        }
       }).catch(e=>{ btn.disabled=false; btn.textContent='Change image…'; toast('Could not upload image: '+e,true); });
+    };
+    const repositionBtn=$('self-portrait-reposition-btn');
+    if(repositionBtn) repositionBtn.onclick=()=>{
+      drawer.classList.remove('open'); portrait.classList.remove('customizing');
+      openPortraitCropDrawer();
     };
   }
   const collapseBtn=$('cc-chat-list-collapse');
@@ -4227,6 +4302,24 @@ function bindCommandCenter(){
     }
   }
 }
+let portraitFocus={x:0.5,y:0.5,zoom:1};
+let portraitImageDataUrl=null;
+
+function fitImageInFrame(imgEl, frameEl, fx, fy, zoom){
+  const nw=imgEl.naturalWidth, nh=imgEl.naturalHeight;
+  const fw=frameEl.clientWidth, fh=frameEl.clientHeight;
+  if(!nw||!nh||!fw||!fh) return null;
+  const baseScale=Math.max(fw/nw, fh/nh);
+  const scale=baseScale*Math.max(1,zoom||1);
+  const rw=nw*scale, rh=nh*scale;
+  let tx=fw/2 - fx*rw, ty=fh/2 - fy*rh;
+  tx=Math.min(0, Math.max(fw-rw, tx));
+  ty=Math.min(0, Math.max(fh-rh, ty));
+  imgEl.style.width=nw+'px'; imgEl.style.height=nh+'px';
+  imgEl.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')';
+  return {tx,ty,scale,rw,rh};
+}
+
 function loadSelfPortrait(){
   if(!api()||!pywebview.api.self_portrait_state) return;
   pywebview.api.self_portrait_state().then(r=>{
@@ -4235,8 +4328,89 @@ function loadSelfPortrait(){
     const style=r.animation||'still';
     portrait.className='self-portrait anim-'+style;
     const sel=$('self-portrait-anim'); if(sel) sel.value=style;
-    if(r.image_data_url) portrait.style.setProperty('--portrait-image','url("'+r.image_data_url+'")');
+    portraitFocus.x=(typeof r.focus_x==='number')?r.focus_x:0.5;
+    portraitFocus.y=(typeof r.focus_y==='number')?r.focus_y:0.5;
+    portraitFocus.zoom=(typeof r.zoom==='number')?r.zoom:1;
+    const img=$('self-portrait-img');
+    if(r.image_data_url){
+      portrait.style.setProperty('--portrait-image','url("'+r.image_data_url+'")');
+      portraitImageDataUrl=r.image_data_url;
+      if(img){
+        img.style.display='block';
+        img.onload=()=>fitImageInFrame(img, portrait, portraitFocus.x, portraitFocus.y, portraitFocus.zoom);
+        img.src=r.image_data_url;
+        if(img.complete&&img.naturalWidth) fitImageInFrame(img, portrait, portraitFocus.x, portraitFocus.y, portraitFocus.zoom);
+      }
+    } else if(img){
+      portraitImageDataUrl=null;
+      img.style.display='none';
+      img.removeAttribute('src');
+    }
   }).catch(()=>{});
+}
+
+function openPortraitCropDrawer(){
+  const drawer=$('portrait-crop-drawer'); if(!drawer) return;
+  const img=$('portrait-crop-img'), frame=$('portrait-crop-frame'), zoomInput=$('portrait-crop-zoom');
+  if(!img||!frame) return;
+  if(!portraitImageDataUrl){ toast('Set a portrait image first.', true); return; }
+  cropFx=portraitFocus.x; cropFy=portraitFocus.y; cropZoom=portraitFocus.zoom||1;
+  drawer.classList.add('open');
+  img.onload=()=>fitImageInFrame(img, frame, cropFx, cropFy, cropZoom);
+  img.src=portraitImageDataUrl;
+  if(img.complete&&img.naturalWidth) fitImageInFrame(img, frame, cropFx, cropFy, cropZoom);
+  if(zoomInput) zoomInput.value=cropZoom;
+  bindPortraitCropDrawer();
+}
+
+let cropFx=0.5, cropFy=0.5, cropZoom=1;
+function bindPortraitCropDrawer(){
+  const frame=$('portrait-crop-frame'), img=$('portrait-crop-img'), zoomInput=$('portrait-crop-zoom');
+  if(!frame||frame.dataset.bound) return;
+  frame.dataset.bound='1';
+  let dragging=false, startX=0, startY=0, startFx=0.5, startFy=0.5;
+  frame.addEventListener('pointerdown', e=>{
+    dragging=true; frame.classList.add('dragging');
+    try{ frame.setPointerCapture(e.pointerId); }catch(err){}
+    startX=e.clientX; startY=e.clientY; startFx=cropFx; startFy=cropFy;
+  });
+  frame.addEventListener('pointermove', e=>{
+    if(!dragging) return;
+    const fit=fitImageInFrame(img, frame, cropFx, cropFy, cropZoom);
+    if(!fit) return;
+    const dx=e.clientX-startX, dy=e.clientY-startY;
+    cropFx=Math.min(1,Math.max(0, startFx - dx/fit.rw));
+    cropFy=Math.min(1,Math.max(0, startFy - dy/fit.rh));
+    fitImageInFrame(img, frame, cropFx, cropFy, cropZoom);
+  });
+  const endDrag=()=>{ dragging=false; frame.classList.remove('dragging'); };
+  frame.addEventListener('pointerup', endDrag);
+  frame.addEventListener('pointercancel', endDrag);
+  if(zoomInput) zoomInput.oninput=()=>{
+    cropZoom=parseFloat(zoomInput.value)||1;
+    fitImageInFrame(img, frame, cropFx, cropFy, cropZoom);
+  };
+  const resetBtn=$('portrait-crop-reset');
+  if(resetBtn) resetBtn.onclick=()=>{
+    cropFx=0.5; cropFy=0.5; cropZoom=1;
+    if(zoomInput) zoomInput.value=1;
+    fitImageInFrame(img, frame, cropFx, cropFy, cropZoom);
+  };
+  const saveBtn=$('portrait-crop-save');
+  if(saveBtn) saveBtn.onclick=()=>{
+    if(!api()||!pywebview.api.self_portrait_set_focus) return;
+    saveBtn.disabled=true; saveBtn.textContent='Saving…';
+    pywebview.api.self_portrait_set_focus(cropFx,cropFy,cropZoom).then(r=>{
+      saveBtn.disabled=false; saveBtn.textContent='Save';
+      if(!r||r.ok===false){ toast((r&&r.message)||'Could not save crop.', true); return; }
+      portraitFocus.x=cropFx; portraitFocus.y=cropFy; portraitFocus.zoom=cropZoom;
+      const mainImg=$('self-portrait-img'), mainFrame=$('self-portrait');
+      if(mainImg&&mainFrame) fitImageInFrame(mainImg, mainFrame, cropFx, cropFy, cropZoom);
+      const d=$('portrait-crop-drawer'); if(d) d.classList.remove('open');
+    }).catch(e=>{ saveBtn.disabled=false; saveBtn.textContent='Save'; toast('Could not save crop: '+e, true); });
+  };
+  const closeBtn=$('portrait-crop-close');
+  if(closeBtn) closeBtn.onclick=()=>{ const d=$('portrait-crop-drawer'); if(d) d.classList.remove('open'); };
 }
 function loadCommandCenter(){
   bindCommandCenter();
@@ -4432,11 +4606,16 @@ function selfLevelWidgetHtml(data){
     : snapshots.reduce((sum,c)=>sum+((c.metric_snapshot&&c.metric_snapshot.total_xp)||0),0);
   const level=Math.max(1,Math.floor(totalXp/100)+1);
   const rank=level>=50?'S-Rank':level>=35?'A-Rank':level>=25?'B-Rank':level>=12?'C-Rank':'E-Rank';
-  const nextXp=100-(totalXp%100||0);
-  return '<div class="self-identity-summary"><h3>'+esc(rootTitle)+'</h3>'+
-      '<div class="self-rank"><span>⌃ Level: '+level+'</span><span>'+rank+'</span></div>'+
-      '<div class="self-quest-card"><b>'+totalXp+'</b><div class="hint" style="margin:2px 0 0">To reach Level '+(level+1)+' attain '+nextXp+' XP</div></div>'+
-    '</div>';
+  const xpIntoLevel=totalXp%100||0;
+  const nextXp=100-xpIntoLevel;
+  return '<div class="self-id-header">'+
+      '<span class="self-id-avatar"><img src="assets/icons/brand-emblem.png" alt=""><span class="dot"></span></span>'+
+      '<div class="self-id-name-wrap"><div class="self-id-name">'+esc(rootTitle)+'</div>'+
+      '<div class="self-id-rank">Level '+level+' · '+rank+'</div></div>'+
+    '</div>'+
+    '<div class="self-xp-next">To reach Level '+(level+1)+' attain '+nextXp+' XP</div>'+
+    '<div class="self-xp-bar"><i style="width:'+Math.max(3,xpIntoLevel)+'%"></i></div>'+
+    '<div class="self-xp-count">'+xpIntoLevel+' / 100 XP</div>';
 }
 
 function selfProfileWidgetsHtml(data){
@@ -4449,24 +4628,29 @@ function selfProfileWidgetsHtml(data){
   const proposals=(data.goalAi&&data.goalAi.overview&&data.goalAi.overview.open_proposals)||0;
   const blocked=(data.goalAi&&data.goalAi.overview&&data.goalAi.overview.blocked)||0;
   const questions=(data.goalAi&&data.goalAi.overview&&data.goalAi.overview.open_questions)||0;
-  const attention=[
+  const picks=(data.todayFocus&&data.todayFocus.picks)||[];
+  const threadItems=[
     proposals?proposals+' proposal(s) waiting for approval':'',
     questions?questions+' question(s) waiting for you':'',
     blocked?blocked+' blocked node(s) need care':''
-  ].filter(Boolean);
+  ].filter(Boolean).concat(picks.slice(0,3).map(p=>p.title||('Leaf #'+p.id)));
+  const globalXp=Number(data.curiosity&&data.curiosity.global_xp)||0;
+  const level2=Math.max(1,Math.floor(globalXp/100)+1);
+  const nextXp2=100-(globalXp%100||0);
   const todayRows=quests.map(t=>'<label class="self-task '+(t.status==='completed'?'done':'')+'">'+
     '<input type="checkbox" class="self-task-toggle" data-id="'+t.id+'" '+(t.status==='completed'?'checked':'')+'>'+
     '<span>'+esc(t.title)+'</span></label>');
-  return '<div class="command-widget"><h3>Daily energy</h3>'+
+  return '<div class="command-widget"><h3><img class="widget-icon" src="assets/icons/nav-growth.png" alt="">Current State</h3>'+
       (states.length?states.slice(0,6).map(x=>selfMetricBar(x.label,x.value)).join(''):
         '<div class="self-empty">No daily state check-ins from Growth/Investigations yet — answer a few reflection questions that track how you\'re feeling to populate this.</div>')+
     '</div>'+
-    '<div class="command-widget"><h3>Needs attention</h3>'+
-      (attention.length?attention.map(x=>'<div class="self-scenario-row">'+esc(x)+'</div>').join(''):
-        '<div class="self-empty">No urgent strategy branches right now.</div>')+
+    '<div class="command-widget"><h3>Active Threads</h3>'+
+      (threadItems.length?threadItems.map(x=>'<div class="thread-row"><i></i><span>'+esc(x)+'</span></div>').join(''):
+        '<div class="self-empty">Nothing pressing right now.</div>')+
     '</div>'+
-    '<div class="command-widget"><h3>Highest priority today</h3>'+
-      selfPriorityTodayHtml(data.todayFocus)+
+    '<div class="command-widget"><h3><img class="widget-icon" src="assets/icons/milestone-star.png" alt="">Next Milestone</h3>'+
+      '<div class="milestone-level">Level '+level2+'</div>'+
+      '<div class="hint" style="margin:2px 0 0">Attain '+nextXp2+' XP to unlock new Growth &amp; Investigations.</div>'+
     '</div>'+
     '<div class="command-widget"><h3>@Today</h3>'+
       (todayRows.length?selfCollapsibleList(todayRows,4):
