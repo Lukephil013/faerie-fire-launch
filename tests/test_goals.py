@@ -8,11 +8,13 @@ from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goals import (
     GoalStore, StubGoalPlanner, continue_planning, record_experiment_outcome,
+    propose_goal_intake,
     propose_goal_tree_restructure, propose_suggestion_leaf_update,
-    recommend_goal_restructure, recommend_goal_tree_restructure,
+    recommend_goal_intake, recommend_goal_restructure, recommend_goal_tree_restructure,
     recommend_suggestion_placement, start_planning,
     suggestion_leaf_overlaps, summarize_plan,
 )
+from livingpc.goals import TREE_RESTRUCTURE_SYSTEM
 from livingpc.goal_ai import decide_proposal
 from livingpc.inference import InferenceStore
 from livingpc.memory import MemoryStore
@@ -32,6 +34,11 @@ class GoalTestCase(unittest.TestCase):
 
 
 class TestGoalGraph(GoalTestCase):
+    def test_tree_restructure_prompt_unpacks_generic_catch_all_roots(self):
+        self.assertIn("generic catch-all Root", TREE_RESTRUCTURE_SYSTEM)
+        self.assertIn("move its descendants", TREE_RESTRUCTURE_SYSTEM)
+        self.assertIn("archive it after", TREE_RESTRUCTURE_SYSTEM)
+
     def test_single_renameable_umbrella_is_reused(self):
         root = self.goals.get(self.goals.root_id)
         self.assertEqual(root["title"], "Actualized Self")
@@ -121,6 +128,50 @@ class TestGoalGraph(GoalTestCase):
             "SELECT COUNT(*) FROM goal_restructure_history WHERE goal_id=?", (branch,)
         ).fetchone()[0], 0)
 
+    def test_manual_restructure_persists_area_project_and_stage_roles(self):
+        root = self.goals.create("overgoal", "Work & Contribution")
+        branch = self.goals.create("subgoal", "Client work", parent_id=root)
+
+        preview = self.goals.restructure_preview(
+            branch, "subgoal", root, 0, "area")
+        applied = self.goals.restructure(
+            branch, "subgoal", root, 0, semantic_role="area",
+            rationale="This is an ongoing responsibility.")
+
+        self.assertEqual(preview["proposed"]["type_label"], "Area")
+        self.assertEqual(preview["proposed"]["semantic_role"], "area")
+        self.assertEqual(applied["goal_id"], branch)
+        self.assertEqual(self.goals.semantic_role(branch)["role"], "area")
+        rendered = next(node for node in self.goals.tree()["children"]
+                        if node["id"] == root)["children"][0]
+        self.assertEqual((rendered["type"], rendered["semantic_role"]),
+                         ("subgoal", "area"))
+
+    def test_nested_stage_requires_explicit_macro_stage_justification(self):
+        root = self.goals.create("overgoal", "Work & Contribution")
+        project = self.goals.create("subgoal", "Client launch", parent_id=root)
+        outer = self.goals.create("subgoal", "Delivery phase", parent_id=project)
+        inner = self.goals.create("subgoal", "Quality review", parent_id=outer)
+        self.goals._set_semantic_role(project, "project", rationale="Finite launch project.")
+        self.goals._set_semantic_role(outer, "stage", rationale="Delivery is one project phase.")
+
+        with self.assertRaisesRegex(ValueError, "macro-stage/substage"):
+            self.goals.restructure_preview(
+                inner, "subgoal", outer, semantic_role="stage")
+
+        explanation = (
+            "Delivery is the macro-stage; quality review is its separately owned substage.")
+        preview = self.goals.restructure_preview(
+            inner, "subgoal", outer, semantic_role="stage",
+            nested_stage_justification=explanation)
+        applied = self.goals.restructure(
+            inner, "subgoal", outer, semantic_role="stage", rationale=explanation)
+
+        self.assertEqual(preview["proposed"]["semantic_role"], "stage")
+        self.assertEqual(applied["goal_id"], inner)
+        self.assertEqual(self.goals.semantic_role(inner)["role"], "stage")
+        self.assertIn("macro-stage", self.goals.semantic_role(inner)["rationale"])
+
     def test_ai_restructure_recommends_temporary_upwork_root_under_career(self):
         life = self.goals.create("overgoal", "Luke's Life")
         career = self.goals.create(
@@ -158,6 +209,79 @@ class TestGoalGraph(GoalTestCase):
         self.assertEqual(stage_node["semantic_role"], "stage")
         self.assertTrue(all(node["semantic_role_source"] == "derived"
                             for node in [career_node, project_node, stage_node]))
+
+    def test_legacy_root_children_use_meaning_not_child_count_for_role(self):
+        life = self.goals.create("overgoal", "Luke's Life")
+        korean = self.goals.create("subgoal", "Korean Language", parent_id=life)
+        league = self.goals.create("subgoal", "League of Legends", parent_id=life)
+        ambient = self.goals.create("subgoal", "Ambient Interface", parent_id=life)
+
+        life_node = next(node for node in self.goals.tree()["children"] if node["id"] == life)
+        roles = {node["id"]: node["semantic_role"] for node in life_node["children"]}
+
+        self.assertEqual(roles[korean], "area")
+        self.assertEqual(roles[league], "area")
+        self.assertEqual(roles[ambient], "project")
+
+    def test_optional_starter_roots_are_explicit_bilingual_and_idempotent(self):
+        catalog = self.goals.starter_root_catalog("ko")
+        self.assertEqual(len(catalog), 7)
+        self.assertTrue(all(not item["active"] for item in catalog))
+        self.assertEqual(next(item for item in catalog if item["key"] == "health")["title"],
+                         "건강과 에너지")
+
+        made = self.goals.apply_starter_roots(["work", "health"], "en")
+        repeated = self.goals.apply_starter_roots(["work", "health"], "en")
+
+        self.assertEqual(len(made["created_goal_ids"]), 2)
+        self.assertEqual(repeated["created_goal_ids"], [])
+        roots = [node for node in self.goals.tree()["children"] if node["type"] == "overgoal"]
+        self.assertEqual({node["title"] for node in roots},
+                         {"Work & Contribution", "Health & Energy"})
+        origins = self.goals.conn.execute(
+            "SELECT source_kind,source_id FROM goal_origin WHERE goal_id IN (?,?)",
+            tuple(made["created_goal_ids"])).fetchall()
+        self.assertEqual({(row["source_kind"], row["source_id"]) for row in origins},
+                         {("starter_root", "work"), ("starter_root", "health")})
+
+    def test_plain_language_intake_classifies_then_waits_for_approval(self):
+        career = self.goals.create(
+            "overgoal", "Work & Contribution",
+            description="Career, client work, products, and professional experiments.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db,
+                     curiosity_backend="stub")
+
+        classified = recommend_goal_intake(
+            cfg, StubGoalPlanner(), career,
+            "Build a small Upwork automation project to test client demand")
+        recommendation = classified["recommendation"]
+        staged = propose_goal_intake(cfg, recommendation, classified["rationale"])
+
+        self.assertEqual(classified["action"], "propose")
+        self.assertEqual((recommendation["new_type"], recommendation["semantic_role"]),
+                         ("subgoal", "project"))
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_node WHERE parent_id=?", (career,)).fetchone()[0], 0)
+
+        approved = decide_proposal(cfg, staged["proposal_id"], "approve")
+        created = self.goals.get(approved["created_goal_id"])
+        self.assertEqual(created["parent_id"], career)
+        self.assertEqual(self.goals.semantic_role(created["id"])["role"], "project")
+
+    def test_plain_language_intake_points_to_existing_equivalent(self):
+        career = self.goals.create("overgoal", "Work & Contribution")
+        project = self.goals.create(
+            "subgoal", "Build Upwork automation service", parent_id=career,
+            description="Build an Upwork automation service to test client demand.")
+        cfg = Config(db_path=os.path.join(self.tmp.name, "events.db"), memory_db_path=self.db,
+                     curiosity_backend="stub")
+
+        result = recommend_goal_intake(
+            cfg, StubGoalPlanner(), career,
+            "Build an Upwork automation service to test client demand")
+
+        self.assertEqual(result["action"], "existing")
+        self.assertEqual(result["existing_goal_id"], project)
 
     def test_ai_whole_path_restructure_promotes_domain_and_labels_nested_scopes(self):
         life = self.goals.create("overgoal", "Luke's Life")
@@ -214,6 +338,28 @@ class TestGoalGraph(GoalTestCase):
         self.assertEqual((self.goals.get(project)["parent_id"],
                           self.goals.get(stage)["parent_id"]), before)
 
+    def test_whole_path_restructure_guards_new_nested_stage_roles(self):
+        root = self.goals.create("overgoal", "Career")
+        project = self.goals.create("subgoal", "Client launch", parent_id=root)
+        outer = self.goals.create("subgoal", "Delivery phase", parent_id=project)
+        inner = self.goals.create("subgoal", "Quality review", parent_id=outer)
+        self.goals._set_semantic_role(project, "project", rationale="Finite project")
+        self.goals._set_semantic_role(outer, "stage", rationale="Project phase")
+        self.goals._set_semantic_role(inner, "project", rationale="Prior classification")
+
+        with self.assertRaisesRegex(ValueError, "macro-stage/substage"):
+            self.goals.restructure_batch_preview([], [
+                {"goal_id": inner, "role": "stage", "reason": "Make this another stage."},
+            ])
+
+        explanation = (
+            "Delivery is the macro-stage; quality review is a bounded substage with its own leaves.")
+        preview = self.goals.restructure_batch_preview([], [
+            {"goal_id": inner, "role": "stage", "reason": "Clarify the phase boundary.",
+             "nested_stage_justification": explanation},
+        ])
+        self.assertEqual(preview["role_changes"][0]["proposed_role"], "stage")
+
     def test_completion_excludes_paused_and_archived_tasks(self):
         over = self.goals.create("overgoal", "Korean")
         complete = self.goals.create("task", "Done", parent_id=over, status="completed")
@@ -223,6 +369,34 @@ class TestGoalGraph(GoalTestCase):
         node = next(x for x in self.goals.tree()["children"] if x["id"] == over)
         self.assertEqual(node["completion"], {"done": 1, "total": 2, "percent": 50.0})
         self.assertIsNotNone(self.goals.get(complete)["completed_at"])
+
+    def test_archive_and_restore_subtree_preserve_each_prior_status(self):
+        root = self.goals.create("overgoal", "Work")
+        project = self.goals.create("subgoal", "Client project", parent_id=root,
+                                    status="paused")
+        completed = self.goals.create(
+            "task", "Finished step", parent_id=project, status="completed")
+        active = self.goals.create("task", "Next step", parent_id=project)
+        self.goals.add_evidence(completed, "manual_note", "proof", "Finished proof")
+
+        archived = self.goals.delete_subtree(project)
+
+        self.assertEqual(archived, 3)
+        self.assertTrue(all(self.goals.get(node_id)["status"] == "archived"
+                            for node_id in (project, completed, active)))
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_evidence_link WHERE goal_id=?", (completed,)
+        ).fetchone()[0], 1)
+
+        restored = self.goals.restore_subtree(project)
+
+        self.assertEqual(restored, 3)
+        self.assertEqual(self.goals.get(project)["status"], "paused")
+        self.assertEqual(self.goals.get(completed)["status"], "completed")
+        self.assertEqual(self.goals.get(active)["status"], "active")
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_archive_snapshot WHERE archive_root_id=?", (project,)
+        ).fetchone()[0], 0)
 
     def test_empty_goal_completion_is_unknown(self):
         over = self.goals.create("overgoal", "Mental health")
@@ -799,6 +973,44 @@ class TestGoalBridge(unittest.TestCase):
         over = next(x for x in changed["tree"]["children"] if x["id"] == made["goal_id"])
         self.assertEqual(over["completion"]["percent"], 100.0)
 
+    def test_archive_and_restore_bridges_keep_subtree_reversible(self):
+        soul = self.api.goal_state()["tree"]["id"]
+        root = self.api.goal_create("overgoal", "Work", soul)["goal_id"]
+        leaf = self.api.goal_create("task", "Test offer", root)["goal_id"]
+
+        archived = self.api.goal_archive(root)
+        restored = self.api.goal_restore(root)
+
+        self.assertTrue(archived["ok"] and restored["ok"])
+        self.assertEqual(archived["archived_count"], 2)
+        root_after = next(node for node in restored["tree"]["children"]
+                          if node["id"] == root)
+        self.assertEqual(root_after["status"], "active")
+        self.assertEqual(root_after["children"][0]["id"], leaf)
+
+    def test_root_starter_and_plain_language_intake_bridges(self):
+        state = self.api.goal_state()
+        starters = self.api.goal_root_starters("en")
+        made = self.api.goal_root_starters_apply(["work"], "en")
+        work = made["created_goal_ids"][0]
+        classified = self.api.goal_intake_recommend(
+            work, "Build a client onboarding automation project")
+        staged = self.api.goal_intake_propose(
+            classified["recommendation"], classified["rationale"])
+
+        self.assertTrue(state["ok"] and starters["ok"] and made["ok"])
+        self.assertEqual(len(starters["starters"]), 7)
+        self.assertTrue(classified["ok"] and staged["ok"])
+        self.assertEqual(classified["recommendation"]["semantic_role"], "project")
+        before = self.api.goal_state()["tree"]
+        work_before = next(node for node in before["children"] if node["id"] == work)
+        self.assertEqual(work_before["children"], [])
+
+        approved = self.api.goal_ai_proposal(staged["proposal_id"], "approve", None, "")
+        work_after = next(node for node in approved["tree"]["children"] if node["id"] == work)
+        self.assertEqual(len(work_after["children"]), 1)
+        self.assertEqual(work_after["children"][0]["semantic_role"], "project")
+
     def test_experiment_outcome_bridge_updates_leaf_and_preserves_learning(self):
         state = self.api.goal_state(); root = state["tree"]["id"]
         over = self.api.goal_create("overgoal", "Energy", root)["goal_id"]
@@ -866,7 +1078,8 @@ class TestGoalBridge(unittest.TestCase):
         recommended = self.api.goal_restructure_recommend(project)
         preview = self.api.goal_restructure_preview(project, "subgoal", career, 0)
         staged = self.api.goal_restructure_propose(
-            project, "subgoal", career, 0, "Career owns this temporary experiment.")
+            project, "subgoal", career, 0, "Career owns this temporary experiment.",
+            "project")
         unchanged = next(node for node in self.api.goal_state()["tree"]["children"]
                          if node["id"] == project)
         applied = self.api.goal_ai_proposal(staged["proposal_id"], "approve", None, "")
@@ -876,6 +1089,7 @@ class TestGoalBridge(unittest.TestCase):
         moved = next(node for node in applied["tree"]["children"][0]["children"]
                      if node["id"] == career)["children"][0]
         self.assertEqual((moved["id"], moved["type"]), (project, "subgoal"))
+        self.assertEqual(moved["semantic_role"], "project")
 
         whole = self.api.goal_tree_restructure_recommend(project)
         recommendation = whole["recommendation"]

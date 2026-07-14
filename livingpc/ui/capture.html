@@ -1,12 +1,19 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
+  @font-face { font-family:'Atkinson Hyperlegible';
+    src:url("assets/fonts/AtkinsonHyperlegible-Regular.ttf") format("truetype");
+    font-style:normal; font-weight:400; font-display:swap; }
+  @font-face { font-family:'Atkinson Hyperlegible';
+    src:url("assets/fonts/AtkinsonHyperlegible-Bold.ttf") format("truetype");
+    font-style:normal; font-weight:700; font-display:swap; }
   :root {
+    --app-font:'Atkinson Hyperlegible','Malgun Gothic','Segoe UI Symbol',sans-serif;
     --line:rgba(110,140,240,.28); --line2:rgba(110,140,240,.16);
     --fg:#e8edff; --muted:#8fa3d4; --cyan:#46ecff; --green:#2fe3a0;
     --red:#ff6b8a; --amber:#ffd166;
     --card:rgba(19,24,55,.72); --card2:rgba(9,12,28,.85);
   }
-  html,body { margin:0; height:100%; font-family:'Segoe UI',Helvetica,Arial,sans-serif;
+  html,body { margin:0; height:100%; font-family:var(--app-font);
     background: radial-gradient(120% 80% at 50% 0%, #15183a 0%, #0a0c1c 55%, #06070f 100%);
     color:var(--fg); overflow:hidden; }
   ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background:#2b3563; border-radius:4px; }
@@ -50,7 +57,7 @@
     display:flex; align-items:center; }
   .panel .head .right { margin-left:auto; letter-spacing:0; text-transform:none; }
   pre { margin:0; padding:10px 14px; overflow:auto; flex:1;
-    font:12px/1.55 Consolas,'Cascadia Mono',monospace; color:#d6e0ff;
+    font:12px/1.55 var(--app-font); color:#d6e0ff;
     background:var(--card2); white-space:pre-wrap; word-break:break-word; }
   #status-panel { flex:0 0 30%; min-height:120px; }
   #log-panel { flex:1; min-height:140px; }

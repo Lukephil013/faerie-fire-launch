@@ -196,9 +196,27 @@ def test_leaf_outcomes_capture_learning_and_feed_the_next_experiment():
         assert phrase in render
     assert "Completed" in render and "Avoided" in render and "Abandoned intentionally" in render
     assert "Next experiment should reflect this" in render
+    assert "draft is autosaved before submission" in render
     assert "goal_experiment_outcome" in bind
+    assert "restoreGoalOutcomeDraft" in bind
+    assert "saveGoalOutcomeDraft" in bind
+    assert "clearGoalOutcomeDraft" in bind
     assert "lower-confidence interpretation is ready for review" in bind
     assert "Record what happened so Faerie can learn" in focus
+
+
+def test_leaf_outcome_draft_survives_rerenders_until_a_successful_save():
+    script = _script()
+    save = _function_body(script, "saveGoalOutcomeDraft")
+    restore = _function_body(script, "restoreGoalOutcomeDraft")
+    bind = _function_body(script, "bindGoalOutcomeControls")
+
+    assert "localStorage.setItem" in save
+    assert "localStorage.getItem" in restore
+    assert "form.open=true" in restore
+    assert "field.addEventListener('input'" in bind
+    assert "field.addEventListener('change'" in bind
+    assert bind.find("if(!r||r.ok===false)") < bind.find("clearGoalOutcomeDraft")
 
 
 def test_new_growth_nodes_use_definition_first_progressive_disclosure():
@@ -213,13 +231,14 @@ def test_new_growth_nodes_use_definition_first_progressive_disclosure():
     assert "node.curiosities" in gate and "node.outcomes" in gate
     assert "origin.summary" in gate and "origin.source_label" in gate
     assert "What this Leaf asks you to do" in _function_body(script, "goalDefinitionLabel")
+    assert "node.type==='task'" in starter and "goalLeafStepsHtml(node)" in starter
     assert "goal-focus-draft-steps" in starter
     assert "goalNodeNeedsDefinition(node)" in render
     assert render.find("goalNodeNeedsDefinition(node)") < render.find("goalRecapHtml(")
     assert "return;" in render[render.find("goalNodeNeedsDefinition(node)"):render.find("goalRecapHtml(")]
 
 
-def test_goalai_step_drafts_are_accented_and_survive_panel_rerenders():
+def test_goalai_step_drafts_remain_available_for_non_leaf_definition_work():
     script = _script()
     leaf_steps = _function_body(script, "goalLeafStepsHtml")
     starter = _function_body(script, "goalDefinitionStarterHtml")
@@ -228,7 +247,8 @@ def test_goalai_step_drafts_are_accented_and_survive_panel_rerenders():
     draft_html = _function_body(script, "goalStepDraftHtml")
     bind = _function_body(script, "bindGoalStepDraft")
 
-    assert 'class="accent" id="goal-focus-draft-steps"' in leaf_steps
+    assert "goal-open-leaf-agent" in leaf_steps
+    assert "goal-focus-draft-steps" not in leaf_steps
     assert 'class="accent" id="goal-focus-draft-steps"' in starter
     assert "ffGoalStepDrafts" in script
     assert "localStorage.setItem('ffGoalStepDrafts'" in persisted
@@ -236,7 +256,7 @@ def test_goalai_step_drafts_are_accented_and_survive_panel_rerenders():
     assert "persistGoalStepDraft(node.id,text,draft)" in draft
     assert "goal_ai_chat(node.id" in draft
     assert "renderGoalFocusPanel()" in draft
-    assert "goalStepDraftHtml(node)" in leaf_steps and "goalStepDraftHtml(node)" in starter
+    assert "goalStepDraftHtml(node)" in starter
     assert "even if you change tabs or reopen the app" in draft_html
     assert "탭을 이동하거나 앱을 다시 열어도 사라지지 않아요" in draft_html
     assert "LEAF BOUNDARY" in draft_html
@@ -275,50 +295,89 @@ def test_growth_map_skin_switches_between_tree_and_solar_system():
     assert "'Solar system':'태양계'" in script
 
 
-def test_leaf_step_coach_has_both_entry_points_and_bounded_sidebar():
+def test_leaf_panel_has_one_agent_entry_and_hides_step_checklist_controls():
     html = _html()
     script = _script()
     steps = _function_body(script, "goalLeafStepsHtml")
-    open_coach = _function_body(script, "openLeafCoach")
+    entry = _function_body(script, "bindGoalLeafAgentEntry")
     render_coach = _function_body(script, "renderLeafCoach")
-    bind = _function_body(script, "bindGoalFocusPanel")
 
     assert 'id="leaf-step-coach"' in html
-    assert 'id="goal-step-help-all"' in steps
-    assert 'data-step-help="' in steps
-    assert "Get help with these steps" in steps
-    assert "event.preventDefault(); event.stopPropagation();" in bind
-    assert "goal_step_coach_open" in open_coach
+    assert "Open Leaf Agent" in steps and "Leaf 에이전트 열기" in steps
+    assert "goal-step-help-all" not in steps
+    assert "data-step-help" not in steps
+    assert "goal-step-check" not in steps
+    assert "How to do this" not in steps
+    assert "openLeafCoach(node)" in entry
+    assert "localStorage" not in entry
     assert "cannot see other Branches, global memory, the main chat, or screen activity" in render_coach
     assert "다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요" in render_coach
-    assert "goal_step_coach_set_status" in bind
 
 
-def test_leaf_step_coach_renders_examples_retry_shortcuts_and_clear():
+def test_primary_navigation_uses_compact_icon_rows_instead_of_pills():
+    html = _html()
+
+    assert "nav .tab::before,.group-label::before" in html
+    assert 'nav .tab[data-view="self"]::before' in html
+    assert 'nav .tab[data-view="goals"]::before' in html
+    assert 'nav .tab[data-view="curiosity"]::before' in html
+    assert "border-radius:7px" in html
+    assert "background:rgba(23,28,25,.94)" in html
+    assert "box-shadow:inset 2px 0 0 var(--green)" in html
+
+
+def test_all_buttons_and_navigation_controls_receive_quick_hover_help():
+    html = _html()
+    script = _script()
+    helper = _function_body(script, "buttonHelpText")
+    show = _function_body(script, "showButtonHelp")
+
+    assert 'id="button-help-tooltip" role="tooltip"' in html
+    assert "#button-help-tooltip.visible" in html
+    assert "goal-open-leaf-agent" in helper
+    assert "goal-add-something" in helper
+    assert "goal-root-starters-open" in helper
+    assert "restructure" in helper
+    assert "without deleting attached history" in helper
+    assert "첨부된 기록을 삭제하지 않고" in helper
+    assert "nav .tab" in helper and ".group-label" in helper
+    assert "aria-description" in show
+    assert "button,nav .tab,.group-label" in script
+    assert "},140)" in show
+
+
+def test_leaf_workspace_renders_optional_suggestions_retry_and_clear():
     html = _html()
     script = _script()
     message = _function_body(script, "leafCoachMessageHtml")
     error = _function_body(script, "leafCoachSetError")
 
-    assert "leaf-coach-example" in message
-    assert "payload.next_action" in message and "payload.question" in message
-    assert 'data-coach-shortcut="example"' in html
-    assert 'data-coach-shortcut="smaller"' in html
-    assert 'data-coach-shortcut="stuck"' in html
+    assert "leaf-workspace-suggestion" in message
+    assert "message.content||payload.content||payload.text" in message
+    assert "payload.next_action" not in message and "payload.question" not in message
+    assert "data-coach-shortcut" not in html
     assert "leaf-coach-retry" in error
-    assert "goal_step_coach_clear" in script
+    assert "goal_leaf_workspace_clear" in script
 
 
-def test_leaf_coach_offers_responses_and_reviewable_step_revisions():
+def test_leaf_coach_open_failure_clears_stale_loading_message():
+    script = _script()
+    open_coach = _function_body(script, "openLeafCoach")
+
+    assert "$('leaf-coach-messages').innerHTML='';" in open_coach
+    assert "leafCoachSetError(String(error.message||error),run);" in open_coach
+
+
+def test_leaf_workspace_offers_stable_responses_and_reviewable_proposals():
     script = _script()
     message = _function_body(script, "leafCoachMessageHtml")
-    decision = _function_body(script, "decideLeafCoachRevision")
+    decision = _function_body(script, "decideLeafWorkspaceProposal")
 
-    assert "Suggested responses" in message and "제안된 응답" in message
-    assert "Proposed change to How to do this" in message
-    assert "leaf-coach-revision-steps" in message
-    assert "goal_step_coach_revision" in decision
-    assert "edited" not in decision.lower() or "steps" in decision
+    assert "Suggestions" in message and "제안" in message
+    assert "data-message-id" in message and "data-suggestion-id" in message
+    assert "leafWorkspaceProposalHtml" in message
+    assert "goal_leaf_workspace_decide" in decision
+    assert "editedPayload" in decision
 
 
 def test_text_is_selectable_and_right_click_has_copy_paste_menu():
@@ -331,7 +390,7 @@ def test_text_is_selectable_and_right_click_has_copy_paste_menu():
     assert "clipboard_write" in script and "clipboard_read" in script
     assert "contextmenu" in script
     assert "text_select=True" in (ROOT / "gui.py").read_text(encoding="utf-8")
-    assert "Confirmed step resolutions will remain" in script
+    assert "confirmed resolutions will remain" in script
 
 
 def test_leaf_coach_close_stays_fixed_and_uses_an_accessible_x():
@@ -339,36 +398,252 @@ def test_leaf_coach_close_stays_fixed_and_uses_an_accessible_x():
 
     assert 'class="cur-head leaf-coach-head"' in html
     assert 'class="leaf-coach-scroll"' in html
-    assert 'aria-label="Close Leaf Coach"' in html
+    assert 'aria-label="Close Leaf Agent"' in html
     assert '>×</button>' in html
     assert ".leaf-coach-drawer.open { display:flex; flex-direction:column; }" in html
     assert ".leaf-coach-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;" in html
 
 
-def test_leaf_coach_confirms_completion_then_advances_to_next_step():
+def test_leaf_workspace_completion_is_an_explicit_proposal_decision():
     script = _script()
-    message = _function_body(script, "leafCoachMessageHtml")
-    confirm = _function_body(script, "confirmLeafCoachCompletion")
+    labels = _function_body(script, "leafWorkspaceProposalTypeLabel")
+    proposal = _function_body(script, "leafWorkspaceProposalHtml")
+    decision = _function_body(script, "decideLeafWorkspaceProposal")
 
-    assert "Should I mark it complete?" in message
-    assert 'data-coach-complete="yes"' in message
-    assert 'data-coach-complete="no"' in message
-    assert "goal_step_coach_confirm_completion" in confirm
-    assert "step.index>stepIndex" in confirm
-    assert "goal_step_coach_open" in confirm
-    assert "Beginning step " in confirm
-    assert "단계가 완료된 것 같아요. 완료로 표시할까요?" in message
+    assert "complete_item" in labels and "complete_leaf" in labels
+    assert "reshape" in labels and "reopen" in labels
+    assert 'data-proposal-decision="approve"' in proposal
+    assert "Keep discussing" in proposal and "계속 논의" in proposal
+    assert "goal_leaf_workspace_decide" in decision
 
 
-def test_leaf_coach_confirmed_completion_updates_the_matching_checkbox():
+def test_leaf_workspace_does_not_use_local_storage_as_completion_authority():
     script = _script()
-    sync = _function_body(script, "syncLeafCoachStepCompletion")
+    open_workspace = _function_body(script, "openLeafCoach")
     send = _function_body(script, "sendLeafCoachMessage")
 
-    assert "item.status==='completed'?'1':'0'" in sync
-    assert "goalStepKey(node.id,steps[item.index])" in sync
-    assert "renderGoalFocusPanel()" in sync
-    assert "syncLeafCoachStepCompletion(leafCoachView)" in send
+    assert "localStorage" not in open_workspace
+    assert "localStorage" not in send
+    assert "syncLeafCoachStepCompletion" not in open_workspace
+    assert "syncLeafCoachStepCompletion" not in send
+
+
+def test_leaf_workspace_lifecycle_cards_and_phase_aware_composer():
+    html = _html()
+    script = _script()
+    agreement = _function_body(script, "leafWorkspaceAgreementHtml")
+    plan = _function_body(script, "leafWorkspacePlanHtml")
+    placeholder = _function_body(script, "leafWorkspacePlaceholder")
+
+    assert "Current agreement" in agreement and "현재 합의" in agreement
+    assert "Outcome" in agreement and "Approach" in agreement
+    assert "Definition of done" in agreement
+    assert "Confirmed constraints" in agreement and "확인된 제약" in agreement
+    assert "Confirmed result" in agreement and "Lesson" in agreement
+    assert "Working understanding · not approved yet" in agreement
+    assert "작업 중인 이해 · 아직 승인되지 않음" in agreement
+    assert "<details" in agreement and "leaf-workspace-agreement-preview" in agreement
+    assert "stepsAt" in agreement
+    assert "Approved plan" in plan and "승인된 계획" in plan
+    assert "item.status" in plan and "item.resolution" in plan
+    for phase in ("approve", "approval", "work", "working", "doing", "reflect", "reflecting", "complete"):
+        assert phase in placeholder
+    phase_labels = _function_body(script, "leafWorkspacePhaseLabel")
+    assert "shaping" in phase_labels and "reflecting" in phase_labels
+    kind_labels = _function_body(script, "leafWorkspaceKindLabel")
+    assert "unspecified" in kind_labels and "Open mode" in kind_labels
+    rendered = _function_body(script, "renderLeafCoach")
+    assert "view.completed" in rendered and "Completed" in rendered and "완료됨" in rendered
+    assert "leaf-workspace-composer" in html
+    assert ".leaf-workspace-composer { flex:0 0 auto;" in html
+
+
+def test_leaf_workspace_natural_messages_do_not_require_suggestions():
+    script = _script()
+    message = _function_body(script, "leafCoachMessageHtml")
+
+    assert "message.content||payload.content||payload.text" in message
+    assert "(content?'<div>'+conversationHtml(content)" in message
+    assert "!suggestions.length" in message
+    assert "leafWorkspaceMessageSuggestions" in message
+    assert "suggestionsHtml" in message
+
+
+def test_leaf_workspace_suggestion_selection_sends_stable_structured_event():
+    script = _script()
+    bind = _function_body(script, "leafWorkspaceBindActions")
+
+    assert "kind:'suggestion_selected'" in bind
+    assert "suggestion_id:suggestion.id" in bind
+    assert "label:suggestion.label" in bind
+    assert "message_id:message.id" in bind
+    assert "sendLeafCoachMessage(suggestion.label" in bind
+    assert "button.classList.add('selected')" in bind
+    assert "Selected “" in bind and "thinking" in bind
+
+
+def test_leaf_workspace_multiple_suggestions_use_checkboxes_and_one_submit():
+    script = _script()
+    message = _function_body(script, "leafCoachMessageHtml")
+    bind = _function_body(script, "leafWorkspaceBindActions")
+    mode = _function_body(script, "leafWorkspaceMessageSelectionMode")
+
+    assert "selection_mode" in mode and "multiple" in mode
+    assert "any of (?:these|the following)" in mode
+    assert 'type="checkbox" data-multi-suggestion' in message
+    assert "Select all that apply" in message and "해당하는 항목을 모두 선택하세요" in message
+    assert "Submit selected" in message and "선택 항목 제출" in message
+    assert "data-submit-suggestions disabled" in message
+    assert "checks.some(item=>item.checked)" in bind
+    assert "kind:'select_suggestions'" in bind
+    assert "suggestion_ids:selected.map(item=>item.id)" in bind
+
+
+def test_conversations_bundle_atkinson_hyperlegible_regular_and_bold():
+    html = _html()
+
+    font_dir = ROOT / "livingpc" / "ui" / "assets" / "fonts"
+    assert (font_dir / "AtkinsonHyperlegible-Regular.ttf").is_file()
+    assert (font_dir / "AtkinsonHyperlegible-Bold.ttf").is_file()
+    assert (font_dir / "OFL.txt").is_file()
+    assert html.count("@font-face") >= 2
+    assert "AtkinsonHyperlegible-Regular.ttf" in html
+    assert "AtkinsonHyperlegible-Bold.ttf" in html
+    assert "function conversationHtml" in html and "<strong>$1</strong>" in html
+
+
+def test_atkinson_hyperlegible_is_the_default_across_every_ui_surface():
+    ui_dir = ROOT / "livingpc" / "ui"
+    surfaces = {
+        name: (ui_dir / name).read_text(encoding="utf-8")
+        for name in ("memory.html", "agent_window.html", "assistant.html", "capture.html")
+    }
+
+    for name, html in surfaces.items():
+        assert html.count("@font-face") >= 2, name
+        assert "AtkinsonHyperlegible-Regular.ttf" in html, name
+        assert "AtkinsonHyperlegible-Bold.ttf" in html, name
+        assert "--app-font:'Atkinson Hyperlegible'" in html, name
+        assert "Consolas" not in html and "Cascadia Mono" not in html, name
+        assert "system-ui" not in html, name
+
+    main = surfaces["memory.html"]
+    assert "button,input,textarea,select,option,summary,pre,code,kbd,samp,svg text" in main
+    assert "font-family:var(--app-font)" in main
+    assert "font:12px/1.55 var(--app-font)" in main
+    assert "font:12px/1.6 var(--app-font)" in main
+
+
+def test_leaf_workspace_scope_nonce_ignores_late_leaf_results():
+    script = _script()
+    opened = _function_body(script, "openLeafCoach")
+    sent = _function_body(script, "sendLeafCoachMessage")
+    closed = _function_body(script, "closeLeafCoach")
+
+    assert "nonce=++leafWorkspaceRequestNonce" in opened
+    assert "leafCoachView=null" in opened
+    assert "leafWorkspaceSetEnabled(false)" in opened
+    assert "nonce!==leafWorkspaceRequestNonce" in opened
+    assert "String(leafCoachLeafId)!==String(node.id)" in opened
+    assert "nonce!==leafWorkspaceRequestNonce" in sent
+    assert "String(leafCoachLeafId)!==String(leafId)" in sent
+    assert "leafWorkspaceRequestNonce++" in closed
+    assert "leafCoachView=null" in closed
+
+
+def test_leaf_workspace_clear_copy_preserves_approved_state_in_both_languages():
+    script = _script()
+    clear = _function_body(script, "clearLeafWorkspaceConversation")
+
+    assert "goal_leaf_workspace_clear" in clear
+    assert "Clear only this Leaf’s conversation?" in clear
+    assert "approved agreement, plan, progress, and confirmed resolutions will remain" in clear
+    assert "이 Leaf의 대화만 지울까요?" in clear
+    assert "승인된 합의, 계획, 진행 상태와 확인된 해결 기록은 유지돼요" in clear
+    assert "openLeafCoach" not in clear
+
+
+def test_leaf_workspace_legacy_history_is_collapsed_and_read_only():
+    html = _html()
+    script = _script()
+    legacy = _function_body(script, "leafWorkspaceLegacyHtml")
+
+    assert "<details" in legacy and "<summary>" in legacy
+    assert "Earlier Leaf coaching conversation" in legacy
+    assert "이전 Leaf 코칭 대화" in legacy
+    assert "button" not in legacy and "textarea" not in legacy
+    assert 'id="leaf-workspace-legacy"' in html
+
+
+def test_leaf_workspace_proposal_review_supports_edit_approve_and_discussion():
+    script = _script()
+    editor = _function_body(script, "leafWorkspaceProposalEditorHtml")
+    proposal = _function_body(script, "leafWorkspaceProposalHtml")
+    edited = _function_body(script, "leafWorkspaceEditedPayload")
+
+    for proposal_type in ("agreement", "plan", "revise_plan", "complete_item", "complete_leaf"):
+        assert proposal_type in editor
+    assert "data-proposal-edit" in proposal
+    assert 'data-proposal-decision="keep_discussing"' in proposal
+    assert 'data-proposal-decision="approve"' in proposal
+    assert "Edit" in proposal and "편집" in proposal
+    assert "Apply plan" in proposal and "계획 적용" in proposal
+    assert "data-proposal-field" in edited
+    assert "Suggested confirmed result" in editor
+    assert "Suggested lesson" in editor
+    assert "resultSuggestion" in editor and "lessonSuggestion" in editor
+
+
+def test_leaf_workspace_completion_edits_survive_chat_rerenders_until_decided():
+    script = _script()
+    save = _function_body(script, "saveLeafWorkspaceProposalDraft")
+    restore = _function_body(script, "restoreLeafWorkspaceProposalDraft")
+    bind = _function_body(script, "leafWorkspaceBindActions")
+    decide = _function_body(script, "decideLeafWorkspaceProposal")
+
+    assert "localStorage.setItem" in save
+    assert "localStorage.getItem" in restore
+    assert "restoreLeafWorkspaceProposalDraft" in bind
+    assert "saveLeafWorkspaceProposalDraft" in bind
+    assert "clearLeafWorkspaceProposalDraft" in decide
+
+
+def test_leaf_workspace_loading_is_visible_and_retry_preserves_the_draft():
+    script = _script()
+    loading = _function_body(script, "leafWorkspaceSetLoading")
+    send = _function_body(script, "sendLeafCoachMessage")
+
+    assert "thinkingDotsHtml" in loading and "Crafting a response" in loading
+    assert "Faerie is crafting a response" in send and "페어리가 답변을 만드는 중" in send
+    assert "optimistic.dataset.optimistic='true'" in send
+    assert "if(input){input.value=''" in send
+    assert "input.style.height='auto';autoGrow(input)" in send
+    assert "input.value=text" in send
+    assert "leafCoachSetError(String(error.message||error),run)" in send
+
+
+def test_leaf_workspace_is_resizable_and_enter_sends_without_losing_shift_enter():
+    html = _html()
+    script = _script()
+    resize = _function_body(script, "initLeafCoachResize")
+
+    assert 'id="leaf-coach-resize"' in html
+    assert "cursor:ew-resize" in html
+    assert "pointerdown" in resize and "pointermove" in resize and "pointerup" in resize
+    assert "faerie_leaf_agent_width" in resize
+    assert "event.key==='Enter'&&!event.shiftKey&&!event.isComposing" in script
+
+
+def test_chat_surfaces_use_a_shared_animated_thinking_state():
+    html = _html()
+    script = _script()
+
+    assert "function thinkingDotsHtml" in script
+    assert "@keyframes thinking-dot" in html
+    assert "inquiry-thinking" in script
+    assert "goal-agent-thinking" in script
+    assert "plannerThinking" in script and "thinkingDotsHtml(text)" in script
+    assert "Faerie is crafting a response" in script
 
 
 def test_general_faerie_button_uses_the_real_growth_type_and_visible_context():
@@ -635,6 +910,11 @@ def test_growth_restructure_flow_previews_preserved_data_before_approval():
     assert "모든 구조 변경 승인" in panel
     assert "goal_restructure_preview" in manual
     assert "goal_restructure_propose" in manual
+    assert "restructureKinds=['root','area','project','stage','leaf']" in manual
+    assert "semanticRole:['area','project','stage'].includes(kind)?kind:null" in manual
+    assert "structure.semanticRole" in manual
+    assert "candidate.semantic_role==='area'" in manual
+    assert "candidate.semantic_role==='project'" in manual
     assert "Nothing is deleted or recreated" in manual
     assert "The same node ID will be preserved" in manual
     assert "Create proposal for approval" in manual
@@ -644,6 +924,8 @@ def test_growth_restructure_flow_previews_preserved_data_before_approval():
     assert "restructure_node" in proposal and "restructure_tree" in proposal
     assert "Restructure without losing data" in proposal
     assert "Whole-path restructure" in proposal
+    assert "Proposed Growth addition" in proposal
+    assert "It will not enter the map until you approve it" in proposal
     assert "Approve restructure" in script
     assert "goal-restructure-open" in detail
     assert "goal-focus-restructure" in focus
@@ -651,6 +933,27 @@ def test_growth_restructure_flow_previews_preserved_data_before_approval():
     assert "goal-focus-ask-command" in focus and "Restructure" in focus
     assert "renderGoalRestructurePanel(node,$('goal-focus-restructure-panel'))" in bind_focus
     assert "#goal-focus-panel .agent-proposal[data-pid]" in bind_focus
+
+
+def test_growth_nodes_have_reversible_archive_controls_in_both_views_and_languages():
+    script = _script()
+    focus = _function_body(script, "renderGoalFocusPanel")
+    detail = _function_body(script, "renderGoalDetail")
+    lifecycle = _function_body(script, "goalLifecycleButtonHtml")
+    binding = _function_body(script, "bindGoalArchiveControls")
+
+    assert "goalLifecycleActionHtml(node)" in focus
+    assert "goalLifecycleButtonHtml(node)" in detail
+    assert "goal-node-archive" in lifecycle and "goal-node-restore" in lifecycle
+    assert "Archive this node" in lifecycle and "Restore this node" in lifecycle
+    assert "이 항목 보관" in lifecycle and "이 항목 복원" in lifecycle
+    assert "goal_archive_prepare(node.id)" in binding
+    assert "goal_archive(node.id,harvest.id)" in binding and "goal_restore(node.id)" in binding
+    assert "Preparing knowledge handoff" in binding
+    assert "only the reviewed summary flows upward" in binding
+    assert "completion states" in binding and "완료 상태" in binding
+    assert "goalFindParent(goalState.tree,node.id)" in binding
+    assert "statusChoices=node.status==='archived'?['archived']:['active','paused','completed']" in detail
 
 
 def test_nested_branch_roles_render_as_area_project_and_stage_in_both_languages():
@@ -664,8 +967,33 @@ def test_nested_branch_roles_render_as_area_project_and_stage_in_both_languages(
     assert "area:'Area'" in semantic and "project:'Project'" in semantic and "stage:'Stage'" in semantic
     assert "area:'영역'" in semantic and "project:'프로젝트'" in semantic and "stage:'단계'" in semantic
     assert "goalTypeLabel(node.type,node)" in constellation
-    assert "◇ Area / Project / Stage" in html
-    assert "◇ 영역 / 프로젝트 / 단계" in script
+    assert 'class="legend-area">◇ Area' in html
+    assert 'class="legend-project">◇ Project' in html
+    assert 'class="legend-stage">◇ Stage' in html
+    assert "'◇ Area':'◇ 영역'" in script
+    assert "'◇ Project':'◇ 프로젝트'" in script
+    assert "'◇ Stage':'◇ 단계'" in script
+    assert "semantic-area" in html and "semantic-project" in html and "semantic-stage" in html
+    assert "roleRadius={area:9.5,project:8,stage:6.5}" in constellation
+
+
+def test_growth_creation_uses_optional_roots_and_plain_language_ai_intake():
+    script = _script()
+    focus = _function_body(script, "renderGoalFocusPanel")
+    detail = _function_body(script, "renderGoalDetail")
+    controls = _function_body(script, "bindGoalCreationControls")
+    starters = _function_body(script, "renderGoalRootStarters")
+    intake = _function_body(script, "renderGoalIntake")
+
+    assert "Set up starter Roots" in focus and "New Root" in focus
+    assert "Add something" in focus and "Add something" in detail
+    assert "goal-focus-add-menu" not in focus
+    assert "goal-add-child" not in detail and "goal-add-task" not in detail
+    assert "goal_root_starters" in starters and "goal_root_starters_apply" in starters
+    assert "goal_intake_recommend" in intake and "goal_intake_propose" in intake
+    assert "goal_ai_proposal" in intake and "Approve and add" in intake
+    assert "구조 용어를 고를 필요는 없어요" in intake
+    assert "goal_create('overgoal'" in controls
 
 
 def test_growth_map_numbers_active_leaves_in_recommended_execution_order():
@@ -696,8 +1024,54 @@ def test_leaf_workspace_reveals_sections_only_when_they_have_meaning():
     assert "state.last_reviewed_at" in relevance and "view.due" in relevance
     assert "node.type!=='task'&&completion.percent!=null" in focus
     assert "goalRelevanceHasContent(node)?goalRelevanceHtml(node):''" in focus
-    assert "goalAiHasContent" in focus and "node.status==='completed'" in focus
+    assert "goalAiHasContent" in focus and "goalLeafWorkspaceTabHtml(node)" in focus
+    assert "goalOutcomeHtml(node)" not in focus
     assert "Which Leaf actions are active?" not in focus
+
+
+def test_completed_leaf_lifecycle_uses_receipts_history_and_next_leaf_navigation():
+    script = _script()
+    visibility = _function_body(script, "goalVisibleInActiveMap")
+    tree = _function_body(script, "goalTreeHtml")
+    summary = _function_body(script, "goalLeafWorkspaceTabHtml")
+    history = _function_body(script, "goalCompletedHistoryHtml")
+    completion = _function_body(script, "decideLeafWorkspaceProposal")
+    advance = _function_body(script, "refreshAfterLeafCompletion")
+    completed_controls = _function_body(script, "bindGoalCompletedLeafControls")
+
+    assert "node.type==='task'&&node.status==='completed'" in visibility
+    assert "filter(goalVisibleInActiveMap)" in tree
+    assert "Completed Leaf" in summary and "완료된 Leaf" in summary
+    assert "Confirmed result" in summary and "What was learned" in summary
+    assert "View conversation" in summary and "Reopen this Leaf" in summary
+    assert "Completed Leaves" in history and "goal-completed-history-item" in history
+    assert "proposal.type==='complete_leaf'" in completion
+    assert "closeLeafCoach()" in completion and "refreshAfterLeafCompletion" in completion
+    assert "handoffLeafId?goalFind" in advance
+    assert "reviewScope.semantic_role!=='project'" in advance
+    assert "reviewGoalAgent(reviewScope.id,false)" in advance
+    assert "goal_leaf_workspace_reopen(node.id)" in completed_controls
+
+
+def test_leaf_completion_edits_and_opens_only_the_approved_downstream_handoff():
+    html = _html()
+    script = _script()
+    editor = _function_body(script, "leafWorkspaceProposalEditorHtml")
+    edited = _function_body(script, "leafWorkspaceEditedPayload")
+    incoming = _function_body(script, "leafWorkspaceIncomingHtml")
+    render = _function_body(script, "renderLeafCoach")
+    advance = _function_body(script, "refreshAfterLeafCompletion")
+
+    assert 'id="leaf-workspace-incoming"' in html
+    for field in ("output_summary", "working_material", "constraints",
+                  "unresolved_questions", "suggested_start"):
+        assert f'data-proposal-handoff-field="{field}"' in editor
+    assert "payload.handoff" in edited and "proposalHandoffField" in edited
+    assert "Approved handoff from an earlier Leaf" in incoming
+    assert "이전 Leaf에서 승인된 인계" in incoming
+    assert "raw conversation" in render and "원문 대화" in render
+    assert "handoffLeafId?goalFind" in advance
+    assert "completion_handoff&&view.completion_handoff.destination_leaf_id" in script
 
 
 def test_all_details_remember_their_collapsed_state():
@@ -713,6 +1087,24 @@ def test_all_details_remember_their_collapsed_state():
     assert "details[data-collapse-key]" in hydrate
     assert "new MutationObserver" in script
     assert "panel.dataset.collapseScope='goal-'" in script
+
+
+def test_growth_map_positions_pan_and_zoom_survive_full_app_restart():
+    script = _script()
+    save = _function_body(script, "saveGoalMapPositions")
+    hydrate = _function_body(script, "hydrateDurableUiPreferences")
+    bind = _function_body(script, "bindConstellationPanZoom")
+    build = _function_body(script, "buildGoalConstellation")
+
+    assert "persistDurableUiPreference('growth_map_layout'" in save
+    assert "positions:goalMapPositions" in save
+    assert "views:constellationViewState" in save
+    assert "preferences.growth_map_layout" in hydrate
+    assert "goalMapPositions=(layout.positions" in hydrate
+    assert "Object.assign(constellationViewState,layout.views)" in hydrate
+    assert "saveGoalMapPositions(true)" in bind
+    assert "saveGoalMapPositions()" in bind
+    assert "const saved=goalMapPositions[item.node.id]" in build
 
 
 def test_soul_calibration_explains_that_every_path_is_optional():

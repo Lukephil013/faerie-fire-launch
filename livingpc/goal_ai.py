@@ -32,6 +32,17 @@ GARDENING_TYPES = {
 }
 ACTIVE_AGENT_STATUSES = {"active"}
 STEP_COACH_STATUSES = {"not_started", "working", "blocked", "completed", "reopened"}
+# `completed` and `action` remain valid storage aliases for early v2 databases,
+# but completion is a Leaf status rather than a fourth conversational phase and
+# the public generic work mode is `unspecified`.
+LEAF_WORKSPACE_PHASES = {"shaping", "doing", "reflecting", "completed"}
+LEAF_WORKSPACE_KINDS = {
+    "unspecified", "action", "deliverable", "decision", "experiment", "practice", "reflection",
+}
+LEAF_WORKSPACE_PROPOSAL_TYPES = {
+    "agreement", "plan", "revise_plan", "complete_item", "complete_leaf",
+    "reshape", "reopen",
+}
 
 
 def _now() -> str:
@@ -69,6 +80,30 @@ def _fallback_bullets(text: str, limit: int = 6) -> list[str]:
     return bullets or ["The user supplied detailed context; consult the exact encrypted answer."]
 
 
+def _normalize_leaf_handoff(value: dict | None) -> dict:
+    raw = dict(value or {})
+    def text(key: str, limit: int = 4000) -> str:
+        return str(raw.get(key) or "").strip()[:limit]
+
+    constraints = raw.get("constraints")
+    if isinstance(constraints, str):
+        constraints = [line.strip() for line in constraints.splitlines() if line.strip()]
+    elif isinstance(constraints, list):
+        constraints = [str(item).strip() for item in constraints if str(item).strip()]
+    else:
+        constraints = []
+    unresolved = raw.get("unresolved_questions")
+    if isinstance(unresolved, list):
+        unresolved = "\n".join(str(item).strip() for item in unresolved if str(item).strip())
+    return {
+        "output_summary": text("output_summary", 1600),
+        "working_material": text("working_material", 5000),
+        "constraints": constraints[:12],
+        "unresolved_questions": str(unresolved or "").strip()[:2400],
+        "suggested_start": text("suggested_start", 1600),
+    }
+
+
 def parse_goal_steps(description: str, limit: int = 12) -> list[str]:
     """Parse the same explicit numbered/bulleted steps rendered by the Growth UI."""
     out = []
@@ -82,6 +117,16 @@ def parse_goal_steps(description: str, limit: int = 12) -> list[str]:
 def step_fingerprint(text: str) -> str:
     normalized = " ".join(str(text or "").lower().split())
     return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def _stable_workspace_item_id(node_id: int, position: int, text: str) -> str:
+    seed = f"{int(node_id)}:{int(position)}:{' '.join(str(text or '').casefold().split())}"
+    return "item-" + hashlib.sha256(seed.encode()).hexdigest()[:20]
+
+
+def _stable_suggestion_id(label: str, description: str = "") -> str:
+    seed = " ".join(f"{label} {description}".casefold().split())
+    return "suggestion-" + hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
 def _question_key(text: str) -> str:
@@ -196,6 +241,110 @@ CREATE TABLE IF NOT EXISTS goal_step_coach_state (
 );
 CREATE INDEX IF NOT EXISTS idx_goal_step_coach_state_status
 ON goal_step_coach_state(node_id,status,updated_at DESC);
+
+-- Leaf Workspace v2 is deliberately additive.  The step-coach tables remain
+-- untouched so existing encrypted conversations and resolutions can be shown
+-- as read-only history during the transition.
+CREATE TABLE IF NOT EXISTS goal_leaf_workspace (
+    node_id INTEGER PRIMARY KEY,
+    phase TEXT NOT NULL DEFAULT 'shaping',
+    kind TEXT NOT NULL DEFAULT 'action',
+    agreement_json TEXT NOT NULL,
+    working_json TEXT NOT NULL,
+    migrated_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (phase IN ('shaping','doing','reflecting','completed')),
+    CHECK (kind IN ('action','deliverable','decision','experiment','practice','reflection')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS goal_leaf_workspace_message (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK (role IN ('user','assistant')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_goal_leaf_workspace_message_node
+ON goal_leaf_workspace_message(node_id,id);
+
+CREATE TABLE IF NOT EXISTS goal_leaf_workspace_proposal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    proposal_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    rationale TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    CHECK (proposal_type IN ('agreement','plan','revise_plan','complete_item','complete_leaf')),
+    CHECK (status IN ('open','approved','rejected')),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_goal_leaf_workspace_proposal_node
+ON goal_leaf_workspace_proposal(node_id,status,id DESC);
+
+CREATE TABLE IF NOT EXISTS goal_leaf_workspace_plan (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'approved',
+    proposal_id INTEGER,
+    created_at TEXT NOT NULL,
+    approved_at TEXT NOT NULL,
+    CHECK (status IN ('approved','superseded')),
+    UNIQUE (node_id,version),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE,
+    FOREIGN KEY (proposal_id) REFERENCES goal_leaf_workspace_proposal(id)
+);
+
+CREATE TABLE IF NOT EXISTS goal_leaf_workspace_plan_item (
+    plan_id INTEGER NOT NULL,
+    stable_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'not_started',
+    resolution TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (plan_id,stable_id),
+    CHECK (status IN ('not_started','working','blocked','completed','reopened')),
+    FOREIGN KEY (plan_id) REFERENCES goal_leaf_workspace_plan(id) ON DELETE CASCADE
+);
+
+-- An approved handoff is project-local working material, not another Leaf's
+-- transcript. Only this compact encrypted payload crosses to its destination.
+CREATE TABLE IF NOT EXISTS goal_leaf_handoff (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_leaf_id INTEGER NOT NULL,
+    destination_leaf_id INTEGER,
+    project_id INTEGER,
+    outcome_id INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'approved',
+    created_at TEXT NOT NULL,
+    consumed_at TEXT,
+    CHECK (status IN ('approved','consumed','superseded')),
+    UNIQUE (source_leaf_id,outcome_id),
+    FOREIGN KEY (source_leaf_id) REFERENCES goal_node(id) ON DELETE CASCADE,
+    FOREIGN KEY (destination_leaf_id) REFERENCES goal_node(id) ON DELETE SET NULL,
+    FOREIGN KEY (project_id) REFERENCES goal_node(id) ON DELETE SET NULL,
+    FOREIGN KEY (outcome_id) REFERENCES experiment_outcome(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_goal_leaf_handoff_destination
+ON goal_leaf_handoff(destination_leaf_id,status,id DESC);
+
+CREATE TABLE IF NOT EXISTS goal_step_coach_opening_version (
+    node_id INTEGER NOT NULL,
+    step_fingerprint TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (node_id,step_fingerprint),
+    FOREIGN KEY (node_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS goal_agent_memory_candidate (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,6 +486,16 @@ class StepCoachReply:
     status: str = "working"
     step_completed: bool = False
     step_revision: dict | None = None
+
+
+@dataclass
+class LeafWorkspaceReply:
+    """A conversational reply whose optional UI/state parts fail independently."""
+    message: str
+    suggestions: list[dict] = field(default_factory=list)
+    proposal: dict | None = None
+    working_patch: dict = field(default_factory=dict)
+    selection_mode: str = "single"
 
 
 @dataclass
@@ -1071,6 +1230,448 @@ class GoalAgentStore:
         self.mark_dirty(int(node_id), ancestors=True, reason="Leaf Coach update")
         return self.coach_state(node_id, step_text)
 
+    # --- Leaf Workspace v2 --------------------------------------------
+    def ensure_leaf_workspace(self, node: dict) -> dict:
+        """Lazily seed a Leaf workspace without rewriting legacy coach data."""
+        if not node or node.get("type") != "task":
+            raise ValueError("Leaf Workspace requires a Leaf")
+        node_id = int(node["id"])
+        started = not self.conn.in_transaction
+        try:
+            if started:
+                self.conn.execute("BEGIN IMMEDIATE")
+            existing = self.conn.execute(
+                "SELECT 1 FROM goal_leaf_workspace WHERE node_id=?", (node_id,)).fetchone()
+            if not existing:
+                steps = parse_goal_steps(node.get("description", ""))
+                phase = "doing" if steps and node.get("status") != "completed" else (
+                    "reflecting" if node.get("status") == "completed" else "shaping")
+                agreement = {
+                    "outcome": str(node.get("description") or node.get("title") or "").strip(),
+                    "approach": "", "definition_of_done": "", "constraints": [],
+                    "confirmed": bool(steps),
+                    "source": "legacy_plan" if steps else "leaf_description",
+                }
+                working = {"current_focus": "", "selected_suggestion_ids": [],
+                           "conversation_summary": ""}
+                now = _now()
+                self.conn.execute(
+                    "INSERT INTO goal_leaf_workspace "
+                    "(node_id,phase,kind,agreement_json,working_json,migrated_at,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (node_id, phase, "action", crypto.enc(_json(agreement)),
+                     crypto.enc(_json(working)), now, now, now))
+                if steps:
+                    cur = self.conn.execute(
+                        "INSERT INTO goal_leaf_workspace_plan "
+                        "(node_id,version,status,proposal_id,created_at,approved_at) "
+                        "VALUES (?,1,'approved',NULL,?,?)", (node_id, now, now))
+                    plan_id = int(cur.lastrowid)
+                    legacy_states = {item["step_fingerprint"]: item
+                                     for item in self.coach_states(node_id, 100)}
+                    for position, text in enumerate(steps):
+                        old = legacy_states.get(step_fingerprint(text)) or {}
+                        update = old.get("update") or {}
+                        status = old.get("status") or (
+                            "completed" if node.get("status") == "completed" else "not_started")
+                        resolution = str(update.get("resolution") or "").strip()
+                        self.conn.execute(
+                            "INSERT INTO goal_leaf_workspace_plan_item "
+                            "(plan_id,stable_id,position,text,status,resolution,updated_at) "
+                            "VALUES (?,?,?,?,?,?,?)",
+                            (plan_id, _stable_workspace_item_id(node_id, position, text), position,
+                             crypto.enc(text), status, crypto.enc(resolution), now))
+            if started:
+                self.conn.commit()
+        except Exception:
+            if started:
+                self.conn.rollback()
+            raise
+        return self.leaf_workspace_state(node_id)
+
+    def leaf_workspace_state(self, node_id: int) -> dict:
+        row = self.conn.execute(
+            "SELECT * FROM goal_leaf_workspace WHERE node_id=?", (int(node_id),)).fetchone()
+        if not row:
+            raise ValueError("Leaf Workspace not initialized")
+        phase = "reflecting" if row["phase"] == "completed" else row["phase"]
+        kind = "unspecified" if row["kind"] == "action" else row["kind"]
+        return {
+            "leaf_id": int(row["node_id"]), "phase": phase, "kind": kind,
+            "agreement": self._dec_json(row["agreement_json"], {}),
+            "working": self._dec_json(row["working_json"], {}),
+            "migrated_at": row["migrated_at"], "updated_at": row["updated_at"],
+        }
+
+    def update_leaf_workspace(self, node_id: int, *, phase: str | None = None,
+                              kind: str | None = None, agreement: dict | None = None,
+                              working: dict | None = None,
+                              commit: bool = True) -> dict:
+        current = self.leaf_workspace_state(node_id)
+        new_phase = str(phase or current["phase"])
+        new_kind = str(kind or current["kind"])
+        if new_phase not in LEAF_WORKSPACE_PHASES:
+            raise ValueError("invalid Leaf Workspace phase")
+        if new_kind not in LEAF_WORKSPACE_KINDS:
+            raise ValueError("invalid Leaf Workspace kind")
+        stored_phase = "reflecting" if new_phase == "completed" else new_phase
+        stored_kind = "action" if new_kind == "unspecified" else new_kind
+        self.conn.execute(
+            "UPDATE goal_leaf_workspace SET phase=?,kind=?,agreement_json=?,working_json=?,"
+            "updated_at=? WHERE node_id=?",
+            (stored_phase, stored_kind, crypto.enc(_json(
+                current["agreement"] if agreement is None else dict(agreement))),
+             crypto.enc(_json(current["working"] if working is None else dict(working))),
+             _now(), int(node_id)))
+        if commit:
+            self.conn.commit()
+        return self.leaf_workspace_state(node_id)
+
+    def leaf_workspace_messages(self, node_id: int, limit: int = 80) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM goal_leaf_workspace_message WHERE node_id=? "
+            "ORDER BY id DESC LIMIT ?", (int(node_id), int(limit))).fetchall()
+        return [{"id": int(row["id"]), "role": row["role"],
+                 "content": crypto.dec(row["content"]) or "",
+                 "payload": self._dec_json(row["payload_json"], {}),
+                 "created_at": row["created_at"]} for row in reversed(rows)]
+
+    def add_leaf_workspace_message(self, node_id: int, role: str, content: str,
+                                   payload: dict | None = None, *,
+                                   commit: bool = True) -> int:
+        content = str(content or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            raise ValueError("valid workspace message required")
+        cur = self.conn.execute(
+            "INSERT INTO goal_leaf_workspace_message "
+            "(node_id,role,content,payload_json,created_at) VALUES (?,?,?,?,?)",
+            (int(node_id), role, crypto.enc(content),
+             crypto.enc(_json(dict(payload or {}))), _now()))
+        if commit:
+            self.conn.commit()
+        return int(cur.lastrowid)
+
+    def clear_leaf_workspace_messages(self, node_id: int, *, commit: bool = True) -> int:
+        cur = self.conn.execute(
+            "DELETE FROM goal_leaf_workspace_message WHERE node_id=?", (int(node_id),))
+        if commit:
+            self.conn.commit()
+        return int(cur.rowcount)
+
+    def leaf_workspace_proposal(self, proposal_id: int) -> dict:
+        row = self.conn.execute(
+            "SELECT * FROM goal_leaf_workspace_proposal WHERE id=?",
+            (int(proposal_id),)).fetchone()
+        if not row:
+            raise ValueError("Leaf Workspace proposal not found")
+        payload = self._dec_json(row["payload_json"], {})
+        stored_type = row["proposal_type"]
+        public_type = (str(payload.get("_workspace_action"))
+                       if stored_type == "agreement" and
+                       payload.get("_workspace_action") in {"reshape", "reopen"}
+                       else stored_type)
+        if public_type in {"reshape", "reopen"}:
+            payload = {key: value for key, value in payload.items()
+                       if key != "_workspace_action"}
+        return {"id": int(row["id"]), "leaf_id": int(row["node_id"]),
+                "type": public_type,
+                "payload": payload,
+                "rationale": crypto.dec(row["rationale"]) or "",
+                "status": row["status"], "created_at": row["created_at"],
+                "resolved_at": row["resolved_at"]}
+
+    def add_leaf_workspace_proposal(self, node_id: int, proposal_type: str,
+                                    payload: dict, rationale: str = "", *,
+                                    commit: bool = True) -> dict:
+        if proposal_type not in LEAF_WORKSPACE_PROPOSAL_TYPES:
+            raise ValueError("invalid Leaf Workspace proposal type")
+        stored_type = proposal_type
+        stored_payload = dict(payload or {})
+        if proposal_type in {"reshape", "reopen"}:
+            # Keep the additive table compatible with early v2 databases whose
+            # CHECK predates reversible transitions. The public type remains
+            # explicit through this encrypted action marker.
+            stored_type = "agreement"
+            stored_payload["_workspace_action"] = proposal_type
+        cur = self.conn.execute(
+            "INSERT INTO goal_leaf_workspace_proposal "
+            "(node_id,proposal_type,payload_json,rationale,status,created_at) "
+            "VALUES (?,?,?,?,'open',?)",
+            (int(node_id), stored_type, crypto.enc(_json(stored_payload)),
+             crypto.enc(str(rationale or "")), _now()))
+        if commit:
+            self.conn.commit()
+        return self.leaf_workspace_proposal(int(cur.lastrowid))
+
+    def resolve_leaf_workspace_proposal(self, proposal_id: int, status: str, *,
+                                        commit: bool = True) -> dict:
+        if status not in {"approved", "rejected"}:
+            raise ValueError("invalid Leaf Workspace proposal decision")
+        current = self.leaf_workspace_proposal(proposal_id)
+        if current["status"] != "open":
+            raise ValueError("Leaf Workspace proposal is already resolved")
+        self.conn.execute(
+            "UPDATE goal_leaf_workspace_proposal SET status=?,resolved_at=? WHERE id=?",
+            (status, _now(), int(proposal_id)))
+        if commit:
+            self.conn.commit()
+        return self.leaf_workspace_proposal(proposal_id)
+
+    def update_open_leaf_workspace_proposal(self, proposal_id: int, payload: dict, *,
+                                            commit: bool = True) -> dict:
+        current = self.leaf_workspace_proposal(proposal_id)
+        if current["status"] != "open":
+            raise ValueError("only an open Leaf Workspace proposal can be refreshed")
+        stored_payload = dict(payload or {})
+        if current["type"] in {"reshape", "reopen"}:
+            stored_payload["_workspace_action"] = current["type"]
+        self.conn.execute(
+            "UPDATE goal_leaf_workspace_proposal SET payload_json=? WHERE id=?",
+            (crypto.enc(_json(stored_payload)), int(proposal_id)))
+        if commit:
+            self.conn.commit()
+        return self.leaf_workspace_proposal(proposal_id)
+
+    def leaf_workspace_plan(self, node_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM goal_leaf_workspace_plan WHERE node_id=? AND status='approved' "
+            "ORDER BY version DESC LIMIT 1", (int(node_id),)).fetchone()
+        if not row:
+            return None
+        items = self.conn.execute(
+            "SELECT * FROM goal_leaf_workspace_plan_item WHERE plan_id=? "
+            "ORDER BY position,stable_id", (int(row["id"]),)).fetchall()
+        return {"id": int(row["id"]), "version": int(row["version"]),
+                "status": row["status"], "proposal_id": row["proposal_id"],
+                "created_at": row["created_at"], "approved_at": row["approved_at"],
+                "items": [{"id": item["stable_id"], "position": int(item["position"]),
+                           "text": crypto.dec(item["text"]) or "",
+                           "status": item["status"],
+                           "resolution": crypto.dec(item["resolution"]) or "",
+                           "updated_at": item["updated_at"]} for item in items]}
+
+    def approve_leaf_workspace_plan(self, node_id: int, items: list,
+                                    proposal_id: int | None = None, *,
+                                    commit: bool = True) -> dict:
+        cleaned = []
+        for raw in list(items or [])[:20]:
+            if isinstance(raw, dict):
+                text = str(raw.get("text") or raw.get("label") or "").strip()
+                requested_id = str(raw.get("id") or "").strip()
+            else:
+                text, requested_id = str(raw or "").strip(), ""
+            if text:
+                cleaned.append((requested_id, text))
+        if not cleaned:
+            raise ValueError("an approved plan requires at least one item")
+        previous_plan = self.leaf_workspace_plan(node_id)
+        previous_items = {str(item["id"]): item for item in
+                          (previous_plan or {}).get("items", [])}
+        previous_by_text = {
+            " ".join(str(item.get("text") or "").casefold().split()): item
+            for item in (previous_plan or {}).get("items", [])
+            if str(item.get("text") or "").strip()
+        }
+        row = self.conn.execute(
+            "SELECT COALESCE(MAX(version),0) version FROM goal_leaf_workspace_plan "
+            "WHERE node_id=?", (int(node_id),)).fetchone()
+        version = int(row["version"]) + 1
+        now = _now()
+        self.conn.execute(
+            "UPDATE goal_leaf_workspace_plan SET status='superseded' "
+            "WHERE node_id=? AND status='approved'", (int(node_id),))
+        cur = self.conn.execute(
+            "INSERT INTO goal_leaf_workspace_plan "
+            "(node_id,version,status,proposal_id,created_at,approved_at) "
+            "VALUES (?,?,'approved',?,?,?)",
+            (int(node_id), version, proposal_id, now, now))
+        plan_id = int(cur.lastrowid)
+        used_ids = set()
+        for position, (requested_id, text) in enumerate(cleaned):
+            if not requested_id:
+                matched = previous_by_text.get(" ".join(text.casefold().split())) or {}
+                matched_id = str(matched.get("id") or "")
+                if matched_id and matched_id not in used_ids:
+                    requested_id = matched_id
+            stable_id = requested_id if (requested_id and requested_id not in used_ids) else (
+                _stable_workspace_item_id(node_id, position, text))
+            used_ids.add(stable_id)
+            previous = previous_items.get(stable_id) or {}
+            previous_status = (str(previous.get("status") or "not_started")
+                               if requested_id else "not_started")
+            if previous_status not in STEP_COACH_STATUSES:
+                previous_status = "not_started"
+            previous_resolution = (str(previous.get("resolution") or "")
+                                   if requested_id else "")
+            self.conn.execute(
+                "INSERT INTO goal_leaf_workspace_plan_item "
+                "(plan_id,stable_id,position,text,status,resolution,updated_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (plan_id, stable_id, position, crypto.enc(text), previous_status,
+                 crypto.enc(previous_resolution), now))
+        if commit:
+            self.conn.commit()
+        return self.leaf_workspace_plan(node_id)  # type: ignore[return-value]
+
+    def complete_leaf_workspace_item(self, node_id: int, stable_id: str,
+                                     resolution: str = "", *,
+                                     commit: bool = True) -> dict:
+        plan = self.leaf_workspace_plan(node_id)
+        if not plan:
+            raise ValueError("Leaf has no approved plan")
+        cur = self.conn.execute(
+            "UPDATE goal_leaf_workspace_plan_item SET status='completed',resolution=?,updated_at=? "
+            "WHERE plan_id=? AND stable_id=?",
+            (crypto.enc(str(resolution or "")), _now(), int(plan["id"]), str(stable_id)))
+        if cur.rowcount != 1:
+            raise ValueError("approved plan item not found")
+        if commit:
+            self.conn.commit()
+        return self.leaf_workspace_plan(node_id)  # type: ignore[return-value]
+
+    def leaf_workspace_legacy_messages(self, node_id: int, limit: int = 100) -> list[dict]:
+        out = []
+        for message in self.coach_messages(node_id, limit):
+            payload = dict(message.get("payload") or {})
+            content = str(payload.get("text") or payload.get("reply") or
+                          payload.get("content") or "").strip()
+            if not content:
+                continue
+            out.append({"id": f"legacy-{message['id']}", "role": message["role"],
+                        "content": content, "payload": payload,
+                        "created_at": message["created_at"], "read_only": True})
+        return out
+
+    def leaf_workspace_rollup(self, node_id: int) -> dict:
+        """Confirmed semantic state only; never includes workspace messages."""
+        row = self.conn.execute(
+            "SELECT 1 FROM goal_leaf_workspace WHERE node_id=?", (int(node_id),)).fetchone()
+        if not row:
+            return {}
+        state = self.leaf_workspace_state(node_id)
+        agreement = state.get("agreement") or {}
+        plan = self.leaf_workspace_plan(node_id)
+        completion_confirmed = bool(agreement.get("completion_confirmed"))
+        if not agreement.get("confirmed") and not completion_confirmed and not plan:
+            return {}
+        confirmed = ({key: agreement.get(key) for key in
+                      ("outcome", "approach", "definition_of_done", "constraints")
+                      if agreement.get(key)} if agreement.get("confirmed") else {})
+        if completion_confirmed:
+            confirmed.update({key: agreement.get(key) for key in ("result", "lesson")
+                              if agreement.get(key)})
+        return {"provenance": "leaf_workspace", "phase": state["phase"],
+                "kind": state["kind"], "agreement": confirmed,
+                "completion_confirmed": completion_confirmed,
+                "plan": {"version": plan["version"], "items": [
+                    {key: item.get(key) for key in ("id", "text", "status", "resolution")
+                     if item.get(key)} for item in plan["items"]]} if plan else None}
+
+    def leaf_workspace_summary(self, node_id: int) -> dict:
+        """Compact Leaf-tab state; never exposes the private raw transcript."""
+        row = self.conn.execute(
+            "SELECT 1 FROM goal_leaf_workspace WHERE node_id=?", (int(node_id),)).fetchone()
+        if not row:
+            return {}
+        state = self.leaf_workspace_state(node_id)
+        pending_row = self.conn.execute(
+            "SELECT id FROM goal_leaf_workspace_proposal WHERE node_id=? AND status='open' "
+            "ORDER BY id DESC LIMIT 1", (int(node_id),)).fetchone()
+        pending = self.leaf_workspace_proposal(int(pending_row["id"])) if pending_row else None
+        return {
+            "phase": state["phase"], "kind": state["kind"],
+            "agreement": state.get("agreement") or {},
+            "conversation_summary": str(
+                (state.get("working") or {}).get("conversation_summary") or "").strip(),
+            "plan": self.leaf_workspace_plan(node_id),
+            "pending_proposal": pending,
+        }
+
+    def _leaf_handoff_dict(self, row) -> dict:
+        payload = self._dec_json(row["payload_json"], {})
+        return {
+            "id": int(row["id"]),
+            "source_leaf_id": int(row["source_leaf_id"]),
+            "source_title": crypto.dec(row["source_title"]) or "",
+            "destination_leaf_id": (int(row["destination_leaf_id"])
+                                    if row["destination_leaf_id"] is not None else None),
+            "destination_title": crypto.dec(row["destination_title"]) or "",
+            "project_id": int(row["project_id"]) if row["project_id"] is not None else None,
+            "project_title": crypto.dec(row["project_title"]) or "",
+            "outcome_id": int(row["outcome_id"]),
+            "payload": payload, "status": row["status"],
+            "created_at": row["created_at"], "consumed_at": row["consumed_at"],
+            "provenance": "approved_leaf_handoff",
+        }
+
+    def leaf_handoff(self, handoff_id: int) -> dict:
+        row = self.conn.execute(
+            "SELECT h.*,s.title source_title,d.title destination_title,p.title project_title "
+            "FROM goal_leaf_handoff h JOIN goal_node s ON s.id=h.source_leaf_id "
+            "LEFT JOIN goal_node d ON d.id=h.destination_leaf_id "
+            "LEFT JOIN goal_node p ON p.id=h.project_id WHERE h.id=?",
+            (int(handoff_id),)).fetchone()
+        if not row:
+            raise ValueError("Leaf handoff not found")
+        return self._leaf_handoff_dict(row)
+
+    def incoming_leaf_handoffs(self, node_id: int, limit: int = 3) -> list[dict]:
+        """Approved compact inputs for this Leaf; never returns source messages."""
+        rows = self.conn.execute(
+            "SELECT h.*,s.title source_title,d.title destination_title,p.title project_title "
+            "FROM goal_leaf_handoff h JOIN goal_node s ON s.id=h.source_leaf_id "
+            "LEFT JOIN goal_node d ON d.id=h.destination_leaf_id "
+            "LEFT JOIN goal_node p ON p.id=h.project_id "
+            "WHERE h.destination_leaf_id=? AND h.status IN ('approved','consumed') "
+            "ORDER BY h.id DESC LIMIT ?", (int(node_id), int(limit))).fetchall()
+        return [self._leaf_handoff_dict(row) for row in reversed(rows)]
+
+    def acknowledge_leaf_handoffs(self, node_id: int, handoff_ids: list[int], *,
+                                  commit: bool = True) -> int:
+        ids = [int(value) for value in handoff_ids if str(value).isdigit()]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        cur = self.conn.execute(
+            f"UPDATE goal_leaf_handoff SET status='consumed',consumed_at=? "
+            f"WHERE destination_leaf_id=? AND status='approved' "
+            f"AND id IN ({placeholders})", [_now(), int(node_id), *ids])
+        if commit:
+            self.conn.commit()
+        return int(cur.rowcount)
+
+    def outgoing_leaf_handoffs(self, node_id: int, limit: int = 3) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT h.*,s.title source_title,d.title destination_title,p.title project_title "
+            "FROM goal_leaf_handoff h JOIN goal_node s ON s.id=h.source_leaf_id "
+            "LEFT JOIN goal_node d ON d.id=h.destination_leaf_id "
+            "LEFT JOIN goal_node p ON p.id=h.project_id "
+            "WHERE h.source_leaf_id=? AND h.status IN ('approved','consumed') "
+            "ORDER BY h.id DESC LIMIT ?", (int(node_id), int(limit))).fetchall()
+        return [self._leaf_handoff_dict(row) for row in reversed(rows)]
+
+    def add_leaf_handoff(self, source_leaf_id: int, destination_leaf_id: int,
+                         project_id: int | None, outcome_id: int, payload: dict, *,
+                         commit: bool = True) -> dict:
+        cleaned = _normalize_leaf_handoff(payload)
+        if not cleaned["output_summary"] or not cleaned["working_material"]:
+            raise ValueError("Leaf handoff requires produced output and working material")
+        now = _now()
+        self.conn.execute(
+            "UPDATE goal_leaf_handoff SET status='superseded' "
+            "WHERE source_leaf_id=? AND status IN ('approved','consumed')",
+            (int(source_leaf_id),))
+        cur = self.conn.execute(
+            "INSERT INTO goal_leaf_handoff "
+            "(source_leaf_id,destination_leaf_id,project_id,outcome_id,payload_json,status,created_at) "
+            "VALUES (?,?,?,?,?,'approved',?)",
+            (int(source_leaf_id), int(destination_leaf_id),
+             int(project_id) if project_id is not None else None, int(outcome_id),
+             crypto.enc(_json(cleaned)), now))
+        if commit:
+            self.conn.commit()
+        return self.leaf_handoff(int(cur.lastrowid))
+
     def add_memory_candidate(self, node_id: int, candidate: dict,
                              message_id: int | None = None) -> int:
         category = str(candidate.get("category") or "goals").strip()
@@ -1287,6 +1888,64 @@ def _ancestors(goals: GoalStore, node: dict) -> list[dict]:
     return list(reversed(chain))
 
 
+def _leaf_handoff_target(goals: GoalStore, source_leaf_id: int) -> dict | None:
+    """Return the next active Leaf in this Project's recommended execution order."""
+    tree = goals.tree()
+    flat: dict[int, dict] = {}
+
+    def collect(item: dict) -> None:
+        if not item:
+            return
+        flat[int(item["id"])] = item
+        for child in item.get("children", []):
+            collect(child)
+
+    collect(tree)
+    source = flat.get(int(source_leaf_id))
+    if not source or source.get("type") != "task":
+        return None
+    chain = []
+    current = source
+    while current:
+        chain.append(current)
+        parent_id = current.get("parent_id")
+        current = flat.get(int(parent_id)) if parent_id else None
+    project = next((item for item in chain[1:]
+                    if item.get("semantic_role") == "project"), None)
+    # Legacy trees may not yet have semantic roles. Keep the handoff bounded to
+    # the closest owning scope rather than leaking into another Root.
+    scope = project or (chain[1] if len(chain) > 1 else None)
+    if not scope:
+        return None
+    leaves = []
+
+    def active_leaves(item: dict) -> None:
+        if item.get("status") == "archived":
+            return
+        if item.get("type") == "task":
+            if item.get("status") == "active" and int(item["id"]) != int(source_leaf_id):
+                leaves.append(item)
+            return
+        for child in item.get("children", []):
+            active_leaves(child)
+
+    active_leaves(scope)
+    priority = {"high": 0, "normal": 1, "low": 2}
+    leaves.sort(key=lambda item: (
+        priority.get(str(item.get("priority") or "normal"), 1),
+        str(item.get("due_date") or "9999"), int(item.get("position") or 0),
+        int(item["id"])))
+    if not leaves:
+        return None
+    destination = leaves[0]
+    return {
+        "leaf_id": int(destination["id"]), "title": destination.get("title", ""),
+        "description": destination.get("description", ""),
+        "project_id": int(scope["id"]), "project_title": scope.get("title", ""),
+        "routing": "recommended_execution_order",
+    }
+
+
 def _agent_summary(store: GoalAgentStore, node_id: int) -> dict:
     try:
         state = store.state(node_id)
@@ -1324,6 +1983,7 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
     parent_state = agents.state(node_id)
     parent_last = parent_state.get("last_run_at")
     coach_rollup_cache = {}
+    workspace_rollup_cache = {}
 
     def coach_rollup(item, limit=8):
         cache_key = (int(item["id"]), int(limit))
@@ -1341,6 +2001,21 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
         coach_rollup_cache[cache_key] = collected[:limit]
         return coach_rollup_cache[cache_key]
 
+    def descendant_workspace_rollup(item, limit=8):
+        cache_key = (int(item["id"]), int(limit))
+        if cache_key in workspace_rollup_cache:
+            return workspace_rollup_cache[cache_key]
+        collected = []
+        if item.get("type") == "task":
+            rollup = agents.leaf_workspace_rollup(item["id"])
+            if rollup:
+                collected.append({"leaf_id": int(item["id"]),
+                                  "title": item.get("title", ""), **rollup})
+        for child in item.get("children", []):
+            collected.extend(descendant_workspace_rollup(child, limit))
+        workspace_rollup_cache[cache_key] = collected[:limit]
+        return workspace_rollup_cache[cache_key]
+
     def descendant_is_fresh(item):
         state = agents.state(item["id"])
         if state["dirty"] or not parent_last:
@@ -1356,6 +2031,9 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
                     "mastery": item.get("mastery"),
                     "agent_report": _agent_summary(agents, item["id"]),
                     "coach_rollup": coach_rollup(item),
+                    "workspace_rollup": (agents.leaf_workspace_rollup(item["id"])
+                                         if item.get("type") == "task" else
+                                         descendant_workspace_rollup(item)),
                     "cached_unchanged": True, "children": []}
         compact = {"id": item["id"], "type": item["type"], "title": item["title"],
                    "description": item.get("description", ""), "status": item["status"],
@@ -1364,6 +2042,9 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
                    "origin": item.get("origin"),
                    "agent_report": _agent_summary(agents, item["id"]),
                    "coach_rollup": coach_rollup(item),
+                   "workspace_rollup": (agents.leaf_workspace_rollup(item["id"])
+                                        if item.get("type") == "task" else
+                                        descendant_workspace_rollup(item)),
                    "children": []}
         if item["type"] == "task":
             compact["coach_updates"] = agents.coach_states(item["id"], 6)
@@ -1415,6 +2096,8 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
                                if q["status"] == "answered"][-8:],
         "recent_chat": agents.messages(node_id, 12),
         "coach_updates": agents.coach_states(node_id, 8) if node["type"] == "task" else [],
+        "workspace_rollup": agents.leaf_workspace_rollup(node_id)
+        if node["type"] == "task" else {},
         "committed_harvests": agents.harvest_context(node_id),
     }
     encoded = _json(context)
@@ -1430,12 +2113,13 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
             **context["subtree"],
             "children": [{k: child.get(k) for k in
                           ("id", "type", "title", "status", "completion", "agent_report",
-                           "coach_updates", "coach_rollup")}
+                           "coach_updates", "coach_rollup", "workspace_rollup")}
                          for child in context["subtree"].get("children", [])],
         }
         context["answered_questions"] = clipped(context["answered_questions"][-4:], 700)
         context["recent_chat"] = clipped(context["recent_chat"][-4:], 700)
         context["coach_updates"] = clipped(context.get("coach_updates", [])[:6], 700)
+        context["workspace_rollup"] = clipped(context.get("workspace_rollup", {}), 900)
         context["attached_curiosities"] = clipped(context["attached_curiosities"][:4], 700)
         context["committed_harvests"] = clipped(context["committed_harvests"][:4], 700)
         context["core_profile"] = clipped(context["core_profile"][:30], 1200)
@@ -1456,6 +2140,7 @@ def build_agent_context(goals: GoalStore, agents: GoalAgentStore, node_id: int,
             "open_proposals": clipped(context["open_proposals"][:3], 350),
             "answered_questions": clipped(context["answered_questions"][-2:], 350),
             "coach_updates": clipped(context.get("coach_updates", [])[:4], 350),
+            "workspace_rollup": clipped(context.get("workspace_rollup", {}), 500),
             "committed_harvests": clipped(context["committed_harvests"][:2], 350),
             "prompt_budget_truncated": True,
         }
@@ -1567,7 +2252,10 @@ def build_step_coach_context(goals: GoalStore, agents: GoalAgentStore,
         raise ValueError("Leaf Coach requires a Leaf")
     steps = parse_goal_steps(node.get("description", ""))
     if not steps:
-        raise ValueError("this Leaf has no explicit steps")
+        # A brand-new Leaf can still open its agent. The initial focus is the
+        # Leaf's stated outcome, and any concrete workflow remains a proposal
+        # until the user approves the returned step_revision.
+        steps = [str(node.get("description") or node.get("title") or "Define this Leaf").strip()]
     if int(step_index) < 0 or int(step_index) >= len(steps):
         raise ValueError("invalid Leaf step")
     states = {item["step_fingerprint"]: item for item in agents.coach_states(node_id, 50)}
@@ -1582,7 +2270,9 @@ def build_step_coach_context(goals: GoalStore, agents: GoalAgentStore,
         from .curiosity import CuriosityStore
         curiosities = CuriosityStore(agents.db_path)
         try:
-            for linked in node["curiosities"][:4]:
+            direct_links = [linked for linked in node["curiosities"]
+                            if not linked.get("inherited_from_id")]
+            for linked in direct_links[:4]:
                 curiosity = curiosities.get_curiosity(linked["id"])
                 if not curiosity:
                     continue
@@ -1660,7 +2350,13 @@ def open_step_coach(config, node_id: int, step_index: int, *, model=None) -> dic
         messages = agents.coach_messages(node_id, 80)
         fingerprint = step_fingerprint(step["text"])
         last_fingerprint = messages[-1]["step_fingerprint"] if messages else None
-        needs_reply = not messages or last_fingerprint != fingerprint or messages[-1]["role"] != "assistant"
+        opening_row = agents.conn.execute(
+            "SELECT version FROM goal_step_coach_opening_version "
+            "WHERE node_id=? AND step_fingerprint=?", (int(node_id), fingerprint)).fetchone()
+        opening_version = 3
+        needs_opening_refresh = not opening_row or int(opening_row["version"]) < opening_version
+        needs_reply = (not messages or last_fingerprint != fingerprint or
+                       messages[-1]["role"] != "assistant" or needs_opening_refresh)
         if needs_reply:
             if last_fingerprint != fingerprint:
                 beginning = ((f"{step_index + 1}/{len(context['steps'])}단계를 시작합니다: "
@@ -1673,6 +2369,13 @@ def open_step_coach(config, node_id: int, step_index: int, *, model=None) -> dic
             reply = active.coach(context, conversation, opening=True)
             agents.add_coach_message(node_id, step_index, step["text"], "assistant",
                                      _coach_payload(reply))
+            agents.conn.execute(
+                "INSERT INTO goal_step_coach_opening_version "
+                "(node_id,step_fingerprint,version,updated_at) VALUES (?,?,?,?) "
+                "ON CONFLICT(node_id,step_fingerprint) DO UPDATE SET "
+                "version=excluded.version,updated_at=excluded.updated_at",
+                (int(node_id), fingerprint, opening_version, _now()))
+            agents.conn.commit()
         return _coach_view(goals, agents, node_id, step_index)
     finally:
         agents.close(); goals.close()
@@ -1806,6 +2509,675 @@ def clear_step_coach(config, node_id: int) -> dict:
         agents.close(); goals.close()
 
 
+def build_leaf_workspace_context(goals: GoalStore, agents: GoalAgentStore,
+                                 node_id: int, *, max_chars: int = 10000) -> dict:
+    """Build the bounded context for a whole-Leaf adaptive conversation."""
+    tree = goals.tree()
+    node = _find(tree, int(node_id))
+    if not node or node.get("type") != "task":
+        raise ValueError("Leaf Workspace requires a Leaf")
+    agents.ensure_leaf_workspace(node)
+    state = agents.leaf_workspace_state(node_id)
+    incoming_handoffs = []
+    for item in agents.incoming_leaf_handoffs(node_id, 3):
+        handoff = dict(item)
+        payload = dict(handoff.get("payload") or {})
+        handoff["payload"] = {
+            "output_summary": str(payload.get("output_summary") or "")[:1200],
+            "working_material": str(payload.get("working_material") or "")[:5000],
+            "constraints": [str(value)[:300] for value in
+                            (payload.get("constraints") or [])[:8]],
+            "unresolved_questions": str(payload.get("unresolved_questions") or "")[:1200],
+            "suggested_start": str(payload.get("suggested_start") or "")[:1200],
+        }
+        incoming_handoffs.append(handoff)
+    curiosity_details = []
+    if node.get("curiosities"):
+        from .curiosity import CuriosityStore
+        curiosities = CuriosityStore(agents.db_path)
+        try:
+            direct_links = [linked for linked in node["curiosities"]
+                            if not linked.get("inherited_from_id")]
+            for linked in direct_links[:4]:
+                curiosity = curiosities.get_curiosity(linked["id"])
+                if not curiosity:
+                    continue
+                items = curiosities.items_for_curiosity(linked["id"])[-6:]
+                curiosity_details.append({
+                    "id": curiosity["id"], "label": curiosity["label"],
+                    "directive": curiosity["directive"], "status": curiosity["status"],
+                    "items": [{"kind": item["kind"], "text": item["text"],
+                               "answer": item.get("answer")} for item in items],
+                })
+        finally:
+            curiosities.close()
+    context = {
+        "language": "ko" if lang_is_ko() else "en",
+        "jurisdiction": {"node_id": int(node_id), "node_type": "task",
+                         "purpose": "adaptive Leaf workspace",
+                         "excludes": ["siblings", "sibling_transcripts", "unapproved_sibling_context",
+                                      "global_memory", "main_chat",
+                                      "passive_capture", "screen_activity",
+                                      "unrelated_investigations"]},
+        "ancestor_intent": [{"id": item["id"], "type": item["type"],
+                             "title": item["title"],
+                             "description": item.get("description", "")}
+                            for item in _ancestors(goals, node)],
+        "leaf": {key: node.get(key) for key in
+                 ("id", "parent_id", "title", "description", "notes", "status",
+                  "priority", "due_date", "evidence", "origin")},
+        "workspace": {"phase": state["phase"], "kind": state["kind"],
+                      "agreement": state["agreement"], "working": state["working"],
+                      "plan": agents.leaf_workspace_plan(node_id)},
+        "incoming_handoffs": incoming_handoffs,
+        "attached_investigations": curiosity_details,
+    }
+    if len(_json(context)) > max_chars:
+        context["incoming_handoffs"] = context.get("incoming_handoffs", [])[-1:]
+        context["attached_investigations"] = [
+            {**item, "items": item["items"][-2:]}
+            for item in curiosity_details[:2]]
+        context["leaf"]["evidence"] = (context["leaf"].get("evidence") or [])[-4:]
+    if len(_json(context)) > max_chars:
+        context["ancestor_intent"] = [
+            {**item, "description": str(item.get("description") or "")[:400]}
+            for item in context["ancestor_intent"]]
+        context["leaf"]["description"] = str(
+            context["leaf"].get("description") or "")[:1800]
+        context["prompt_budget_truncated"] = True
+    if len(_json(context)) > max_chars:
+        # Fail closed to a small deterministic shape. Linked Investigation
+        # payloads and evidence are omitted instead of escaping the prompt cap.
+        context = {
+            "language": context["language"],
+            "jurisdiction": {"node_id": int(node_id), "node_type": "task",
+                             "purpose": "adaptive Leaf workspace"},
+            "leaf": {"id": int(node_id),
+                     "title": str(node.get("title") or "")[:240],
+                     "status": node.get("status")},
+            "workspace": {
+                "phase": state["phase"], "kind": state["kind"],
+                "agreement": {
+                    key: value for key, value in (state.get("agreement") or {}).items()
+                    if key in {"outcome", "approach", "definition_of_done",
+                               "constraints", "confirmed", "result", "lesson"}
+                },
+            },
+            "incoming_handoffs": incoming_handoffs[-1:],
+            "prompt_budget_truncated": True,
+        }
+    if len(_json(context)) > max_chars:
+        context["workspace"] = {"phase": state["phase"], "kind": state["kind"]}
+        context["leaf"] = {"id": int(node_id),
+                           "title": str(node.get("title") or "")[:80]}
+    if len(_json(context)) > max_chars:
+        context = {"leaf_id": int(node_id), "prompt_budget_truncated": True}
+    if len(_json(context)) > max_chars:
+        context = {}
+    return context
+
+
+def _leaf_workspace_view(goals: GoalStore, agents: GoalAgentStore,
+                         node_id: int) -> dict:
+    node = goals.get(int(node_id))
+    if not node or node.get("type") != "task":
+        raise ValueError("Leaf Workspace requires a Leaf")
+    state = agents.ensure_leaf_workspace(node)
+    path = [item["title"] for item in _ancestors(goals, node)] + [node["title"]]
+    messages = agents.leaf_workspace_messages(node_id, 100)
+    # Proposal status is live even though its original presentation is stored
+    # with the message. This keeps approval/rejection idempotent in the UI.
+    for message in messages:
+        proposal = message.get("payload", {}).get("proposal")
+        if isinstance(proposal, dict) and proposal.get("id"):
+            try:
+                presented = agents.leaf_workspace_proposal(int(proposal["id"]))
+                if presented.get("status") == "open":
+                    presented["status"] = "pending"
+                message["payload"]["proposal"] = presented
+            except (TypeError, ValueError):
+                message["payload"].pop("proposal", None)
+    return {"leaf_id": int(node_id), "title": node["title"], "path": path,
+            "status": node.get("status"), "completed": node.get("status") == "completed",
+            "phase": state["phase"], "kind": state["kind"],
+            "agreement": state["agreement"], "working": state["working"],
+            "plan": agents.leaf_workspace_plan(node_id), "messages": messages,
+            "incoming_handoffs": agents.incoming_leaf_handoffs(node_id, 3),
+            "outgoing_handoffs": agents.outgoing_leaf_handoffs(node_id, 3),
+            "legacy_messages": agents.leaf_workspace_legacy_messages(node_id)}
+
+
+def _leaf_workspace_model(config):
+    backend = (getattr(config, "goal_ai_backend", "") or
+               getattr(config, "inference_backend", "claude")).lower()
+    if backend == "stub":
+        return StubGoalAgentModel()
+    model = getattr(config, "goal_ai_leaf_model", "claude-haiku-4-5")
+    return ClaudeGoalAgentModel(model, config, usage_category="manual")
+
+
+def _leaf_handoff_model(config):
+    backend = (getattr(config, "goal_ai_backend", "") or
+               getattr(config, "inference_backend", "claude")).lower()
+    if backend == "stub":
+        return StubGoalAgentModel()
+    # This is the Sol/strong route: one call at completion, not every Leaf turn.
+    model = (getattr(config, "goal_ai_handoff_model", "") or
+             getattr(config, "goal_ai_parent_model", "claude-sonnet-4-6"))
+    return ClaudeGoalAgentModel(model, config, usage_category="manual")
+
+
+def _fallback_leaf_handoff(context: dict) -> dict:
+    completion = context.get("completion") or {}
+    result = str(completion.get("result") or completion.get("what_happened") or
+                 "Completed the source Leaf.").strip()
+    material = str(completion.get("what_happened") or result).strip()
+    resolutions = [str(item.get("resolution") or "").strip()
+                   for item in (context.get("plan") or {}).get("items", [])
+                   if str(item.get("resolution") or "").strip()]
+    if resolutions:
+        material += "\n" + "\n".join(resolutions)
+    destination = context.get("destination") or {}
+    return _normalize_leaf_handoff({
+        "output_summary": result, "working_material": material,
+        "constraints": (context.get("agreement") or {}).get("constraints") or [],
+        "unresolved_questions": completion.get("next_adjustment") or "",
+        "suggested_start": "Begin " + str(destination.get("title") or "the next Leaf") +
+                           " using the approved working material above.",
+    })
+
+
+def _prepare_leaf_completion_handoff(config, goals: GoalStore,
+                                     agents: GoalAgentStore, node_id: int,
+                                     reply: LeafWorkspaceReply) -> LeafWorkspaceReply:
+    proposal = reply.proposal or {}
+    if proposal.get("type") != "complete_leaf":
+        return reply
+    payload = dict(proposal.get("payload") or {})
+    destination = _leaf_handoff_target(goals, int(node_id))
+    payload["handoff_target"] = destination
+    if destination:
+        state = agents.leaf_workspace_state(node_id)
+        context = {
+            "language": "ko" if lang_is_ko() else "en",
+            "source_leaf": {key: value for key, value in (goals.get(node_id) or {}).items()
+                            if key in {"id", "title", "description", "notes"}},
+            "destination": destination,
+            "completion": {key: payload.get(key) for key in
+                           ("result", "what_happened", "lesson", "next_adjustment")},
+            "agreement": state.get("agreement") or {},
+            "plan": agents.leaf_workspace_plan(node_id),
+            "source_conversation": _bounded_leaf_workspace_messages(
+                agents.leaf_workspace_messages(node_id, 100), max_chars=7000, limit=24),
+        }
+        try:
+            active = _leaf_handoff_model(config)
+            if not hasattr(active, "leaf_handoff"):
+                raise ValueError("configured model does not support Leaf handoffs")
+            drafted = parse_leaf_handoff(active.leaf_handoff(context))
+            if not drafted:
+                raise ValueError("GoalAI returned no usable Leaf handoff")
+        except Exception as error:
+            log_diag(
+                "goal-ai",
+                f"Leaf handoff draft fallback node_id={node_id} error={type(error).__name__}")
+            drafted = _fallback_leaf_handoff(context)
+        payload["handoff"] = drafted
+    else:
+        payload.pop("handoff", None)
+    reply.proposal = {**proposal, "payload": payload}
+    return reply
+
+
+def _persist_leaf_workspace_reply(agents: GoalAgentStore, node_id: int,
+                                  reply: LeafWorkspaceReply) -> None:
+    try:
+        agents.conn.execute("BEGIN IMMEDIATE")
+        payload: dict[str, Any] = {}
+        if reply.suggestions:
+            payload["suggestions"] = reply.suggestions[:8]
+            payload["selection_mode"] = ("multiple" if reply.selection_mode == "multiple"
+                                         else "single")
+        if reply.proposal:
+            saved = agents.add_leaf_workspace_proposal(
+                node_id, reply.proposal["type"], reply.proposal.get("payload") or {},
+                str(reply.proposal.get("rationale") or ""), commit=False)
+            payload["proposal"] = saved
+        if reply.working_patch:
+            # Scratch continuity may preserve focus and references, but model-
+            # written decisions, blockers, or constraints require a proposal
+            # before they become durable semantic state.
+            state = agents.leaf_workspace_state(node_id)
+            working = dict(state.get("working") or {})
+            for key in ("current_focus", "selected_suggestion_ids",
+                        "conversation_summary"):
+                if key in reply.working_patch:
+                    working[key] = reply.working_patch[key]
+            agents.update_leaf_workspace(node_id, working=working, commit=False)
+        agents.add_leaf_workspace_message(
+            node_id, "assistant", reply.message, payload, commit=False)
+        agents.conn.commit()
+    except Exception:
+        agents.conn.rollback()
+        raise
+
+
+def _call_leaf_workspace_model(active, context: dict, messages: list[dict], *,
+                               event: dict | None = None,
+                               opening: bool = False) -> LeafWorkspaceReply:
+    if not hasattr(active, "leaf_workspace"):
+        raise ValueError("configured model does not support Leaf Workspace")
+    result = active.leaf_workspace(context, messages, event=event, opening=opening)
+    if isinstance(result, LeafWorkspaceReply):
+        parsed = parse_leaf_workspace_reply({
+            "message": result.message, "suggestions": result.suggestions,
+            "proposal": result.proposal, "working_patch": result.working_patch,
+            "selection_mode": result.selection_mode})
+    elif isinstance(result, (str, dict)):
+        parsed = parse_leaf_workspace_reply(result)
+    else:
+        parsed = None
+    if not parsed:
+        raise ValueError("Leaf Workspace returned no usable message")
+    return parsed
+
+
+def _bounded_leaf_workspace_messages(messages: list[dict], *,
+                                     max_chars: int = 9000,
+                                     limit: int = 40) -> list[dict]:
+    """Keep the newest complete turns inside a deterministic prompt budget."""
+    selected: list[dict] = []
+    used = 2
+    for message in reversed(list(messages or [])[-int(limit):]):
+        compact = {key: message.get(key) for key in
+                   ("id", "role", "content", "payload", "created_at")
+                   if message.get(key) not in (None, "", {})}
+        encoded = _json(compact)
+        if len(encoded) + used > max_chars:
+            if not selected:
+                # The latest natural turn is more important than oversized
+                # optional cards when one message alone exceeds the budget.
+                compact = {"role": message.get("role"),
+                           "content": str(message.get("content") or "")[:
+                           max(0, max_chars - 80)]}
+                if len(_json(compact)) <= max_chars:
+                    selected.append(compact)
+            break
+        selected.append(compact)
+        used += len(encoded) + 1
+    return list(reversed(selected))
+
+
+def open_leaf_workspace(config, node_id: int, *, model=None) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        context = build_leaf_workspace_context(
+            goals, agents, int(node_id),
+            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+        messages = agents.leaf_workspace_messages(node_id, 100)
+        pending_row = agents.conn.execute(
+            "SELECT id FROM goal_leaf_workspace_proposal WHERE node_id=? AND status='open' "
+            "AND proposal_type='complete_leaf' ORDER BY id DESC LIMIT 1",
+            (int(node_id),)).fetchone()
+        if pending_row:
+            pending = agents.leaf_workspace_proposal(int(pending_row["id"]))
+            if "handoff_target" not in (pending.get("payload") or {}):
+                refreshed = _prepare_leaf_completion_handoff(
+                    config, goals, agents, int(node_id), LeafWorkspaceReply(
+                        "Completion handoff refreshed.", proposal={
+                            "type": "complete_leaf", "payload": pending["payload"],
+                            "rationale": pending.get("rationale", "")}))
+                agents.update_open_leaf_workspace_proposal(
+                    int(pending["id"]), (refreshed.proposal or {}).get("payload") or {})
+                context = build_leaf_workspace_context(
+                    goals, agents, int(node_id), max_chars=min(
+                        12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+        pending_handoffs = [item for item in context.get("incoming_handoffs", [])
+                            if item.get("status") == "approved"]
+        if not messages or pending_handoffs:
+            reply = _call_leaf_workspace_model(
+                model or _leaf_workspace_model(config), context, messages,
+                event=({"type": "incoming_handoff",
+                        "handoff_ids": [item["id"] for item in pending_handoffs]}
+                       if pending_handoffs else None), opening=True)
+            reply = _prepare_leaf_completion_handoff(
+                config, goals, agents, int(node_id), reply)
+            _persist_leaf_workspace_reply(agents, int(node_id), reply)
+            if pending_handoffs:
+                agents.acknowledge_leaf_handoffs(
+                    int(node_id), [item["id"] for item in pending_handoffs])
+        return _leaf_workspace_view(goals, agents, int(node_id))
+    finally:
+        agents.close(); goals.close()
+
+
+def _normalized_workspace_event(event: dict | None, messages: list[dict]) -> dict | None:
+    if not isinstance(event, dict):
+        return None
+    event_type = str(event.get("type") or event.get("kind") or "").strip()
+    if event_type == "suggestion_selected":
+        event = {"type": "select_suggestions",
+                 "suggestion_ids": [event.get("suggestion_id")],
+                 "label": event.get("label"), "message_id": event.get("message_id")}
+        event_type = "select_suggestions"
+    if event_type not in {"select_suggestions", "clear_selection"}:
+        return None
+    if event_type == "clear_selection":
+        return {"type": event_type, "suggestion_ids": []}
+    available = {str(item.get("id")) for message in messages[-20:]
+                 for item in (message.get("payload", {}).get("suggestions") or [])
+                 if isinstance(item, dict) and item.get("id")}
+    selected = []
+    for raw in event.get("suggestion_ids") or []:
+        value = str(raw)
+        if value in available and value not in selected:
+            selected.append(value)
+    return {"type": event_type, "suggestion_ids": selected}
+
+
+def send_leaf_workspace(config, node_id: int, text: str, event: dict | None = None,
+                        *, model=None) -> dict:
+    text = str(text or "").strip()
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        context = build_leaf_workspace_context(
+            goals, agents, int(node_id),
+            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+        current_messages = agents.leaf_workspace_messages(node_id, 100)
+        structured_event = _normalized_workspace_event(event, current_messages)
+        if not text and not structured_event:
+            raise ValueError("message or selection is required")
+        user_content = text or ("Selected suggestions" if context["language"] == "en"
+                                else "제안을 선택했습니다")
+        user_payload = {"event": structured_event} if structured_event else {}
+        # Commit the user's turn first. A network/model failure therefore never
+        # loses what the user said and Retry can continue with the same history.
+        last = current_messages[-1] if current_messages else None
+        retrying = bool(last and last.get("role") == "user" and
+                        last.get("content") == user_content and
+                        (last.get("payload") or {}) == user_payload)
+        if not retrying:
+            agents.add_leaf_workspace_message(node_id, "user", user_content, user_payload)
+        if structured_event:
+            state = agents.leaf_workspace_state(node_id)
+            working = dict(state.get("working") or {})
+            working["selected_suggestion_ids"] = structured_event["suggestion_ids"]
+            agents.update_leaf_workspace(node_id, working=working)
+        messages = agents.leaf_workspace_messages(node_id, 100)
+        context = build_leaf_workspace_context(
+            goals, agents, int(node_id),
+            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+        # Full Leaf-local v2 history is supplied; the bounded context never adds
+        # main chat, siblings, global memory, or passive screen context.
+        reply = _call_leaf_workspace_model(
+            model or _leaf_workspace_model(config), context, messages,
+            event=structured_event, opening=False)
+        reply = _prepare_leaf_completion_handoff(
+            config, goals, agents, int(node_id), reply)
+        _persist_leaf_workspace_reply(agents, int(node_id), reply)
+        return _leaf_workspace_view(goals, agents, int(node_id))
+    finally:
+        agents.close(); goals.close()
+
+
+def _insert_leaf_completion_outcome(agents: GoalAgentStore, goals: GoalStore,
+                                    node: dict, proposal_id: int,
+                                    payload: dict, now: str) -> int:
+    """Create the canonical debrief in the same transaction as Leaf completion."""
+    result = str(payload.get("result") or "").strip()
+    lesson = str(payload.get("lesson") or
+                 payload.get("changed_understanding") or "").strip()
+    what_happened = str(payload.get("what_happened") or result).strip()
+    if not result or not lesson or not what_happened:
+        raise ValueError("completion requires a confirmed result and lesson")
+    expected = str(payload.get("expected_obstacle") or "").strip()
+    surprise = str(payload.get("surprise") or "").strip()
+    adjustment = str(payload.get("next_adjustment") or "").strip()
+    helpfulness = payload.get("helpfulness")
+    if helpfulness in {"", None}:
+        helpfulness = None
+    else:
+        helpfulness = max(0.0, min(10.0, float(helpfulness)))
+    curiosity_id, source_item_id = goals._outcome_links(int(node["id"]))
+    cur = agents.conn.execute(
+        "INSERT INTO experiment_outcome "
+        "(goal_id,curiosity_id,source_item_id,result,what_happened,expected_obstacle,"
+        "surprise,helpfulness,changed_understanding,next_adjustment,created_at) "
+        "VALUES (?,?,?,'completed',?,?,?,?,?,?,?)",
+        (int(node["id"]), curiosity_id, source_item_id, crypto.enc(what_happened),
+         crypto.enc(expected), crypto.enc(surprise), helpfulness, crypto.enc(lesson),
+         crypto.enc(adjustment), now))
+    outcome_id = int(cur.lastrowid)
+    label = "Completed: " + lesson
+    if adjustment:
+        label += " Next adjustment: " + adjustment
+    agents.conn.execute(
+        "INSERT OR IGNORE INTO goal_evidence_link "
+        "(goal_id,source_kind,source_id,label,created_at) VALUES (?,?,?,?,?)",
+        (int(node["id"]), "experiment_outcome", str(outcome_id),
+         crypto.enc(label[:1000]), now))
+    return outcome_id
+
+
+def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
+                                   decision: str, edited_payload=None,
+                                   *, model=None) -> dict:
+    del model  # Decisions are deterministic and never require another model call.
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node.get("type") != "task":
+            raise ValueError("Leaf Workspace requires a Leaf")
+        agents.ensure_leaf_workspace(node)
+        proposal = agents.leaf_workspace_proposal(int(proposal_id))
+        if proposal["leaf_id"] != int(node_id) or proposal["status"] != "open":
+            raise ValueError("open proposal for this Leaf not found")
+        normalized = str(decision or "").strip().lower()
+        if normalized in {"reject", "rejected", "dismiss", "dismissed",
+                          "keep_discussing", "discuss"}:
+            agents.resolve_leaf_workspace_proposal(proposal_id, "rejected")
+            return _leaf_workspace_view(goals, agents, int(node_id))
+        if normalized not in {"approve", "approved", "accept", "accepted"}:
+            raise ValueError("decision must approve or reject")
+        payload = (dict(edited_payload) if isinstance(edited_payload, dict)
+                   else dict(proposal.get("payload") or {}))
+        completion_target = None
+        if proposal["type"] == "complete_leaf":
+            current_target = _leaf_handoff_target(goals, int(node_id))
+            presented_target = (proposal.get("payload") or {}).get("handoff_target")
+            if isinstance(presented_target, dict) and presented_target.get("leaf_id"):
+                if (not current_target or
+                        int(presented_target["leaf_id"]) != int(current_target["leaf_id"])):
+                    raise ValueError(
+                        "the next Leaf changed after this handoff was drafted; "
+                        "refresh the completion proposal before approving it")
+                completion_target = current_target
+        # Proposal resolution and every resulting semantic mutation share one
+        # SQLite transaction. A crash cannot leave an applied proposal open and
+        # accidentally apply it a second time.
+        completion_outcome_id = None
+        completion_handoff_id = None
+        completion_propagation_error = ""
+        try:
+            agents.conn.execute("BEGIN IMMEDIATE")
+            state = agents.leaf_workspace_state(node_id)
+            if proposal["type"] == "reshape":
+                agreement = dict(state.get("agreement") or {})
+                agreement["confirmed"] = False
+                agreement["completion_confirmed"] = False
+                agreement["source"] = "reopened_for_shaping"
+                working = dict(state.get("working") or {})
+                if payload.get("reason"):
+                    working["current_focus"] = str(payload["reason"])
+                agents.update_leaf_workspace(
+                    node_id, phase="shaping", agreement=agreement,
+                    working=working, commit=False)
+                now = _now()
+                agents.conn.execute(
+                    "UPDATE goal_node SET status='active',completed_at=NULL,updated_at=? "
+                    "WHERE id=? AND node_type='task'", (now, int(node_id)))
+            elif proposal["type"] == "reopen":
+                phase = "doing" if agents.leaf_workspace_plan(node_id) else "shaping"
+                agreement = dict(state.get("agreement") or {})
+                agreement["completion_confirmed"] = False
+                agents.update_leaf_workspace(
+                    node_id, phase=phase, agreement=agreement, commit=False)
+                now = _now()
+                agents.conn.execute(
+                    "UPDATE goal_node SET status='active',completed_at=NULL,updated_at=? "
+                    "WHERE id=? AND node_type='task'", (now, int(node_id)))
+            elif proposal["type"] == "agreement":
+                agreement = dict(state.get("agreement") or {})
+                for key in ("outcome", "approach", "definition_of_done", "constraints"):
+                    if key in payload:
+                        agreement[key] = payload[key]
+                agreement["confirmed"] = True
+                agreement["source"] = "approved_workspace_proposal"
+                requested_kind = str(payload.get("kind") or state["kind"])
+                agents.update_leaf_workspace(
+                    node_id, agreement=agreement,
+                    kind=(requested_kind if requested_kind in LEAF_WORKSPACE_KINDS
+                          else state["kind"]), commit=False)
+            elif proposal["type"] in {"plan", "revise_plan"}:
+                items = payload.get("items") or payload.get("steps") or []
+                agents.approve_leaf_workspace_plan(
+                    node_id, items, int(proposal_id), commit=False)
+                agents.update_leaf_workspace(node_id, phase="doing", commit=False)
+            elif proposal["type"] == "complete_item":
+                stable_id = str(payload.get("item_id") or payload.get("id") or "").strip()
+                completed_plan = agents.complete_leaf_workspace_item(
+                    node_id, stable_id, str(payload.get("resolution") or ""), commit=False)
+                if completed_plan["items"] and all(
+                        item["status"] == "completed" for item in completed_plan["items"]):
+                    agents.update_leaf_workspace(node_id, phase="reflecting", commit=False)
+            elif proposal["type"] == "complete_leaf":
+                agreement = dict(state.get("agreement") or {})
+                for key in ("result", "what_happened", "lesson", "expected_obstacle",
+                            "surprise", "helpfulness", "next_adjustment"):
+                    if key in payload:
+                        agreement[key] = payload[key]
+                agreement["completion_confirmed"] = True
+                now = _now()
+                completion_outcome_id = _insert_leaf_completion_outcome(
+                    agents, goals, node, int(proposal_id), payload, now)
+                agreement["outcome_id"] = completion_outcome_id
+                if completion_target:
+                    handoff_payload = _normalize_leaf_handoff(payload.get("handoff"))
+                    if not handoff_payload["output_summary"]:
+                        handoff_payload["output_summary"] = str(payload.get("result") or "").strip()
+                    if not handoff_payload["working_material"]:
+                        handoff_payload["working_material"] = str(
+                            payload.get("what_happened") or payload.get("result") or "").strip()
+                    if not handoff_payload["suggested_start"]:
+                        handoff_payload["suggested_start"] = (
+                            "Begin " + str(completion_target.get("title") or "the next Leaf") +
+                            " using this approved result.")
+                    handoff = agents.add_leaf_handoff(
+                        int(node_id), int(completion_target["leaf_id"]),
+                        int(completion_target["project_id"]), int(completion_outcome_id),
+                        handoff_payload, commit=False)
+                    completion_handoff_id = int(handoff["id"])
+                    agreement["handoff_id"] = completion_handoff_id
+                    agreement["handoff_destination_id"] = int(completion_target["leaf_id"])
+                    agents.conn.execute(
+                        "UPDATE goal_agent_state SET dirty=1,dirty_reason=?,deferred=0,updated_at=? "
+                        "WHERE node_id=?",
+                        ("approved incoming Leaf handoff", now,
+                         int(completion_target["leaf_id"])))
+                agents.update_leaf_workspace(
+                    node_id, phase="reflecting", agreement=agreement, commit=False)
+                agents.conn.execute(
+                    "UPDATE goal_node SET status='completed',completed_at=?,updated_at=? "
+                    "WHERE id=? AND node_type='task'", (now, now, int(node_id)))
+            agents.resolve_leaf_workspace_proposal(
+                proposal_id, "approved", commit=False)
+            current = int(node_id)
+            while current:
+                agents.conn.execute(
+                    "UPDATE goal_agent_state SET dirty=1,dirty_reason=?,deferred=0,updated_at=? "
+                    "WHERE node_id=?",
+                    ("approved Leaf Workspace change", _now(), current))
+                parent = agents.conn.execute(
+                    "SELECT parent_id FROM goal_node WHERE id=?", (current,)).fetchone()
+                current = int(parent["parent_id"]) if parent and parent["parent_id"] else 0
+            agents.conn.commit()
+        except Exception:
+            agents.conn.rollback()
+            raise
+        if completion_outcome_id is not None:
+            try:
+                from .goals import propagate_experiment_outcome
+                propagate_experiment_outcome(config, int(completion_outcome_id))
+            except Exception as error:
+                completion_propagation_error = f"{type(error).__name__}: {error}"
+                log_diag(
+                    "goal-ai",
+                    f"Leaf completion learning propagation failed node_id={node_id} "
+                    f"outcome_id={completion_outcome_id} error={type(error).__name__}")
+        view = _leaf_workspace_view(goals, agents, int(node_id))
+        if completion_outcome_id is not None:
+            view["completion_outcome_id"] = int(completion_outcome_id)
+        if completion_handoff_id is not None:
+            view["completion_handoff"] = agents.leaf_handoff(int(completion_handoff_id))
+        if completion_propagation_error:
+            view["learning_sync_warning"] = completion_propagation_error
+        return view
+    finally:
+        agents.close(); goals.close()
+
+
+def reopen_leaf_workspace(config, node_id: int) -> dict:
+    """Explicitly reopen a completed Leaf while retaining prior outcome history."""
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node.get("type") != "task" or node.get("status") != "completed":
+            raise ValueError("a completed Leaf is required")
+        agents.ensure_leaf_workspace(node)
+        proposal = agents.add_leaf_workspace_proposal(
+            int(node_id), "reopen", {"reason": "User reopened this completed Leaf."},
+            "Return this preserved Leaf to the active map.")
+    finally:
+        agents.close(); goals.close()
+    return decide_leaf_workspace_proposal(
+        config, int(node_id), int(proposal["id"]), "approve")
+
+
+def clear_leaf_workspace_messages(config, node_id: int) -> dict:
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node.get("type") != "task":
+            raise ValueError("Leaf Workspace requires a Leaf")
+        agents.ensure_leaf_workspace(node)
+        try:
+            agents.conn.execute("BEGIN IMMEDIATE")
+            agents.clear_leaf_workspace_messages(node_id, commit=False)
+            # Pending proposals are presented inside messages. Once those
+            # messages are cleared, resolve the proposals so no hidden action
+            # can remain approvable through a stale client.
+            agents.conn.execute(
+                "UPDATE goal_leaf_workspace_proposal SET status='rejected',resolved_at=? "
+                "WHERE node_id=? AND status='open'", (_now(), int(node_id)))
+            agents.update_leaf_workspace(
+                node_id, working={"current_focus": "",
+                                  "selected_suggestion_ids": [],
+                                  "conversation_summary": ""},
+                commit=False)
+            agents.conn.commit()
+        except Exception:
+            agents.conn.rollback()
+            raise
+        return _leaf_workspace_view(goals, agents, int(node_id))
+    finally:
+        agents.close(); goals.close()
+
+
 ROLE_GUIDANCE = {
     "task": "You are a Leaf agent. Assess execution, blockers, evidence needs, and the immediate next action.",
     "subgoal": "You are a Branch agent. Coordinate Leaves and nested Branches without leaving this branch.",
@@ -1853,6 +3225,110 @@ Return strict JSON: {"reply":str,"proposals":[{"type":str,
 "source_text":str}}.
 """
 
+LEAF_HANDOFF_SYSTEM = """You prepare one compact, editable handoff from a completed
+Leaf to the next Leaf in the same Project. The destination receives this handoff,
+not the source transcript. Use only explicit facts in the supplied completion,
+approved agreement, plan resolutions, and bounded source conversation. Preserve
+concrete candidate lists, decisions, artifact text, evidence references, and user
+constraints that the next Leaf actually needs. Do not infer personality traits,
+invent evidence, assign new goals, or repeat private conversational framing.
+
+Return JSON only:
+{"output_summary":str,"working_material":str,"constraints":[str],
+ "unresolved_questions":str,"suggested_start":str}
+`working_material` contains the actual usable output—not merely a description that
+an output exists. `suggested_start` tells the destination agent what to do first
+with that material. Use Korean when context.language is ko.
+"""
+
+
+LEAF_WORKSPACE_SYSTEM = """You are the adaptive conversational agent for exactly
+one Leaf: one bounded outcome or learning cycle. Use only the supplied Leaf,
+its ancestor intent, directly linked Investigations, its approved agreement and
+plan, approved incoming Leaf handoffs, and the complete supplied Leaf Workspace
+conversation. You cannot see siblings' transcripts, global memory, the main chat,
+passive capture, or screen activity.
+
+An incoming_handoffs entry is an explicit, user-approved transfer from an earlier
+Leaf in this same Project. On the first opening, acknowledge its source and begin
+from its working_material and suggested_start. Never ask the user to paste,
+reconstruct, or recall information already present in an approved handoff. Ask a
+brief correction question only when the transferred material is genuinely unclear.
+
+Conversation is primary. Respond to the user's actual latest meaning in light of
+the bounded recent transcript plus the durable agreement and conversation summary.
+If they say all, both, these, each one, elaborate, or I do
+not understand, resolve that against the conversation instead of restarting.
+Accept corrections and changes of direction. Do not force a single choice. Never
+fall back to a generic topic menu, repeat an earlier slate, or pretend uncertainty
+is a choice. Do not impose minute-counts, timers, blank-document exercises, or
+memory dumps unless the user requested timing or timing is intrinsic to the task.
+
+On the first opening in shaping, briefly state what you understand the Leaf is
+trying to accomplish. Then proactively offer 3-5 concrete, context-specific
+candidate directions or outputs and ask how they feel. Explicitly invite the user
+to correct, combine, reject, or replace them. Do the first useful ideation pass;
+do not make the user generate the slate. Suggestions may be rendered as cards,
+but your natural message must still make the opening understandable without them.
+
+When the Leaf depends on remembering the user's experience, act as a curious
+reconstruction partner rather than assigning recall as homework. First provide
+specific recognition cues and plausible examples. Then ask for only the smallest
+truthful foothold they can easily supply: a rough task, tool, input, output,
+annoyance, fragment, or unfinished attempt. Say plainly that they do not need to
+remember or organize everything—their first fragment is enough and you will carry
+the heavier work of prompting, expanding, comparing, and organizing from there.
+After each fragment, briefly reflect what it establishes, offer likely adjacent
+possibilities as hypotheses rather than facts, and ask one focused recognition
+question that helps recover the next detail. Prefer "Does this resemble X, Y, or
+something else?" over "What else have you done?" Never require a complete inventory
+before helping. Do not overwhelm the user with a questionnaire: one main question
+per turn, supported by concise cue bullets or selectable examples, is the default.
+
+The natural message must stand on its own. Optional suggestions reduce effort but
+do not replace explanation. Suggestions must be specific to the current exchange.
+Use **bold** sparingly for the current focus, important distinctions, and the one
+main question so a user can scan the conversation without turning every line bold.
+Set selection_mode to "multiple" when several suggestions can truthfully apply at
+once, such as experience, symptoms, interests, examples, or memory cues. Set it to
+"single" only for mutually exclusive directions or one-choice decisions. Never
+force a multi-answer recognition question into a series of separate submissions.
+Nothing semantic changes during ordinary chat. Agreement, plans, plan revisions,
+item completion, Leaf completion, reshaping, and reopening must be returned as
+proposals and remain
+pending until the user explicitly approves them. Never claim a proposal was
+applied. A working_patch may update only current_focus,
+selected_suggestion_ids, or a short conversation_summary. Decisions,
+constraints, blockers, agreement, plan, and completion require an explicit
+proposal rather than silent model-written scratch.
+
+For revise_plan proposals, reuse the current approved item `id` for every
+unchanged or reworded item. Generate no replacement ID merely because wording
+or order changes. For complete_item, reference the exact approved item ID.
+For complete_leaf, always draft both payload.result and payload.lesson from facts
+the user explicitly confirmed in this Leaf conversation. result states what
+actually happened; lesson states the reusable learning or changed understanding.
+These are editable suggestions for user approval, so never leave either blank and
+never invent evidence merely to fill them. Also prefill payload.what_happened,
+and include payload.expected_obstacle, payload.surprise, payload.helpfulness (0-10),
+and payload.next_adjustment when the conversation supports them. This one review
+replaces a second post-completion questionnaire; omit optional fields rather than
+asking the user to repeat information already present in the conversation.
+When the completion has a next Leaf, a stronger completion pass will add an editable
+payload.handoff and authoritative payload.handoff_target before presentation. Do not
+choose a destination or claim that a handoff was saved yourself.
+
+Return JSON when possible:
+{"message":str,
+ "suggestions":[{"id":str?,"label":str,"description":str}],
+ "selection_mode":"single"|"multiple",
+ "working_patch":object,
+ "proposal":null|{"type":"agreement"|"plan"|"revise_plan"|"complete_item"|"complete_leaf"|"reshape"|"reopen",
+   "payload":object,"rationale":str}}
+The message is mandatory. Optional fields may be omitted. Use Korean when
+context.language is ko.
+"""
+
 STEP_COACH_SYSTEM = """You are the execution coach for exactly one Leaf step.
 Use only the supplied Leaf, its ancestor intent, its directly linked Investigation
 context, and this Leaf Coach conversation. You have no access to siblings, global
@@ -1864,15 +3340,33 @@ that the focused step is complete only when the user explicitly says they finish
 
 Be unusually practical and hand-holding without being patronizing. Do the ideation,
 comparison, and drafting work before asking the user to remember or invent options.
+Use a warm, compact voice: acknowledge the user's choice in one short sentence,
+put the useful options in examples, and ask one short reaction question. Do not
+repeat or paraphrase the full stored step. Default to fewer than 70 words and expand
+only when the user asks for detail. The examples field is rendered as a clickable
+bullet list, so do not repeat that list in reply.
 For brainstorming, research framing, administrative work, and other generative steps,
 lead with 3-5 plausible, concrete suggestions based on common real-world patterns.
 State that they are examples rather than known user facts. Then ask at most one short
 question about which suggestions fit, what feels wrong, or what should change.
+When the work involves recalling personal experience, ask only for the easiest first
+fragment and explicitly tell the user that you will do the follow-up recall prompts,
+expansion, comparison, and organization. Use recognition cues rather than broad
+requests such as "list everything you remember." Treat every suggested memory as a
+hypothesis until the user confirms it.
 
 In MODE: opening, provide the useful slate first. Put 2-4 concise selectable responses
 in examples so the user can react with one click. Do not assign preparatory journaling,
 ask them to inventory their memory, open a blank document, or gather files before you
 have supplied useful candidate answers yourself. next_action may be empty on opening.
+Begin by plainly saying what this Leaf is trying to accomplish, then say "Here are my
+suggestions" and supply the useful options. End by asking how those suggestions feel
+and explicitly invite the user to reply with what feels wrong so you can adapt. Never
+show an internal drafting instruction, hidden prompt, or implementation terminology.
+The focused step may contain legacy phrases such as "10 minutes," "open a blank doc,"
+or "memory dump." Those are old implementation wording, not a user-requested deadline
+or required method. Never repeat or follow them unless the user explicitly requests
+that exact timebox or method in their latest message.
 
 In MODE: conversation, respond to redirection by discarding the old framing and
 offering a revised slate immediately. Give a physical next action only after the user
@@ -1880,6 +3374,28 @@ has selected or approved a direction. Keep 2-4 suggested responses available whe
 they reduce user effort. Reflection should evaluate AI-generated options, not replace
 the AI's work. Avoid arbitrary timers and phrases such as "take 10 minutes" or "stop
 after 5 minutes" unless the user requested a timebox or a real deadline requires one.
+When the user selects a category, respond in the pattern "Great—[category]. Here are
+a few options." Put the concrete options in examples and ask "How do these options
+sound?" Do not give homework yet.
+
+Conversation intent overrides the default brevity:
+- Explore: if the user asks for more information, examples, or an explanation, answer
+  that request directly and thoroughly enough to be useful. Explain every option they
+  referenced. Do not reset to the opening slate or merely ask them to choose again.
+  Resolve phrases such as "these," "each one," "those options," and "the second one"
+  against the most recent assistant option set in the conversation.
+- Compare: compare the active options with concise tradeoffs and make a recommendation
+  when the bounded context supports one.
+- Multi-select: if the user says all, both, or several options fit, accept that as new
+  information. Do not force a single choice and do not repeat the original menu. Move
+  up one level and help decide how to bundle, position, sequence, or test the combined
+  capability. Preserve the selected options in the working interpretation.
+- Redirect: acknowledge what was wrong and immediately offer a genuinely new slate.
+- Choose: confirm the selected direction briefly, then offer narrower concrete options.
+- Execute: once a direction is approved, give one useful next action and answer follow-ups.
+- Complete: only after an explicit completion statement, ask permission to mark it done.
+Maintain the current conversational thread across all intents. Start over only when the
+user explicitly uses the Start over control or asks to restart.
 
 When the conversation reveals that the stored How to do this steps are wrong, rigid,
 duplicative, or poorly sequenced, return a complete step_revision with 2-7 replacement
@@ -2050,6 +3566,126 @@ def parse_chat(text: str, node_id: int) -> ChatResult | None:
     return ChatResult(reply, _parse_proposals(data.get("proposals"), node_id), candidate)
 
 
+def parse_leaf_handoff(value) -> dict | None:
+    if isinstance(value, dict):
+        data = value
+    else:
+        data = _extract_json(str(value or ""))
+    if not isinstance(data, dict):
+        return None
+    handoff = _normalize_leaf_handoff(data)
+    if not handoff["output_summary"] or not handoff["working_material"]:
+        return None
+    return handoff
+
+
+def parse_leaf_workspace_reply(value) -> LeafWorkspaceReply | None:
+    """Parse reply-first output without coupling prose to optional metadata.
+
+    Bare prose is a complete valid result. If JSON extras are malformed, only
+    those extras are dropped; a readable leading message or JSON message field
+    survives. This is intentionally more tolerant than the legacy step coach.
+    """
+    data: dict = {}
+    prose = ""
+    if isinstance(value, dict):
+        data = dict(value)
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, re.I | re.S)
+        candidate = fenced.group(1).strip() if fenced else raw
+        try:
+            decoded = json.loads(candidate)
+            if isinstance(decoded, dict):
+                data = decoded
+            elif isinstance(decoded, str):
+                prose = decoded.strip()
+        except json.JSONDecodeError:
+            extracted = _extract_json(candidate)
+            if extracted:
+                data = extracted
+                prefix = candidate[:candidate.find("{")].strip(" \n:-")
+                prose = prefix
+            else:
+                # Preserve natural prose before a broken optional JSON tail.
+                brace = candidate.find("{")
+                looks_like_optional_tail = bool(
+                    brace > 0 and re.search(
+                        r'"(?:suggestions|proposal|working_patch)"\s*:',
+                        candidate[brace:], re.I))
+                prefix = (candidate[:brace].strip(" \n:-")
+                          if looks_like_optional_tail else "")
+                if prefix:
+                    prose = prefix
+                elif not candidate.lstrip().startswith(("{", "[")):
+                    prose = candidate
+                else:
+                    # Even truncated JSON often contains a fully usable message.
+                    match = re.search(
+                        r'"(?:message|reply|content)"\s*:\s*"((?:\\.|[^"\\])*)"',
+                        candidate, re.S)
+                    if match:
+                        try:
+                            prose = json.loads('"' + match.group(1) + '"').strip()
+                        except json.JSONDecodeError:
+                            prose = match.group(1).strip()
+
+    message = str(data.get("message") or data.get("reply") or
+                  data.get("content") or prose).strip()
+    if not message:
+        return None
+
+    suggestions = []
+    seen_ids = set()
+    raw_suggestions = data.get("suggestions")
+    if isinstance(raw_suggestions, list):
+        for raw in raw_suggestions[:8]:
+            if isinstance(raw, dict):
+                label = str(raw.get("label") or raw.get("text") or "").strip()
+                description = str(raw.get("description") or "").strip()
+            else:
+                label, description = str(raw or "").strip(), ""
+            if not label:
+                continue
+            suggestion_id = _stable_suggestion_id(label, description)
+            if suggestion_id in seen_ids:
+                continue
+            seen_ids.add(suggestion_id)
+            suggestions.append({"id": suggestion_id, "label": label,
+                                "description": description})
+
+    proposal = None
+    raw_proposal = data.get("proposal")
+    if isinstance(raw_proposal, dict):
+        proposal_type = str(raw_proposal.get("type") or "").strip()
+        payload = raw_proposal.get("payload")
+        if proposal_type in LEAF_WORKSPACE_PROPOSAL_TYPES and isinstance(payload, dict):
+            clean_payload = dict(payload)
+            rationale = str(raw_proposal.get("rationale") or "").strip()
+            if proposal_type == "complete_leaf":
+                if not str(clean_payload.get("result") or "").strip():
+                    clean_payload["result"] = message
+                if not str(clean_payload.get("lesson") or "").strip():
+                    clean_payload["lesson"] = rationale or message
+            proposal = {"type": proposal_type, "payload": clean_payload,
+                        "rationale": rationale}
+
+    working_patch = {}
+    raw_patch = data.get("working_patch")
+    if isinstance(raw_patch, dict):
+        for key in ("current_focus", "selected_suggestion_ids",
+                    "conversation_summary"):
+            if key in raw_patch:
+                working_patch[key] = raw_patch[key]
+    selection_mode = str(data.get("selection_mode") or "single").strip().lower()
+    if selection_mode not in {"single", "multiple"}:
+        selection_mode = "single"
+    return LeafWorkspaceReply(message, suggestions, proposal, working_patch,
+                              selection_mode)
+
+
 def parse_leaf_step_draft(text: str, allowed_peer_ids: set[int]) -> LeafStepDraft | None:
     data = _extract_json(text)
     input_contract = str(data.get("input_contract") or "").strip()
@@ -2084,15 +3720,26 @@ def parse_leaf_step_draft(text: str, allowed_peer_ids: set[int]) -> LeafStepDraf
 
 def parse_step_coach(text: str, *, opening: bool = False) -> StepCoachReply | None:
     data = _extract_json(text)
-    reply = str(data.get("reply") or "").strip()
-    next_action = str(data.get("next_action") or "").strip()
+    reply = str(data.get("reply") or data.get("response") or
+                data.get("guidance") or "").strip()
+    next_action = str(data.get("next_action") or
+                      data.get("smallest_next_action") or "").strip()
     if not reply:
         return None
-    question = str(data.get("question") or "").strip()
-    examples = [str(item).strip() for item in (data.get("examples") or [])
+    question = str(data.get("question") or data.get("follow_up_question") or "").strip()
+    example_values = (data.get("examples") or data.get("suggestions") or
+                      data.get("options") or data.get("suggested_responses") or [])
+    if isinstance(example_values, str):
+        example_values = [example_values]
+    examples = [str(item).strip() for item in example_values
                 if str(item).strip()][:4]
-    if opening and (not question or next_action or len(examples) < 2):
+    if opening and (not question or len(examples) < 2):
         return None
+    # An opening may contain a useful next action even when the user has not
+    # selected a direction yet. Keep the suggestions, but do not present that
+    # premature action as an instruction.
+    if opening:
+        next_action = ""
     update = data.get("working_update") if isinstance(data.get("working_update"), dict) else {}
     status = str(update.get("status") or "working").strip().lower()
     if status not in {"working", "blocked"}:
@@ -2111,6 +3758,249 @@ def parse_step_coach(text: str, *, opening: bool = False) -> StepCoachReply | No
         decision=str(update.get("decision") or "").strip(), status=status,
         step_completed=data.get("step_completed") is True,
         step_revision=revision)
+
+
+def _latest_coach_user_text(messages: list[dict] | None) -> str:
+    for message in reversed(messages or []):
+        if message.get("role") == "user":
+            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+            return str(payload.get("text") or message.get("content") or "").strip()
+    return ""
+
+
+def _coach_detail_requested(text: str) -> bool:
+    return bool(re.search(
+        r"(?i)\b(?:more (?:info|information|detail|details)|tell me more|explain|"
+        r"elaborate|describe|clarify|unpack|walk me through|what (?:it|they|each) "
+        r"look(?:s)? like|break (?:it|them|these) down|each one|compare|comparison|"
+        r"pros? and cons?|how (?:does|do|would|could)|what does|example|examples|"
+        r"자세히|설명|비교|각각)\b",
+        str(text or "")))
+
+
+def _coach_multi_select(text: str) -> bool:
+    value = str(text or "").strip().lower()
+    if re.search(r"\b(?:not|isn'?t|aren'?t|can'?t|cannot)\s+all\b", value):
+        return False
+    return bool(re.search(
+        r"(?:\ball of (?:them|these|those)\b|\b(?:i|we) (?:can|could|would) "
+        r"(?:do|offer|use|handle) (?:all|both|several)\b|\bboth (?:of them|work|fit)\b|"
+        r"\bevery one\b|\beach of them\b|\bmore than one\b|\bseveral of them\b|"
+        r"(?:모두|전부|둘 다|다 할 수|여러 개))",
+        value))
+
+
+def _recent_coach_options(messages: list[dict] | None) -> list[str]:
+    for message in reversed(messages or []):
+        if message.get("role") != "assistant":
+            continue
+        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+        values = payload.get("examples") if isinstance(payload.get("examples"), list) else []
+        options = [str(value).strip() for value in values if str(value).strip()][:4]
+        if options:
+            return options
+    return []
+
+
+def _coach_option_explanation(option: str, *, korean: bool) -> str:
+    value = str(option or "").strip()
+    key = value.lower()
+    if korean:
+        mappings = [
+            (("포괄", "broad"), "한 개의 넓은 서비스로 소개하고 고객마다 가장 필요한 자동화부터 고르는 방식이에요. 유연하지만 첫인상이 덜 구체적일 수 있어요."),
+            (("대표 전문", "추가 옵션", "add-on"), "가장 설명하기 쉬운 한 분야를 대표 서비스로 내세우고 나머지를 추가 옵션으로 제공해요. 메시지는 선명하면서 역량은 그대로 유지됩니다."),
+            (("별도 서비스", "separate"), "업무 유형마다 별도 소개 페이지나 상품을 만들어요. 검색과 기대치는 명확하지만 관리할 항목이 늘어납니다."),
+            (("정기", "패키지", "recurring"), "여러 자동화를 한 번 만들고 끝내지 않고 월 단위로 관리·개선하는 서비스예요. 신뢰가 생긴 고객에게 적합합니다."),
+            (("이메일 첨부",), "정해진 이메일에서 파일이나 값을 읽어 스프레드시트 행으로 자동 저장합니다."),
+            (("양식 응답", "crm"), "새 양식 제출을 고객 기록으로 만들고 기존 기록이면 필요한 필드를 업데이트합니다."),
+            (("pdf", "청구서"), "청구서의 공급자, 날짜, 금액을 추출해 비용 관리표에 넣고 확인이 필요한 항목을 표시합니다."),
+            (("동기화",), "두 도구에서 같은 정보를 반복 수정하지 않도록 기준 시스템의 변경을 다른 쪽에 반영합니다."),
+        ]
+        fallback = "이 선택지를 하나의 독립된 서비스로 보고 입력, 결과물, 대상 고객을 구체화하는 방식이에요."
+    else:
+        mappings = [
+            (("broad operations", "broad service"), "One flexible listing promises to automate repetitive operations, then scopes the exact workflow with each client. It preserves breadth but gives prospects a less specific first impression."),
+            (("specialty", "add-on"), "Market one easy-to-understand specialty as the front door, then offer the other capabilities as add-ons. The pitch stays clear without hiding what else you can do."),
+            (("separate listing", "separate service"), "Publish a focused listing for each workflow type. Each is easier to understand and search for, but you have more listings and messages to maintain."),
+            (("recurring operations", "recurring package"), "Bundle several workflows into an ongoing service that monitors and improves automations over time. It suits established clients better than a first small project."),
+            (("email attachments",), "Watch a defined inbox, extract files or fields from matching messages, and add them to the correct spreadsheet rows."),
+            (("form responses", "crm records"), "Turn each form submission into a new CRM contact or update an existing record using a matching field such as email."),
+            (("pdf invoices", "expense tracker"), "Extract vendor, date, and amount from invoices, write them into an expense tracker, and flag uncertain fields for review."),
+            (("matching fields synced", "fields synced"), "Choose one system as the source of truth and copy approved field changes into the other system automatically."),
+            (("repeated data entry",), "Move predictable information between emails, forms, spreadsheets, and business tools without retyping it."),
+            (("recurring reports",), "Collect the same source data on a schedule and produce a consistent summary or report."),
+            (("inbox sorting",), "Classify incoming messages, route them, extract key details, or prepare drafts for common replies."),
+            (("scheduling", "reminders"), "Coordinate bookings, confirmations, reminders, changes, and follow-up tasks across calendars or forms."),
+        ]
+        fallback = "Treat this as a distinct offer, then define its input, output, ideal client, and main tradeoff."
+    for needles, explanation in mappings:
+        if any(needle in key for needle in needles):
+            return explanation
+    return fallback
+
+
+def _coach_explain_active_options(options: list[str], *, korean: bool) -> StepCoachReply:
+    lines = [f"• {option} — {_coach_option_explanation(option, korean=korean)}"
+             for option in options[:4]]
+    if korean:
+        return StepCoachReply(
+            "각 선택지는 실제로 이렇게 보여요:\n\n" + "\n\n".join(lines),
+            question="이 중 어떤 구조가 가장 자연스럽게 느껴지나요?", examples=options[:4])
+    return StepCoachReply(
+        "Here’s what each option would look like:\n\n" + "\n\n".join(lines),
+        question="Which structure feels most natural to you?", examples=options[:4])
+
+
+def _coach_suggestion_set(context: dict, messages: list[dict] | None,
+                          *, korean: bool) -> tuple[str, list[str]]:
+    leaf = context.get("leaf") or {}
+    focused = context.get("focused_step") or {}
+    latest = _latest_coach_user_text(messages)
+    haystack = " ".join(str(value or "") for value in (
+        latest, leaf.get("title"), leaf.get("description"), focused.get("text"))).lower()
+
+    if korean:
+        if _coach_multi_select(latest):
+            return "여러 역량", ["하나의 포괄적인 운영 자동화 서비스로 묶기",
+                                "대표 전문 분야 하나와 추가 옵션으로 구성하기",
+                                "업무 유형별로 별도 서비스를 만들기",
+                                "반복 운영 패키지로 묶어 정기적으로 제공하기"]
+        if any(word in haystack for word in ("데이터 입력", "자료 입력", "스프레드시트", "data entry")):
+            return "데이터 입력", ["이메일 첨부 파일을 스프레드시트에 입력",
+                                  "양식 응답을 CRM에 등록", "PDF 청구서를 비용표로 추출",
+                                  "두 도구 사이의 중복 필드 동기화"]
+        if any(word in haystack for word in ("보고서", "리포트", "report")):
+            return "정기 보고서", ["주간 KPI 보고서 자동 작성", "프로젝트 현황 요약 생성",
+                                  "비용·청구 요약 만들기", "정기 CSV 내보내기와 정리"]
+        if any(word in haystack for word in ("이메일", "메일", "inbox", "email")):
+            return "이메일 업무", ["메일 자동 분류와 전달", "반복 문의 답장 초안",
+                                  "메일에서 고객 정보 추출", "후속 답장이 필요한 메일 표시"]
+        if any(word in haystack for word in ("일정", "예약", "알림", "schedule", "reminder")):
+            return "일정 관리", ["예약 요청 자동 정리", "회의 전후 알림 보내기",
+                                "후속 일정 자동 생성", "일정 변경 안내 자동화"]
+        if any(word in haystack for word in ("자동화", "관리", "업워크", "반복", "automat", "admin")):
+            return "자동화", ["반복 데이터 입력", "정기 보고서 만들기",
+                              "이메일 분류와 답장 초안", "일정 조율과 알림"]
+        if any(word in haystack for word in ("선택", "평가", "비교", "결정")):
+            return "후보 선택", ["세 가지 기준으로 후보 비교", "가장 실행하기 쉬운 선택지부터 검증",
+                                "사용자 가치가 가장 큰 선택지 고르기", "두 후보를 작은 테스트로 비교"]
+        return "이 방향", ["일반적인 예시부터 조정하기", "세 가지 구체적인 선택지 비교하기",
+                           "가장 작은 유용한 버전 만들기", "현재 방향을 새 제안으로 바꾸기"]
+
+    if _coach_multi_select(latest):
+        return "all of them", ["Offer one broad operations-automation service",
+                               "Lead with one specialty and offer the others as add-ons",
+                               "Create a separate listing for each workflow type",
+                               "Bundle them into a recurring operations package"]
+    if any(word in haystack for word in ("data entry", "spreadsheet", "copying data", "entering data")):
+        return "data entry", ["Email attachments → spreadsheet",
+                              "Form responses → CRM records",
+                              "PDF invoices → expense tracker",
+                              "Keep matching fields synced across two tools"]
+    if any(word in haystack for word in ("report", "reporting", "kpi")):
+        return "recurring reports", ["Generate a weekly KPI report",
+                                     "Turn project data into a status summary",
+                                     "Create an invoice or expense summary",
+                                     "Export and clean a scheduled CSV"]
+    if any(word in haystack for word in ("inbox", "email", "reply draft")):
+        return "email work", ["Classify and route incoming email",
+                              "Draft replies to repeated questions",
+                              "Extract customer details from email",
+                              "Flag messages that need follow-up"]
+    if any(word in haystack for word in ("schedule", "scheduling", "reminder", "booking")):
+        return "scheduling", ["Organize booking requests", "Send meeting reminders",
+                              "Create follow-up tasks", "Handle rescheduling notices"]
+    if any(word in haystack for word in ("automat", "admin", "upwork", "repetitive")):
+        return "automation", ["Repeated data entry", "Recurring reports",
+                              "Inbox sorting and reply drafts", "Scheduling and reminders"]
+    if any(word in haystack for word in ("choose", "select", "evaluate", "compare", "decide")):
+        return "the shortlist", ["Compare candidates on three criteria",
+                                 "Validate the easiest option first",
+                                 "Choose the highest-value option",
+                                 "Run a small test between two finalists"]
+    return "this direction", ["Adapt a common example", "Compare three concrete options",
+                              "Make the smallest useful version", "Replace the current direction"]
+
+
+def _fallback_step_coach_reply(context: dict, messages: list[dict] | None = None,
+                               *, opening: bool) -> StepCoachReply:
+    """Return a short, bounded suggestion slate when model output is unsuitable."""
+    leaf = context.get("leaf") or {}
+    korean = context.get("language") == "ko"
+    latest = _latest_coach_user_text(messages)
+    active_options = _recent_coach_options(messages)
+    if not opening and _coach_detail_requested(latest) and active_options:
+        return _coach_explain_active_options(active_options, korean=korean)
+    topic, examples = _coach_suggestion_set(context, messages, korean=korean)
+    multi_select = _coach_multi_select(latest)
+    if korean:
+        if opening:
+            return StepCoachReply(
+                f"‘{leaf.get('title') or topic}’에 맞는 방향을 골라볼게요.",
+                question="이 선택지들은 어떻게 느껴지나요?", examples=examples)
+        return StepCoachReply(
+            ("좋아요—모두 제공할 수 있군요. 이제 어떻게 구성할지 정해볼게요."
+             if multi_select else f"좋아요—{topic}. 몇 가지 선택지를 준비했어요."),
+            question="이 선택지들은 어떻게 느껴지나요?", examples=examples,
+            decision=("사용자는 제시된 모든 범주를 제공할 수 있다고 말했습니다."
+                      if multi_select else ""))
+    if opening:
+        return StepCoachReply(
+            f"Let’s choose a direction for {leaf.get('title') or topic}.",
+            question="How do these options sound?", examples=examples)
+    return StepCoachReply(
+        ("Great—you can offer all of them. Let’s decide how to package them."
+         if multi_select else f"Great—{topic}. Here are a few options."),
+        question="How do these options sound?", examples=examples,
+        decision=("The user said they can offer all of the presented categories."
+                  if multi_select else ""))
+
+
+def _normalize_step_coach_voice(reply: StepCoachReply, context: dict,
+                                messages: list[dict], *, opening: bool) -> StepCoachReply:
+    """Keep legacy implementation wording out of the conversational voice."""
+    latest = _latest_coach_user_text(messages).lower()
+    user_requested_time = bool(re.search(
+        r"\b(?:timer|timebox|deadline|\d+\s*(?:min(?:ute)?s?|hours?|시간|분))\b", latest))
+    visible = " ".join((reply.reply, reply.next_action, reply.question, *reply.examples))
+    timer_mention = bool(re.search(
+        r"(?i)\b\d+\s*(?:-|–|—)?\s*(?:min(?:ute)?s?|hours?)\b", visible))
+    legacy_method = bool(re.search(
+        r"(?i)\b(?:open (?:a )?blank (?:doc|document)|memory dump|inventory (?:your|everything)|"
+        r"spend \d+\s*(?:min(?:ute)?s?|hours?)|stop (?:at|after) \d+\s*(?:min(?:ute)?s?|hours?))\b",
+        visible))
+    # Concision is a prompt-level default, not a conversation-destroying hard cap.
+    # Only an opening is normalized for excessive length; follow-up answers remain
+    # intact unless they leak a forbidden legacy method or unrequested timer.
+    too_long = opening and len(reply.reply.split()) > 70
+    if not too_long and (not legacy_method and not timer_mention or user_requested_time):
+        return reply
+
+    if not opening and (legacy_method or timer_mention) and not user_requested_time:
+        forbidden = re.compile(
+            r"(?i)\b(?:open (?:a )?blank (?:doc|document)|memory dump|inventory (?:your|everything)|"
+            r"spend \d+\s*(?:min(?:ute)?s?|hours?)|stop (?:at|after) \d+\s*(?:min(?:ute)?s?|hours?)|"
+            r"\d+\s*(?:-|–|—)?\s*(?:min(?:ute)?s?|hours?))\b")
+        parts = re.split(r"(?<=[.!?])\s+|\n{2,}", reply.reply)
+        cleaned_reply = " ".join(part.strip() for part in parts
+                                 if part.strip() and not forbidden.search(part)).strip()
+        cleaned_question = "" if forbidden.search(reply.question) else reply.question
+        cleaned_examples = [item for item in reply.examples if not forbidden.search(item)]
+        if cleaned_reply:
+            return StepCoachReply(
+                reply=cleaned_reply,
+                next_action=("" if forbidden.search(reply.next_action) else reply.next_action),
+                question=cleaned_question, examples=cleaned_examples,
+                blocker=reply.blocker, constraint=reply.constraint,
+                decision=reply.decision, status=reply.status,
+                step_completed=reply.step_completed, step_revision=reply.step_revision)
+
+    concise = _fallback_step_coach_reply(context, messages, opening=opening)
+    return StepCoachReply(
+        reply=concise.reply, next_action="", question=concise.question,
+        examples=concise.examples, blocker=reply.blocker, constraint=reply.constraint,
+        decision=reply.decision, status=reply.status,
+        step_completed=reply.step_completed, step_revision=reply.step_revision)
 
 
 def parse_harvest(text: str, *, allow_routes: bool) -> HarvestDraft | None:
@@ -2215,30 +4105,101 @@ class StubGoalAgentModel:
             "Do not repeat selection or publishing owned by another Leaf.")
 
     def coach(self, context: dict, messages: list[dict], *, opening: bool = False) -> StepCoachReply:
-        step = context["focused_step"]["text"]
+        return _fallback_step_coach_reply(context, messages, opening=opening)
+
+    def leaf_workspace(self, context: dict, messages: list[dict], *, event=None,
+                       opening: bool = False) -> LeafWorkspaceReply:
+        leaf = context.get("leaf") or {}
+        workspace = context.get("workspace") or {}
+        agreement = workspace.get("agreement") or {}
+        title = str(leaf.get("title") or "this Leaf")
+        outcome = str(agreement.get("outcome") or title)
+        outcome_summary = next((line.strip() for line in outcome.splitlines()
+                                if line.strip()), title)[:220]
+        incoming = (context.get("incoming_handoffs") or [])[-1:]
+        if opening and incoming:
+            handoff = incoming[0]
+            payload = handoff.get("payload") or {}
+            source = str(handoff.get("source_title") or "the previous Leaf")
+            material = str(payload.get("working_material") or
+                           payload.get("output_summary") or "").strip()
+            start = str(payload.get("suggested_start") or "").strip()
+            if context.get("language") == "ko":
+                message = (f"‘{source}’에서 승인된 인계를 받았어요.\n\n{material}\n\n"
+                           f"{start}\n\n이 내용에서 고칠 점이 있나요, 아니면 바로 이어갈까요?")
+            else:
+                message = (f"I received the approved handoff from {source}.\n\n{material}\n\n"
+                           f"{start}\n\nIs anything here wrong, or should we continue from it?")
+            return LeafWorkspaceReply(message)
+        if re.search(r"(?i)\b(?:\d+\s*(?:min(?:ute)?s?|hours?)|blank doc|memory dump)\b",
+                     outcome_summary):
+            outcome_summary = title
         if context.get("language") == "ko":
             if opening:
-                return StepCoachReply(
-                    "먼저 흔히 자동화 가치가 큰 관리 업무 후보를 좁혀볼게요. 반복 입력, 정기 보고서, 이메일 분류, 일정 조율처럼 규칙이 분명하고 자주 반복되는 업무부터 보는 것이 좋아요.",
-                    question="이 중 실제로 가장 가까운 방향은 무엇인가요?",
-                    examples=["반복 데이터 입력", "정기 보고서 만들기", "이메일 분류와 답장 초안", "일정 조율과 알림"])
-            return StepCoachReply(
-                "이 단계에서 지금 막히는 지점을 하나만 확인해볼게요.",
-                "이 단계에 필요한 첫 번째 빈 문서나 화면을 여세요.",
-                "지금 가장 어려운 것은 시작, 선택, 작성 중 무엇인가요?",
-                ["어디서 시작할지 모르겠어요", "선택지가 너무 많아요", "첫 문장을 쓰기 어려워요"])
-        if opening:
-            return StepCoachReply(
-                "Here are the most common high-value admin candidates first: repeated data entry, recurring report generation, inbox sorting and reply drafts, and scheduling or reminder coordination. These are examples, not assumptions about your work.",
-                question="Which of these is closest to the kind of work you want to automate?",
-                examples=["Repeated data entry", "Recurring reports",
-                          "Inbox sorting and reply drafts", "Scheduling and reminders"])
-        return StepCoachReply(
-            f"Let’s make this step concrete: {step}",
-            "Open the exact document or screen needed for this step.",
-            "Which part is stopping you right now: starting, choosing, or writing?",
-            ["I do not know where to start", "There are too many choices",
-             "I need an example of the first sentence"])
+                suggestions = [
+                    {"label": f"현재 결과를 그대로 발전시키기: {outcome_summary}",
+                     "description": "현재 표현이 맞다면 이 결과를 중심으로 계획을 만듭니다."},
+                    {"label": "검토 가능한 하나의 결과로 좁히기",
+                     "description": "확장하기 전에 독립적으로 확인할 수 있는 작은 결과를 만듭니다."},
+                    {"label": "작은 실험으로 다루기",
+                     "description": "무엇을 배울지와 확인 신호를 먼저 정합니다."},
+                    {"label": "계획 전에 결과 자체를 다시 다듬기",
+                     "description": "현재 방향이 맞지 않다면 Leaf의 의도를 먼저 바꿉니다."},
+                ]
+                message = (f"이 Leaf는 ‘{outcome_summary}’을 이루려는 것으로 이해했어요. "
+                           "현재 결과를 그대로 발전시키거나, 하나의 검토 가능한 결과로 좁히거나, "
+                           "작은 실험으로 다루거나, 계획 전에 방향을 다시 다듬을 수 있어요. "
+                           "이 방향들은 어떻게 느껴지나요? 섞거나 거절하거나 원하는 방향으로 고쳐 주세요.")
+                return LeafWorkspaceReply(message, suggestions=suggestions)
+            else:
+                latest = next((item.get("content", "") for item in reversed(messages)
+                               if item.get("role") == "user"), "")
+                message = (f"알겠어요. ‘{latest}’라는 말씀을 현재 대화의 일부로 반영할게요. "
+                           "어떤 부분을 함께 구체화하면 가장 도움이 될까요?")
+        else:
+            if opening:
+                suggestions = [
+                    {"label": f"Develop the stated outcome: {outcome_summary}",
+                     "description": "Keep the current direction and shape a plan around it."},
+                    {"label": "Narrow it to one reviewable result",
+                     "description": "Create one independently useful result before expanding."},
+                    {"label": "Treat it as a small experiment",
+                     "description": "Define what this should teach you and what signal to watch."},
+                    {"label": "Reshape the outcome before planning",
+                     "description": "Change the Leaf's direction first if the current framing is wrong."},
+                ]
+                message = (f"I understand this Leaf as trying to accomplish: {outcome_summary} "
+                           "We could develop that outcome as written, narrow it to one reviewable "
+                           "result, treat it as a small experiment, or reshape the outcome before "
+                           "planning. How do those directions feel? You can combine, reject, or "
+                           "correct any of them.")
+                return LeafWorkspaceReply(message, suggestions=suggestions)
+            else:
+                latest = next((item.get("content", "") for item in reversed(messages)
+                               if item.get("role") == "user"), "")
+                message = (f"I’m following. You said: “{latest}” I’ll keep that in the current "
+                           "conversation. What would be most useful to work through next?")
+        return LeafWorkspaceReply(message)
+
+    def leaf_handoff(self, context: dict) -> dict:
+        completion = context.get("completion") or {}
+        result = str(completion.get("result") or completion.get("what_happened") or
+                     "Completed the source Leaf.").strip()
+        material = str(completion.get("what_happened") or result).strip()
+        plan_resolutions = [str(item.get("resolution") or "").strip()
+                            for item in (context.get("plan") or {}).get("items", [])
+                            if str(item.get("resolution") or "").strip()]
+        if plan_resolutions:
+            material += "\n" + "\n".join(plan_resolutions)
+        return _normalize_leaf_handoff({
+            "output_summary": result,
+            "working_material": material,
+            "constraints": (context.get("agreement") or {}).get("constraints") or [],
+            "unresolved_questions": completion.get("next_adjustment") or "",
+            "suggested_start": ("Continue with the approved output above in " +
+                                str((context.get("destination") or {}).get("title") or
+                                    "the next Leaf") + "."),
+        })
 
     def harvest(self, context: dict, instruction: str = "") -> HarvestDraft:
         node = context["node"]
@@ -2327,7 +4288,31 @@ class ClaudeGoalAgentModel:
                   "\nLEAF COACH CONVERSATION:\n" + _json(messages[-12:]))
         result = parse_step_coach(self._call(STEP_COACH_SYSTEM, prompt), opening=opening)
         if not result:
-            raise ValueError("Leaf Coach returned an invalid response")
+            # Preserve the conversation and keep the Leaf usable when the model
+            # returns prose, truncated JSON, or omits a required presentation field.
+            result = _fallback_step_coach_reply(context, messages, opening=opening)
+        return _normalize_step_coach_voice(result, context, messages, opening=opening)
+
+    def leaf_workspace(self, context: dict, messages: list[dict], *, event=None,
+                       opening: bool = False) -> LeafWorkspaceReply:
+        bounded_messages = _bounded_leaf_workspace_messages(messages)
+        prompt = ("MODE: " + ("opening" if opening else "conversation") +
+                  "\nCONTEXT:\n" + _json(context) +
+                  "\nSTRUCTURED USER EVENT:\n" + _json(event or {}) +
+                  "\nLEAF WORKSPACE CONVERSATION:\n" + _json(bounded_messages))
+        raw = self._call(LEAF_WORKSPACE_SYSTEM, prompt)
+        result = parse_leaf_workspace_reply(raw)
+        if not result:
+            # There is deliberately no topical or keyword fallback. A model
+            # failure is visible and retryable, while the user's saved turn stays.
+            raise ValueError("Leaf Workspace returned no usable message")
+        return result
+
+    def leaf_handoff(self, context: dict) -> dict:
+        result = parse_leaf_handoff(self._call(
+            LEAF_HANDOFF_SYSTEM, "HANDOFF CONTEXT:\n" + _json(context)))
+        if not result:
+            raise ValueError("GoalAI returned an invalid Leaf handoff")
         return result
 
     def harvest(self, context: dict, instruction: str = "") -> HarvestDraft:
@@ -2966,13 +4951,24 @@ def chat_with_goal_agent(config, node_id: int, text: str, *, model=None) -> dict
         agents.close(); goals.close()
 
 
-def start_goal_harvest(config, node_id: int, *, model=None) -> dict:
+def start_goal_harvest(config, node_id: int, *, model=None,
+                       reuse_draft: bool = True) -> dict:
     goals = GoalStore(config.memory_db_path)
     agents = GoalAgentStore(config.memory_db_path)
     try:
         node = goals.get(node_id)
         if not node:
             raise ValueError("goal not found")
+        existing = agents.conn.execute(
+            "SELECT id FROM goal_harvest WHERE source_node_id=? AND status='draft' "
+            "ORDER BY id DESC LIMIT 1", (int(node_id),)).fetchone()
+        if existing and reuse_draft:
+            return agents.harvest(int(existing["id"]))
+        if existing:
+            agents.conn.execute(
+                "UPDATE goal_harvest SET status='abandoned',updated_at=? WHERE id=?",
+                (_now(), int(existing["id"])))
+            agents.conn.commit()
         context = build_agent_context(
             goals, agents, node_id,
             max_chars=int(getattr(config, "goal_ai_context_max_chars", 14000)))
@@ -2984,6 +4980,22 @@ def start_goal_harvest(config, node_id: int, *, model=None) -> dict:
             "summary": draft.summary, "insights": draft.insights, "routes": draft.routes})
     finally:
         agents.close(); goals.close()
+
+
+def prepare_goal_archive(config, node_id: int, *, model=None) -> dict:
+    """Draft the bounded knowledge handoff reviewed before a subtree is archived."""
+    goals = GoalStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node["type"] == "umbrella" or node["status"] == "archived":
+            raise ValueError("an active non-Soul node is required")
+        retained = goals._restructure_retained_counts(goals._subtree_ids(int(node_id)))
+    finally:
+        goals.close()
+    harvest = start_goal_harvest(
+        config, int(node_id), model=model, reuse_draft=False)
+    return {"harvest": harvest, "retained_counts": retained,
+            "policy": "distilled learning flows upward; raw records stay attached"}
 
 
 def revise_goal_harvest(config, harvest_id: int, instruction: str, *, model=None) -> dict:
@@ -3032,13 +5044,26 @@ def decide_proposal(config, proposal_id: int, action: str,
             agents.resolve_proposal(proposal_id, "stale")
             raise ValueError("goal changed since this proposal was created; review it again")
         kind, data = proposal["type"], proposal["payload"]
+        created_goal_id = None
         if kind == "create_child":
             child_type = _normalize_node_type(
                 data.get("type"), parent_type=target["type"])
-            goals.create(child_type, str(data.get("title") or "").strip(),
-                         parent_id=target["id"], description=str(data.get("description") or ""),
-                         priority=_normalize_priority(data.get("priority")),
-                         due_date=data.get("due_date"))
+            semantic_role = str(data.get("semantic_role") or "").strip().lower()
+            if child_type == "subgoal" and semantic_role in {"area", "project", "stage"}:
+                goals._validate_semantic_placement(
+                    child_type, semantic_role, target["id"],
+                    nested_stage_justification=str(
+                        data.get("nested_stage_justification") or ""))
+            created_goal_id = goals.create(
+                child_type, str(data.get("title") or "").strip(),
+                parent_id=target["id"], description=str(data.get("description") or ""),
+                priority=_normalize_priority(data.get("priority")),
+                due_date=data.get("due_date"))
+            if child_type == "subgoal" and semantic_role in {"area", "project", "stage"}:
+                goals._set_semantic_role(
+                    created_goal_id, semantic_role,
+                    rationale=(str(data.get("nested_stage_justification") or "") or
+                               proposal["rationale"]), source="ai")
         elif kind == "update_fields":
             changes = {k: v for k, v in data.items()
                        if k in {"title", "description", "notes", "priority", "due_date"}}
@@ -3130,6 +5155,7 @@ def decide_proposal(config, proposal_id: int, action: str,
                 parent_id = int(data.get("parent_id"))
                 position = (None if data.get("position") is None
                             else int(data.get("position")))
+                semantic_role = str(data.get("semantic_role") or "").strip().lower() or None
             except (TypeError, ValueError):
                 raise ValueError("restructure proposal has an invalid destination")
 
@@ -3148,6 +5174,7 @@ def decide_proposal(config, proposal_id: int, action: str,
                 goals.conn.execute("BEGIN IMMEDIATE")
                 migration = goals.restructure(
                     target["id"], new_type, parent_id, position,
+                    semantic_role=semantic_role,
                     proposal_id=int(proposal_id), rationale=proposal["rationale"],
                     commit=False)
                 affected = affected_before | set(migration["affected_node_ids"])
@@ -3179,7 +5206,7 @@ def decide_proposal(config, proposal_id: int, action: str,
         elif kind == "pause":
             goals.update(target["id"], status="paused")
         elif kind == "archive":
-            goals.update(target["id"], status="archived")
+            goals.delete_subtree(target["id"])
         elif kind == "request_evidence":
             question = str(data.get("question") or proposal["rationale"]).strip()
             if not question:
@@ -3234,6 +5261,8 @@ def decide_proposal(config, proposal_id: int, action: str,
         agents.mark_dirty(target["id"])
         response = {"ok": True, "status": "approved", "tree": goals.tree(),
                     "superseded_questions": superseded_questions}
+        if created_goal_id is not None:
+            response["created_goal_id"] = created_goal_id
         if kind == "promote_insight":
             response["harvest_id"] = harvest["id"]
         return response

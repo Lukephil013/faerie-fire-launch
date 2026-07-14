@@ -1,13 +1,20 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
+  @font-face { font-family:'Atkinson Hyperlegible';
+    src:url("assets/fonts/AtkinsonHyperlegible-Regular.ttf") format("truetype");
+    font-style:normal; font-weight:400; font-display:swap; }
+  @font-face { font-family:'Atkinson Hyperlegible';
+    src:url("assets/fonts/AtkinsonHyperlegible-Bold.ttf") format("truetype");
+    font-style:normal; font-weight:700; font-display:swap; }
   :root {
+    --app-font:'Atkinson Hyperlegible','Malgun Gothic','Segoe UI Symbol',sans-serif;
     --bg0:#040906; --line:rgba(112,214,158,.28); --line2:rgba(112,214,158,.14);
     --fg:#edf5f0; --muted:#a3c2ab; --cyan:#53e7c0; --green:#2fe3a0;
     --red:#ff6b8a; --amber:#ffd166; --grey:#5b648c;
     --card:rgba(7,20,14,.44); --card2:rgba(5,15,11,.56);
     --glass-strong:rgba(5,15,11,.72); --shadow:rgba(0,0,0,.38);
   }
-  html,body { margin:0; height:100%; font-family:'Segoe UI',Helvetica,Arial,sans-serif;
+  html,body { margin:0; height:100%; font-family:var(--app-font);
     background-color:var(--bg0);
     background-image:
       radial-gradient(120% 82% at 50% 0%, rgba(7,27,17,.38) 0%, rgba(4,15,10,.58) 56%, rgba(3,8,6,.78) 100%),
@@ -17,6 +24,10 @@
     background-repeat: no-repeat, no-repeat;
     background-attachment: fixed, fixed;
     color:var(--fg); overflow:hidden; user-select:text; }
+  button,input,textarea,select,option,summary,pre,code,kbd,samp,svg text {
+    font-family:var(--app-font); }
+  .cc-message strong,.inquiry-msg strong,.planner-msg strong,.leaf-coach-message strong {
+    font-family:var(--app-font); font-weight:700; }
   button,select,option,summary { user-select:none; }
   input,textarea,[contenteditable="true"] { user-select:text; }
   .text-context-menu { position:fixed; z-index:10000; min-width:150px; padding:6px;
@@ -251,10 +262,11 @@
       opacity:.85; transform:translateY(-5px); }
   }
 
-  #app { position:relative; z-index:2; display:grid; grid-template-columns:176px minmax(0,1fr);
+  #app { position:relative; z-index:2; display:grid; grid-template-columns:190px minmax(0,1fr);
     grid-template-rows:auto 1fr; height:100vh; }
   header { grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:flex-start;
-    gap:4px; padding:22px 14px 8px; }
+    gap:4px; padding:22px 14px 8px; background:rgba(23,28,25,.94);
+    border-right:1px solid rgba(255,255,255,.07); }
   header .logo { font-size:19px; font-weight:600; color:var(--green);
     text-shadow:0 0 14px rgba(47,227,160,.42); letter-spacing:.3px; }
   header .sub { display:none; }
@@ -268,29 +280,42 @@
     display:grid; place-items:center; font-size:17px; line-height:1; }
   header .backend { display:none; }
 
-  nav { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:8px;
-    padding:8px 14px 74px; align-items:stretch; flex-wrap:nowrap; }
-  nav .tab { font-size:13px; letter-spacing:.4px; padding:7px 20px; border-radius:20px;
-    cursor:pointer; color:#d9e9df; background:rgba(7,21,14,.52); border:1px solid var(--line);
-    transition:all .18s ease; user-select:none; text-align:center; }
-  nav .tab:hover { background:rgba(15,39,25,.68); border-color:rgba(112,214,158,.46); }
-  nav .tab.active { color:#032118; font-weight:700; background:linear-gradient(90deg,#2fe3a0,#53e7c0);
-    border-color:transparent; box-shadow:0 0 16px rgba(47,227,160,.3); }
+  nav { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:2px;
+    padding:8px 9px 74px; align-items:stretch; flex-wrap:nowrap;
+    background:rgba(23,28,25,.94); border-right:1px solid rgba(255,255,255,.07); }
+  nav .tab { display:flex; align-items:center; gap:10px; min-height:34px; box-sizing:border-box;
+    font-size:13px; letter-spacing:0; padding:7px 10px; border-radius:7px;
+    cursor:pointer; color:rgba(239,244,241,.9); background:transparent; border:0;
+    transition:background .15s ease,color .15s ease; user-select:none; text-align:left; }
+  nav .tab::before,.group-label::before { width:15px; flex:0 0 15px; text-align:center;
+    color:rgba(226,237,231,.82); font-family:var(--app-font); font-size:14px; }
+  nav .tab[data-view="self"]::before { content:'◉'; }
+  nav .tab[data-view="goals"]::before { content:'◇'; }
+  nav .tab[data-view="curiosity"]::before { content:'◎'; }
+  nav .tab[data-view="inferences"]::before { content:'⌁'; }
+  nav .tab[data-view="clarify"]::before { content:'?'; }
+  nav .tab[data-view="memory"]::before { content:'▤'; }
+  nav .tab:hover { background:rgba(255,255,255,.055); color:#fff; }
+  nav .tab.active { color:#fff; font-weight:600; background:rgba(255,255,255,.085);
+    box-shadow:inset 2px 0 0 var(--green); }
+  nav .tab.active::before { color:var(--cyan); }
   .nav-group { position:relative; }
   .nav-group summary { list-style:none; }
   .nav-group summary::-webkit-details-marker { display:none; }
-  .group-label { font-size:13px; letter-spacing:.4px; padding:7px 20px; border-radius:20px;
-    cursor:pointer; color:#d9e9df; background:rgba(7,21,14,.52); border:1px solid var(--line);
-    transition:all .18s ease; user-select:none; }
-  .group-label::after { content:'▾'; margin-left:8px; color:var(--muted); font-size:10px; }
+  .group-label { display:flex; align-items:center; gap:10px; min-height:34px; box-sizing:border-box;
+    font-size:13px; letter-spacing:0; padding:7px 10px; border-radius:7px;
+    cursor:pointer; color:rgba(239,244,241,.9); background:transparent; border:0;
+    transition:background .15s ease,color .15s ease; user-select:none; }
+  .group-label::before { content:'⌘'; }
+  .group-label::after { content:'▾'; margin-left:auto; color:var(--muted); font-size:10px; }
   .nav-group[open] .group-label,.nav-group.active .group-label {
-    border-color:rgba(112,214,158,.58); background:rgba(15,39,25,.74); color:var(--cyan);
+    background:rgba(255,255,255,.065); color:var(--cyan);
   }
   .nav-menu { position:absolute; top:0; left:calc(100% + 8px); min-width:190px; padding:8px;
     border:1px solid var(--line); border-radius:14px; background:rgba(4,15,10,.96);
     box-shadow:0 14px 38px rgba(0,0,0,.45); z-index:30; display:grid; gap:6px; }
   .nav-menu .tab { display:block; border-radius:10px; padding:8px 12px; white-space:nowrap; }
-  .nav-menu .tab.active { color:#032118; }
+  .nav-menu .tab.active { color:#fff; }
 
   .view { grid-column:2; grid-row:1 / span 2; min-height:0; overflow-y:auto;
     padding:22px 22px 22px 0; display:none; }
@@ -307,6 +332,12 @@
   button.accent { background:linear-gradient(90deg,#2fe3a0,#53e7c0); color:#032118;
     font-weight:700; border:none; box-shadow:0 0 14px rgba(47,227,160,.26); }
   button.accent:hover { box-shadow:0 0 22px rgba(47,227,160,.42); }
+  #button-help-tooltip { position:fixed; z-index:10020; max-width:300px; padding:7px 9px;
+    border:1px solid rgba(112,214,158,.36); border-radius:8px; background:rgba(20,25,22,.98);
+    color:rgba(244,249,246,.94); box-shadow:0 8px 24px rgba(0,0,0,.42); font-size:11.5px;
+    line-height:1.4; pointer-events:none; opacity:0; transform:translateY(3px);
+    transition:opacity .1s ease,transform .1s ease; }
+  #button-help-tooltip.visible { opacity:1; transform:none; }
   #inf-status { font-size:12px; color:var(--cyan); }
   .hint { font-size:12.5px; color:var(--muted); line-height:1.55; margin-top:0; margin-bottom:14px; max-width:980px; }
 
@@ -593,11 +624,11 @@
   body.profile-launch #goal-open-map { display:none !important; }
   @media(max-width:1080px){
     #app{display:flex;flex-direction:column}
-    header{display:flex;flex-direction:row;align-items:baseline;padding:17px 22px 11px}
+    header{display:flex;flex-direction:row;align-items:baseline;padding:17px 22px 11px;border-right:0}
     header .sub{display:none}
     header .header-refresh{position:static;margin-left:auto}
     header .settings-cog{position:static}
-    nav{display:flex;flex-direction:row;gap:8px;padding:0 22px 12px;align-items:center;flex-wrap:wrap}
+    nav{display:flex;flex-direction:row;gap:3px;padding:0 22px 12px;align-items:center;flex-wrap:wrap;border-right:0}
     nav .tab{text-align:left}
     .nav-menu{top:calc(100% + 6px);left:0}
     .view{flex:1;padding:4px 22px 22px}
@@ -767,7 +798,7 @@
   .context-doc-actions .hint { margin:0; flex:1; min-width:220px; }
   .cur-star { cursor:pointer; color:var(--grey); font-size:16px; user-select:none; }
   .cur-star.on { color:var(--amber); text-shadow:0 0 10px rgba(255,209,102,.6); }
-  .cur-icon-btn { font-family:'Segoe UI Symbol','Segoe UI',sans-serif; font-size:13px;
+  .cur-icon-btn { font-family:var(--app-font); font-size:13px;
     line-height:1; padding:5px 9px; min-width:0; color:var(--muted); }
   .cur-icon-btn:hover { color:var(--cyan); transform:translateY(-1px); }
   .cur-pause.cur-icon-btn { font-size:9px; letter-spacing:1px; }
@@ -790,7 +821,7 @@
   .cur-loop-panel { border:1px solid rgba(83,231,192,.28); border-radius:12px;
     padding:13px 14px; margin:12px 0; background:linear-gradient(135deg,rgba(83,231,192,.08),rgba(5,18,11,.58)); }
   .cur-loop-panel pre { margin:8px 0 10px; white-space:pre-wrap; overflow-wrap:anywhere;
-    font:12px/1.55 Consolas,monospace; color:#dcebe2; border:1px solid rgba(83,231,192,.12);
+    font:12px/1.55 var(--app-font); color:#dcebe2; border:1px solid rgba(83,231,192,.12);
     border-radius:10px; padding:10px; background:rgba(2,10,6,.34); }
   .cur-loop-load { height:6px; border-radius:4px; overflow:hidden;
     background:rgba(112,214,158,.12); margin:10px 0 4px; }
@@ -1009,6 +1040,16 @@
   .goal-recap-sources { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
   .goal-recap-card details { margin-top:8px; }
   .goal-recap-card summary { color:var(--muted); cursor:pointer; font-size:12px; }
+  .goal-completion-receipt { border-color:rgba(83,231,192,.34); }
+  .goal-completed-history > div { display:grid; gap:8px; margin-top:9px; }
+  .goal-completed-history-item { display:grid; gap:4px; width:100%; min-width:0; padding:10px 11px;
+    text-align:left; color:var(--fg); border:1px solid rgba(83,231,192,.16); border-radius:11px;
+    background:rgba(2,13,8,.48); }
+  .goal-completed-history-item:hover,.goal-completed-history-item:focus-visible {
+    border-color:rgba(83,231,192,.52); background:rgba(83,231,192,.09); }
+  .goal-completed-history-item b { color:var(--cyan); }
+  .goal-completed-history-item small,.goal-completed-history-item span { display:block; overflow-wrap:anywhere; }
+  .goal-completed-history-item small { color:var(--muted); }
   .outcome-form { margin-top:10px; }
   .outcome-form > summary { padding:4px 0; }
   .outcome-form > label { display:grid; grid-template-columns:1fr; gap:5px; width:100%;
@@ -1025,15 +1066,29 @@
   .goal-step-row > label { display:flex; gap:8px; align-items:flex-start; min-width:0; }
   .goal-step-help { padding:5px 9px; font-size:10.5px; white-space:nowrap; }
   .goal-step-help-all { margin-top:9px; }
-  .leaf-coach-drawer { width:min(520px,94vw); padding:0; overflow:hidden; }
+  .leaf-coach-drawer { width:min(520px,94vw); min-width:min(380px,94vw); max-width:94vw;
+    padding:0; overflow:visible; }
   .leaf-coach-drawer.open { display:flex; flex-direction:column; }
+  .leaf-coach-resize-handle { position:absolute; left:-7px; top:0; bottom:0; width:14px;
+    cursor:ew-resize; z-index:5; touch-action:none; }
+  .leaf-coach-resize-handle::after { content:''; position:absolute; left:6px; top:0; bottom:0;
+    width:2px; background:transparent; transition:background .15s,box-shadow .15s; }
+  .leaf-coach-resize-handle:hover::after,.leaf-coach-resize-handle.dragging::after {
+    background:var(--cyan); box-shadow:0 0 10px rgba(126,226,255,.55); }
   .leaf-coach-head { flex:0 0 auto; padding:16px 20px 12px; margin:0;
     background:rgba(7,19,13,.98); border-bottom:1px solid var(--line); z-index:2; }
+  .leaf-workspace-heading { min-width:0; display:grid; gap:4px; }
+  .leaf-workspace-heading .cur-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .leaf-workspace-badges { display:flex; flex-wrap:wrap; gap:5px; }
+  .leaf-workspace-badge { border:1px solid var(--line2); border-radius:999px; padding:2px 7px;
+    color:var(--muted); font-size:10px; line-height:1.3; text-transform:capitalize; }
   .leaf-coach-scroll { flex:1 1 auto; min-height:0; overflow-y:auto; padding:0 20px 20px; }
   .leaf-coach-close { width:34px; height:34px; padding:0; margin-left:auto;
     border-radius:50%; font-size:22px; line-height:1; display:grid; place-items:center; }
   .leaf-coach-boundary { margin:8px 0 12px; padding:9px 10px; border:1px solid var(--line2);
     border-radius:10px; color:var(--muted); font-size:11.5px; line-height:1.45; }
+  .leaf-coach-boundary summary { cursor:pointer; color:var(--muted); }
+  .leaf-coach-boundary p { margin:8px 0 0; }
   .leaf-coach-focus { color:var(--cyan); font-weight:700; margin-top:4px; }
   .leaf-coach-messages { display:grid; gap:9px; margin:12px 0; }
   .leaf-coach-message { padding:10px 12px; border-radius:12px; white-space:pre-wrap; line-height:1.5; }
@@ -1052,10 +1107,93 @@
     border-radius:10px; background:rgba(3,20,13,.72); }
   .leaf-coach-revision-steps { width:100%; min-height:130px; margin-top:8px;
     white-space:pre-wrap; resize:vertical; }
-  .leaf-coach-examples,.leaf-coach-shortcuts { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-  .leaf-coach-example,.leaf-coach-shortcut { padding:5px 8px; font-size:10.5px; text-align:left; }
+  .leaf-coach-examples { display:grid; gap:4px; margin:7px 0 0; padding:0; list-style:none; }
+  .leaf-coach-example-row { display:grid; grid-template-columns:12px minmax(0,1fr); align-items:start; }
+  .leaf-coach-example-row::before { content:'•'; color:var(--green); line-height:1.45; }
+  .leaf-coach-example { width:100%; padding:1px 2px; border:0; border-radius:4px;
+    background:transparent; color:var(--fg); font-size:12px; line-height:1.4; text-align:left; }
+  .leaf-coach-example:hover,.leaf-coach-example:focus-visible { color:var(--green);
+    background:rgba(83,231,192,.08); }
+  .leaf-coach-shortcuts { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .leaf-coach-shortcut { padding:5px 8px; font-size:10.5px; text-align:left; }
   .leaf-coach-error { border:1px solid #a63b62; color:#ff8fb4; border-radius:10px;
     padding:9px 10px; margin:9px 0; }
+  .leaf-workspace-loading { display:flex; align-items:center; gap:7px; min-height:26px;
+    color:var(--muted); font-size:11.5px; margin:8px 0; }
+  .leaf-workspace-card { border:1px solid var(--line2); border-radius:12px; padding:11px 12px;
+    margin:10px 0; background:rgba(3,20,13,.56); }
+  .leaf-workspace-agreement { padding:0; overflow:hidden;
+    background:linear-gradient(135deg,rgba(83,231,192,.085),rgba(3,20,13,.56)); }
+  .leaf-workspace-agreement > summary { display:grid; grid-template-columns:minmax(0,1fr) auto;
+    gap:12px; align-items:center; padding:11px 12px; cursor:pointer; list-style:none; }
+  .leaf-workspace-agreement > summary::-webkit-details-marker { display:none; }
+  .leaf-workspace-agreement-summary { min-width:0; display:grid; gap:4px; }
+  .leaf-workspace-agreement-preview { color:var(--fg); font-size:12px; line-height:1.4;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .leaf-workspace-agreement-toggle { color:var(--muted); font-size:10px; white-space:nowrap; }
+  .leaf-workspace-agreement .leaf-workspace-agreement-grid { border-top:1px solid var(--line2);
+    padding:10px 12px 12px; }
+  .leaf-workspace-card-title { color:var(--cyan); font-size:10.5px; font-weight:800;
+    letter-spacing:1.1px; text-transform:uppercase; margin-bottom:8px; }
+  .leaf-workspace-handoff { border-color:rgba(126,226,255,.36);
+    background:linear-gradient(135deg,rgba(126,226,255,.1),rgba(3,20,13,.58)); }
+  .leaf-workspace-handoff-source { color:var(--cyan); font-weight:750; margin-bottom:7px; }
+  .leaf-workspace-handoff-material { white-space:pre-wrap; line-height:1.45; }
+  .leaf-workspace-handoff-meta { display:grid; gap:6px; margin-top:8px; }
+  .leaf-workspace-handoff-meta b { color:var(--muted); font-size:10px;
+    text-transform:uppercase; letter-spacing:.7px; }
+  .leaf-workspace-handoff-editor { border-top:1px solid rgba(126,226,255,.2);
+    padding-top:9px; margin-top:9px; }
+  .leaf-workspace-agreement-grid { display:grid; gap:7px; }
+  .leaf-workspace-agreement-item { display:grid; gap:2px; }
+  .leaf-workspace-agreement-item b { color:var(--muted); font-size:10px; text-transform:uppercase;
+    letter-spacing:.7px; }
+  .leaf-workspace-plan-head { display:flex; align-items:center; gap:8px; }
+  .leaf-workspace-plan-head .hint { margin-left:auto; }
+  .leaf-workspace-progress { height:5px; overflow:hidden; border-radius:999px; margin:8px 0 10px;
+    background:rgba(255,255,255,.08); }
+  .leaf-workspace-progress > span { display:block; height:100%; background:var(--green); }
+  .leaf-workspace-plan-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
+  .leaf-workspace-plan-item { display:grid; grid-template-columns:18px minmax(0,1fr); gap:6px;
+    align-items:start; line-height:1.4; }
+  .leaf-workspace-plan-state { color:var(--muted); text-align:center; }
+  .leaf-workspace-plan-item.completed .leaf-workspace-plan-state { color:var(--green); }
+  .leaf-workspace-plan-resolution { color:var(--muted); font-size:11px; margin-top:2px; }
+  .leaf-workspace-suggestions { display:grid; gap:6px; margin:8px 0 0; padding:0; list-style:none; }
+  .leaf-workspace-multiselect { margin:9px 0 0; padding:0; border:0; min-width:0; }
+  .leaf-workspace-multiselect legend { padding:0; color:var(--muted); font-size:11px; }
+  .leaf-workspace-suggestion { width:100%; display:grid; gap:2px; padding:8px 10px;
+    border:1px solid rgba(83,231,192,.18); border-radius:10px; text-align:left;
+    background:rgba(83,231,192,.045); color:var(--fg); }
+  .leaf-workspace-suggestion:hover,.leaf-workspace-suggestion:focus-visible { border-color:var(--green);
+    background:rgba(83,231,192,.1); }
+  .leaf-workspace-suggestion.selected { border-color:var(--cyan); color:var(--cyan);
+    background:rgba(126,226,255,.13); box-shadow:0 0 12px rgba(126,226,255,.1); }
+  label.leaf-workspace-suggestion { grid-template-columns:20px minmax(0,1fr); align-items:start;
+    cursor:pointer; }
+  label.leaf-workspace-suggestion input { margin:3px 0 0; accent-color:var(--green); }
+  .leaf-workspace-suggestion-copy { display:grid; gap:2px; min-width:0; }
+  .leaf-workspace-submit-suggestions { margin-top:9px; }
+  .leaf-workspace-suggestion small { color:var(--muted); line-height:1.35; }
+  .leaf-workspace-proposal { margin-top:10px; padding:10px; border:1px solid rgba(255,226,137,.36);
+    border-radius:10px; background:rgba(255,209,102,.055); }
+  .leaf-workspace-proposal-head { display:flex; align-items:center; gap:7px; margin-bottom:6px; }
+  .leaf-workspace-proposal-head b { color:#ffe289; }
+  .leaf-workspace-proposal-status { margin-left:auto; color:var(--muted); font-size:10px;
+    text-transform:capitalize; }
+  .leaf-workspace-proposal-summary { line-height:1.45; white-space:pre-wrap; }
+  .leaf-workspace-proposal-editor { display:grid; gap:7px; margin-top:9px; }
+  .leaf-workspace-proposal-editor label { display:grid; gap:4px; color:var(--muted); font-size:10px; }
+  .leaf-workspace-proposal-editor textarea { min-height:56px; width:100%; box-sizing:border-box; }
+  .leaf-workspace-proposal-editor textarea[data-proposal-field="items"] { min-height:110px; }
+  .leaf-workspace-legacy { margin:12px 0; border:1px solid rgba(83,231,192,.11);
+    border-radius:10px; padding:8px 10px; color:var(--muted); }
+  .leaf-workspace-legacy summary { cursor:pointer; font-size:11px; }
+  .leaf-workspace-legacy-body { display:grid; gap:7px; margin-top:8px; }
+  .leaf-workspace-legacy .leaf-coach-message { opacity:.78; }
+  .leaf-workspace-composer { flex:0 0 auto; padding:10px 20px 16px; border-top:1px solid var(--line);
+    background:rgba(7,19,13,.985); z-index:2; }
+  .leaf-workspace-composer .actions { margin-top:8px; }
   #leaf-coach-input { width:100%; min-height:82px; }
   .goal-focus-mini { display:grid; gap:7px; margin:10px 0; }
   .goal-focus-leaf { display:flex; gap:8px; align-items:flex-start; padding:8px 9px;
@@ -1120,6 +1258,9 @@
   .skin-solar .constellation-node.umbrella circle.core { fill:url(#solarSun); stroke:#fff3ad; }
   .skin-solar .constellation-node.overgoal circle.core { fill:url(#solarPlanet); stroke:#bcecff; }
   .skin-solar .constellation-node.subgoal circle.core { fill:url(#solarMoon); stroke:#e2d2ff; }
+  .skin-solar .constellation-node.subgoal.semantic-area circle.core { fill:url(#solarArea); stroke:#d9c8ff; }
+  .skin-solar .constellation-node.subgoal.semantic-project circle.core { fill:url(#solarProject); stroke:#ffe5a3; }
+  .skin-solar .constellation-node.subgoal.semantic-stage circle.core { fill:url(#solarStage); stroke:#ffc4dc; }
   .skin-solar .constellation-node.task circle.core { fill:url(#solarSatellite); stroke:#c8ffdf; }
   .skin-solar .constellation-node circle.planet-shine { display:block; fill:rgba(255,255,255,.72); stroke:none; }
   .constellation-node circle.planet-shine { display:none; pointer-events:none; }
@@ -1133,11 +1274,20 @@
   .constellation-node.overgoal circle.glow { fill:rgba(126,226,255,.16); }
   .constellation-node.subgoal circle.core { fill:rgba(184,143,255,.9); stroke:rgba(222,202,255,.98); }
   .constellation-node.subgoal circle.glow { fill:rgba(184,143,255,.14); }
+  .constellation-node.subgoal.semantic-area circle.core { fill:rgba(156,124,255,.92); stroke:rgba(222,209,255,.98); }
+  .constellation-node.subgoal.semantic-area circle.glow { fill:rgba(156,124,255,.17); }
+  .constellation-node.subgoal.semantic-project circle.core { fill:rgba(255,190,83,.92); stroke:rgba(255,231,170,.98); }
+  .constellation-node.subgoal.semantic-project circle.glow { fill:rgba(255,190,83,.16); }
+  .constellation-node.subgoal.semantic-stage circle.core { fill:rgba(255,119,176,.9); stroke:rgba(255,203,224,.98); }
+  .constellation-node.subgoal.semantic-stage circle.glow { fill:rgba(255,119,176,.15); }
   .constellation-node.task circle.core { fill:rgba(92,231,151,.86); stroke:rgba(192,255,217,.95); }
   .constellation-node.task circle.glow { fill:rgba(92,231,151,.12); }
   .constellation-node text { fill:rgba(227,255,242,.9); font-size:12px; font-weight:700;
     paint-order:stroke; stroke:rgba(1,9,5,.88); stroke-width:4px; stroke-linejoin:round; }
   .constellation-node.task text { font-size:10.5px; font-weight:600; fill:rgba(211,238,226,.78); }
+  .constellation-node.subgoal.semantic-area text { font-size:12px; }
+  .constellation-node.subgoal.semantic-project text { font-size:11.2px; }
+  .constellation-node.subgoal.semantic-stage text { font-size:10.7px; }
   .constellation-node .execution-order-badge circle { fill:#ffd166; stroke:#fff2b4; stroke-width:1; }
   .constellation-node .execution-order-badge text { fill:#182015; font-size:8px; font-weight:900;
     paint-order:normal; stroke:none; }
@@ -1161,6 +1311,18 @@
     font-size:11px; }
   .constellation-legend span { border:1px solid var(--line2); border-radius:20px; padding:4px 9px;
     background:rgba(83,231,192,.045); }
+  .constellation-legend .legend-area { color:#d9c8ff; border-color:rgba(156,124,255,.42); }
+  .constellation-legend .legend-project { color:#ffe5a3; border-color:rgba(255,190,83,.42); }
+  .constellation-legend .legend-stage { color:#ffc4dc; border-color:rgba(255,119,176,.42); }
+  .goal-intake-panel,.goal-root-starters-panel { margin-top:10px; padding:12px; border:1px solid var(--line);
+    border-radius:14px; background:rgba(4,21,13,.66); }
+  .goal-intake-panel textarea { width:100%; min-height:86px; resize:vertical; }
+  .starter-root-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px; margin:10px 0; }
+  .starter-root-option { display:grid; grid-template-columns:auto 1fr; gap:8px; align-items:start;
+    border:1px solid var(--line2); border-radius:11px; padding:9px; background:rgba(83,231,192,.035); }
+  .starter-root-option input { margin-top:3px; accent-color:var(--green); }
+  .starter-root-option span { display:grid; gap:3px; }
+  .starter-root-option small { color:var(--muted); line-height:1.35; }
   @media(max-width:960px){ .growth-map-workspace{grid-template-columns:1fr}.goal-focus-panel{position:relative;max-height:none} }
   @media(max-width:760px){ .growth-map-summary{grid-template-columns:1fr}.growth-map-tree{min-height:520px}
     .growth-constellation-svg{min-height:520px} }
@@ -1265,7 +1427,7 @@
     font-size:11px; line-height:1; cursor:pointer; padding:0; }
   .sf-remove:hover { color:var(--red); border-color:rgba(255,107,138,.5);
     background:rgba(255,107,138,.08); }
-  #import-result pre { margin:0; font:12px/1.6 Consolas,monospace; color:#d8e8df;
+  #import-result pre { margin:0; font:12px/1.6 var(--app-font); color:#d8e8df;
     white-space:pre-wrap; background:none; padding:0; }
   #view-timeline #tl-groups { max-height:calc(100vh - 150px); overflow:auto; padding-right:6px; }
 
@@ -1281,6 +1443,18 @@
     border-top-color:var(--cyan); border-radius:50%; animation:spin .8s linear infinite;
     vertical-align:-2px; margin-right:6px; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  .chat-thinking { display:inline-flex; align-items:center; gap:7px; min-height:30px;
+    padding:7px 10px; border:1px solid rgba(126,226,255,.3); border-radius:10px;
+    color:var(--cyan); background:linear-gradient(90deg,rgba(126,226,255,.11),rgba(83,231,192,.055));
+    box-shadow:0 0 16px rgba(83,231,192,.08); font-size:11.5px; font-weight:650; }
+  .thinking-dots { display:inline-flex; align-items:center; gap:3px; min-width:24px; }
+  .thinking-dots i { display:block; width:5px; height:5px; border-radius:50%;
+    background:currentColor; animation:thinking-dot 1.05s ease-in-out infinite; }
+  .thinking-dots i:nth-child(2) { animation-delay:.14s; }
+  .thinking-dots i:nth-child(3) { animation-delay:.28s; }
+  @keyframes thinking-dot { 0%,60%,100%{transform:translateY(0);opacity:.35}
+    30%{transform:translateY(-4px);opacity:1} }
+  @media (prefers-reduced-motion:reduce) { .thinking-dots i { animation:none; opacity:.72; } }
 
   /* Onboarding (launch profile first run) */
   .onboard-overlay { position:fixed; inset:0; z-index:90; display:none; padding:24px;
@@ -1666,7 +1840,7 @@
         <div class="growth-map-stage">
           <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
           <div class="constellation-legend">
-            <span>✦ Soul</span><span>◆ Root</span><span>◇ Area / Project / Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+            <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
           </div>
         </div>
         <aside class="goal-pane goal-focus-panel" id="goal-focus-panel">
@@ -1702,7 +1876,7 @@
       <div id="growth-map-summary" class="growth-map-summary"></div>
       <div id="growth-map-tree" class="growth-map-tree" aria-label="Living constellation map"></div>
       <div class="constellation-legend">
-        <span>✦ Soul</span><span>◆ Root</span><span>◇ Area / Project / Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+        <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
       </div>
     </div>
   </div>
@@ -1737,20 +1911,28 @@
   </aside>
 
   <aside class="planner-drawer leaf-coach-drawer" id="leaf-step-coach">
-    <div class="cur-head leaf-coach-head"><span class="cur-label" id="leaf-coach-title">Leaf Coach</span>
-      <button class="leaf-coach-close" id="leaf-coach-close" aria-label="Close Leaf Coach" title="Close Leaf Coach">×</button></div>
+    <div class="leaf-coach-resize-handle" id="leaf-coach-resize" role="separator" aria-orientation="vertical"
+      aria-label="Resize Leaf Agent" title="Drag to resize Leaf Agent"></div>
+    <div class="cur-head leaf-coach-head"><div class="leaf-workspace-heading">
+      <span class="cur-label" id="leaf-coach-title">Leaf Agent</span>
+      <div class="leaf-workspace-badges" id="leaf-workspace-badges"></div></div>
+      <button class="leaf-coach-close" id="leaf-coach-close" aria-label="Close Leaf Agent" title="Close Leaf Agent">×</button></div>
     <div class="leaf-coach-scroll">
-    <div class="leaf-coach-boundary" id="leaf-coach-boundary"></div>
-    <div class="leaf-coach-error" id="leaf-coach-error" hidden></div>
-    <div class="leaf-coach-messages" id="leaf-coach-messages"></div>
-    <div class="leaf-coach-shortcuts">
-      <button class="leaf-coach-shortcut" data-coach-shortcut="example">Show me an example</button>
-      <button class="leaf-coach-shortcut" data-coach-shortcut="smaller">Make this smaller</button>
-      <button class="leaf-coach-shortcut" data-coach-shortcut="stuck">I'm stuck</button>
+      <details class="leaf-coach-boundary" id="leaf-coach-boundary">
+        <summary>What this agent can see</summary><p id="leaf-coach-boundary-copy"></p>
+      </details>
+      <div class="leaf-coach-error" id="leaf-coach-error" hidden></div>
+      <div class="leaf-workspace-loading" id="leaf-workspace-loading" hidden></div>
+      <div id="leaf-workspace-incoming"></div>
+      <div id="leaf-workspace-agreement"></div>
+      <div id="leaf-workspace-plan"></div>
+      <div class="leaf-coach-messages" id="leaf-coach-messages"></div>
+      <div id="leaf-workspace-legacy"></div>
     </div>
-    <textarea id="leaf-coach-input" rows="4" placeholder="Ask about this step…"></textarea>
-    <div class="actions"><button class="skip" id="leaf-coach-clear">Start over</button>
-      <button class="accent" id="leaf-coach-send" style="margin-left:auto">Send</button></div>
+    <div class="leaf-workspace-composer">
+      <textarea id="leaf-coach-input" rows="4" placeholder="Tell me what fits, what doesn't, or what you want instead…" disabled></textarea>
+      <div class="actions"><button class="skip" id="leaf-coach-clear" disabled>Clear conversation</button>
+        <button class="accent" id="leaf-coach-send" style="margin-left:auto" disabled>Send</button></div>
     </div>
   </aside>
 
@@ -1799,6 +1981,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="button-help-tooltip" role="tooltip" aria-hidden="true"></div>
 
 <script>
 /* Crash banner — lives in its OWN script block on purpose: if the main block
@@ -1814,7 +1997,7 @@
         el=document.createElement('div');
         el.id='ff-crash-banner';
         el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;'+
-          'background:#7a1230;color:#ffe3ea;font:12.5px/1.5 system-ui,sans-serif;'+
+          'background:#7a1230;color:#ffe3ea;font:12.5px/1.5 Atkinson Hyperlegible,Malgun Gothic,sans-serif;'+
           'padding:10px 40px 10px 16px;white-space:pre-wrap;box-shadow:0 2px 14px rgba(0,0,0,.5)';
         const close=document.createElement('span');
         close.textContent='✕';
@@ -2055,6 +2238,10 @@ const KO_UI_TEXT = Object.freeze({
   "I'm stuck":'막혔어요',
   'Ask about this step…':'이 단계에 대해 물어보세요…',
   'Start over':'처음부터 다시',
+  'Clear conversation':'대화 지우기',
+  'What this agent can see':'이 에이전트가 볼 수 있는 범위',
+  'Tell me what fits, what doesn\'t, or what you want instead…':'맞는 점, 아닌 점, 원하는 다른 방향을 알려주세요…',
+  'Close Leaf Agent':'Leaf 에이전트 닫기',
   'Retry':'다시 시도',
   'Next action':'다음 행동',
   'Try one of these':'이 중 하나를 사용해보세요',
@@ -2066,6 +2253,9 @@ const KO_UI_TEXT = Object.freeze({
   'Leaf':'잎',
   'gold halo = needs care':'금색 후광 = 돌봄 필요',
   '◇ Area / Project / Stage':'◇ 영역 / 프로젝트 / 단계',
+  '◇ Area':'◇ 영역',
+  '◇ Project':'◇ 프로젝트',
+  '◇ Stage':'◇ 단계',
   '★ gold ring = greatest curiosity':'★ 금색 고리 = 가장 큰 호기심',
   '① = recommended execution order':'① = 추천 실행 순서',
 
@@ -2976,8 +3166,99 @@ function bindFaerieMascotDrag(){
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ const d=document.createElement('div'); d.textContent=String(s==null?'':s); return d.innerHTML; }
+function conversationHtml(value){
+  return esc(value).replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+}
 function pct(x){ return x==null ? '' : Math.round(x*100) + '%'; }
 function api(){ return window.pywebview && pywebview.api; }
+
+let buttonHelpTimer=null,buttonHelpTarget=null;
+function buttonHelpText(control){
+  if(!control) return '';
+  const id=String(control.id||''), cls=String(control.className||''),
+    label=String(control.getAttribute('aria-label')||control.textContent||'').replace(/\s+/g,' ').trim();
+  const ko=APP_LANG==='ko';
+  if(control.dataset.help) return control.dataset.help;
+  if(id.includes('restructure')||cls.includes('restructure')) return ko
+    ?'첨부된 기록을 삭제하지 않고 이 항목의 역할이나 위치를 바꾸는 제안을 페어리에게 요청합니다.'
+    :'Ask Faerie to propose a safer role or parent change without deleting attached history.';
+  if(cls.includes('goal-open-leaf-agent')||id.includes('agent-open-chat')) return ko
+    ?'이 Leaf의 전용 에이전트를 엽니다. 제안은 검토 후 선택한 것만 적용됩니다.'
+    :'Open this Leaf’s dedicated agent. Suggestions stay staged until you choose what to commit.';
+  if(cls.includes('goal-add-something')) return ko
+    ?'원하는 것을 자연스럽게 설명하면 페어리가 중복과 가장 알맞은 위치를 확인합니다.'
+    :'Describe what you want naturally; Faerie checks for overlap and the best place for it.';
+  if(cls.includes('goal-root-starters-open')) return ko
+    ?'선택할 수 있는 기본 Root를 보여 줍니다. 이미 있는 비슷한 Root는 중복 생성하지 않습니다.'
+    :'Show optional starter Roots without duplicating similar Roots already in your map.';
+  if(cls.includes('goal-new-root')) return ko
+    ?'현재 프로젝트보다 오래 지속될 새로운 삶의 영역 Root를 만듭니다.'
+    :'Create a new Root for a lasting life domain that outlives current projects.';
+  if(cls.includes('goal-node-archive')) return ko
+    ?'이 항목과 하위 항목을 지도에서 숨기되 모든 기록과 완료 상태는 복원을 위해 보존합니다.'
+    :'Hide this node and its descendants from the active map while preserving all history and statuses for restoration.';
+  if(cls.includes('goal-node-restore')) return ko
+    ?'이 항목과 함께 보관된 하위 구조를 이전 상태 그대로 복원합니다.'
+    :'Restore this node and its archived subtree to their prior statuses.';
+  if(cls.includes('approve')||/approve|commit|승인|적용/.test(label.toLowerCase())) return ko
+    ?'검토한 변경 사항을 적용합니다. 승인하기 전에는 저장된 구조가 바뀌지 않습니다.'
+    :'Apply the reviewed change. Nothing structural changes before approval.';
+  if(cls.includes('dismiss')||/dismiss|skip|닫기|건너/.test(label.toLowerCase())) return ko
+    ?'이 항목을 적용하지 않고 닫거나 보류합니다.'
+    :'Close or set this item aside without applying it.';
+  if(/review|검토/.test(label.toLowerCase())) return ko
+    ?'최신 맥락을 사용해 이 항목을 다시 평가하고 검토할 제안을 준비합니다.'
+    :'Reassess this item with its latest context and prepare reviewable suggestions.';
+  if(/save|저장/.test(label.toLowerCase())) return ko?'현재 입력한 변경 사항을 저장합니다.':'Save the changes currently entered here.';
+  if(/send|continue|보내|계속/.test(label.toLowerCase())) return ko?'현재 메시지를 보내고 다음 응답을 요청합니다.':'Send the current message and request the next response.';
+  if(/close|back|취소|뒤로/.test(label.toLowerCase())) return ko?'현재 패널을 변경 없이 닫습니다.':'Close the current panel without making another change.';
+  if(/refresh|새로고침/.test(label.toLowerCase())||id.includes('refresh')) return ko?'현재 화면의 정보를 다시 불러옵니다.':'Reload the latest information for this screen.';
+  if(control.matches('nav .tab')){
+    const views={self:'Command Center',goals:'Growth',curiosity:'Investigations',
+      inferences:'Inferences',clarify:'Clarify',memory:'Memory'};
+    const name=views[control.dataset.view]||label;
+    return ko?name+' 화면을 엽니다.':'Open '+name+'.';
+  }
+  if(control.matches('.group-label')) return ko?'관련된 지식 화면 목록을 펼치거나 접습니다.':'Expand or collapse the related Knowledge screens.';
+  const native=control.getAttribute('title');
+  if(native) return native;
+  if(/open|열기/.test(label.toLowerCase())) return ko?label+' 화면을 엽니다.':label+'.';
+  if(/add|create|new|추가|만들/.test(label.toLowerCase())) return ko?label+' 작업을 시작합니다.':'Start “'+label+'”.';
+  return label?(ko?label+' 기능을 실행합니다.':'Use “'+label+'”.'):'';
+}
+function hideButtonHelp(){
+  if(buttonHelpTimer){clearTimeout(buttonHelpTimer);buttonHelpTimer=null;}
+  buttonHelpTarget=null;
+  const tip=$('button-help-tooltip');if(tip){tip.classList.remove('visible');tip.setAttribute('aria-hidden','true');}
+}
+function showButtonHelp(control,x,y){
+  const help=buttonHelpText(control);if(!help) return;
+  hideButtonHelp();buttonHelpTarget=control;
+  control.setAttribute('aria-description',help);
+  buttonHelpTimer=setTimeout(()=>{
+    if(buttonHelpTarget!==control) return;
+    const tip=$('button-help-tooltip');if(!tip) return;
+    tip.textContent=help;tip.setAttribute('aria-hidden','false');tip.classList.add('visible');
+    const rect=control.getBoundingClientRect();
+    const left=Math.min(window.innerWidth-tip.offsetWidth-8,Math.max(8,Number.isFinite(x)?x+12:rect.left));
+    const top=Math.min(window.innerHeight-tip.offsetHeight-8,Math.max(8,Number.isFinite(y)?y+14:rect.bottom+7));
+    tip.style.left=left+'px';tip.style.top=top+'px';
+  },140);
+}
+document.addEventListener('pointerover',event=>{
+  const control=event.target.closest&&event.target.closest('button,nav .tab,.group-label');
+  if(control&&control!==buttonHelpTarget) showButtonHelp(control,event.clientX,event.clientY);
+});
+document.addEventListener('pointerout',event=>{
+  if(buttonHelpTarget&&(!event.relatedTarget||!buttonHelpTarget.contains(event.relatedTarget))) hideButtonHelp();
+});
+document.addEventListener('focusin',event=>{
+  const control=event.target.closest&&event.target.closest('button,nav .tab,.group-label');
+  if(control) showButtonHelp(control,NaN,NaN);
+});
+document.addEventListener('focusout',event=>{
+  if(buttonHelpTarget&&event.target===buttonHelpTarget) hideButtonHelp();
+});
 function bridgeTimeout(promise,label,ms=15000){
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>reject(new Error(label+' timed out')),ms);
@@ -3141,6 +3422,11 @@ function bindShiftEnterSubmit(textarea, onSubmit){
       onSubmit();
     }
   });
+}
+
+function thinkingDotsHtml(label){
+  return '<span class="chat-thinking"><span>'+esc(label||(APP_LANG==='ko'?'생각하는 중…':'Thinking…'))+
+    '</span><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></span>';
 }
 
 function toast(msg, isErr, actionLabel, onAction, duration){
@@ -3724,7 +4010,7 @@ function renderCommandChat(state){
   if(log){
     log.innerHTML=messages.length?messages.map(m=>
       '<div class="cc-message '+(m.role==='user'?'user':'assistant')+'">'+
-      esc(commandMessageText(m))+'</div>').join(''):
+      conversationHtml(commandMessageText(m))+'</div>').join(''):
       '<div class="cc-empty">Start here. Ask a question, paste a thought, attach a file, or use <b>/file</b> to turn a brain dump into a project note.</div>';
     log.scrollTop=log.scrollHeight;
   }
@@ -3756,7 +4042,7 @@ function approvePendingProposal(){
     messages:(commandChatState&&commandChatState.messages||[]).concat([
       {role:'user',content:approvalWord}
     ])});
-  $('cc-status').innerHTML='<span class="spin"></span>Thinking…';
+  $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…');
   setFaerieMascotState('thinking');
   pywebview.api.command_send(approvalWord, []).then(r=>{
     $('cc-status').textContent='';
@@ -3824,7 +4110,7 @@ function sendCommandMessage(){
       {role:'user',content:text}
     ])});
   $('cc-send').disabled=true;
-  $('cc-status').innerHTML='<span class="spin"></span>Thinking…';
+  $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…');
   setFaerieMascotState('thinking');
   pywebview.api.command_send(text, attachmentsForSend).then(r=>{
     $('cc-send').disabled=false;
@@ -4687,7 +4973,7 @@ function renderInquiry(q){
       (q.kind==='address'?'Address inference':'Directed investigation')+'</div>'+
       '<div class="inquiry-prompt">'+esc(q.prompt)+'</div></div><button class="close-inquiry">Close</button></div>'+
     '<div class="inquiry-messages">'+(q.messages||[]).map(m=>
-      '<div class="inquiry-msg '+m.role+'">'+esc(m.content)+'</div>').join('')+'</div>'+
+      '<div class="inquiry-msg '+m.role+'">'+conversationHtml(m.content)+'</div>').join('')+'</div>'+
     '<textarea class="inquiry-reply" placeholder="Answer Faerie’s question, add an example, or challenge its reasoning…"></textarea>'+
     '<div class="inquiry-send"><button class="accent send-inquiry">Reply</button></div>'+
     '<div class="inquiry-draft"><label>Current proposed belief</label>'+
@@ -4702,9 +4988,19 @@ function renderInquiry(q){
   const reply=drawer.querySelector('.inquiry-reply');
   const send=()=>{
     const text=reply.value.trim(); if(!text){ toast('Write a reply first.',true); return; }
-    drawer.querySelector('.send-inquiry').disabled=true;
-    pywebview.api.inference_inquiry_reply(q.id,text).then(handleInquiryResult)
-      .catch(e=>toast('Could not reply: '+e,true));
+    const button=drawer.querySelector('.send-inquiry'), messages=drawer.querySelector('.inquiry-messages');
+    button.disabled=true; reply.value='';
+    messages.insertAdjacentHTML('beforeend','<div class="inquiry-msg user">'+esc(text)+'</div>'+
+      '<div class="inquiry-msg assistant inquiry-thinking">'+thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…')+'</div>');
+    drawer.scrollTop=drawer.scrollHeight;
+    const fail=message=>{
+      const thinking=messages.querySelector('.inquiry-thinking');if(thinking) thinking.remove();
+      button.disabled=false;reply.value=text;toast(message,true);
+    };
+    pywebview.api.inference_inquiry_reply(q.id,text).then(r=>{
+      if(!r||r.ok===false){fail((r&&r.message)||'Could not reply.');return;}
+      handleInquiryResult(r);
+    }).catch(e=>fail('Could not reply: '+e));
   };
   drawer.querySelector('.send-inquiry').onclick=send; bindShiftEnterSubmit(reply,send);
   drawer.querySelector('.resolve-accept').onclick=()=>resolveInquiry('accepted');
@@ -4949,6 +5245,7 @@ $('clar-bulk-text').addEventListener('keydown', e=>{
 let goalState=null, selectedGoalId=null, plannerSession=null, goalAgentView=null, goalAgentNodeId=null;
 let goalFocusPending=null;
 let leafCoachView=null, leafCoachLeafId=null, leafCoachRetry=null;
+let leafWorkspaceRequestNonce=0, leafWorkspaceSending=false;
 let growthViewMode='map';
 let goalAIOverviewCache=null;
 const constellationViewState={};
@@ -5038,7 +5335,7 @@ function goalNodeLinkedToGreatest(node){
 
 function goalTreeHtml(node,depth){
   if(!node) return '<div class="empty">No goal tree available.</div>';
-  const children=(node.children||[]).filter(x=>x.status!=='archived');
+  const children=(node.children||[]).filter(goalVisibleInActiveMap);
   const collapsed=children.length&&goalCollapsed.has(node.id)&&!goalContains(node,selectedGoalId);
   if(selectedGoalId&&goalContains(node,selectedGoalId)) goalCollapsed.delete(node.id);
   const selected=node.id===selectedGoalId?' selected':'';
@@ -5087,8 +5384,12 @@ function selectGrowthNode(nodeId,opts){
   if(opts.closeOverlay) closeGrowthMap();
 }
 
+function goalVisibleInActiveMap(node){
+  return !!node&&node.status!=='archived'&&!(node.type==='task'&&node.status==='completed');
+}
+
 function goalVisibleChildren(node){
-  return (node&&node.children||[]).filter(x=>x.status!=='archived');
+  return (node&&node.children||[]).filter(goalVisibleInActiveMap);
 }
 
 function goalSubtreeWeight(node){
@@ -5101,7 +5402,7 @@ function goalPathTitles(node,id,path){
   if(!node) return null;
   path=(path||[]).concat(node.title);
   if(node.id===id) return path;
-  for(const child of goalVisibleChildren(node)){
+  for(const child of (node.children||[]).filter(item=>item.status!=='archived')){
     const found=goalPathTitles(child,id,path);
     if(found) return found;
   }
@@ -5289,7 +5590,7 @@ function goalChildStateText(child){
   return ko?'재고 필요':'needs rethink';
 }
 function goalRollupHtml(node){
-  const kids=(node.children||[]).filter(k=>k.status!=='archived');
+  const kids=(node.children||[]).filter(goalVisibleInActiveMap);
   if(!kids.length) return '<p class="goal-focus-muted">Nothing underneath yet — add the first '+
     (node.type==='umbrella'?'Root':'Branch')+'.</p>';
   return '<div>'+kids.map(k=>'<span class="goal-chip goal-rollup-chip" data-open="'+k.id+'">'+
@@ -5457,23 +5758,14 @@ function bindGoalStepDraft(node,root){
   };
 }
 function goalLeafStepsHtml(node){
-  const steps=goalLeafSteps(node);
-  if(!steps.length)
-    return '<div class="cur-sub">How to do this</div>'+
-      '<p class="goal-focus-muted">No explicit steps yet. Draft concrete, in-the-moment actions for this Leaf.</p>'+
-      '<div class="actions"><button class="accent" id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
-      '<div id="goal-steps-draft">'+goalStepDraftHtml(node)+'</div>';
-  let done=0;
-  const rows=steps.map((s,i)=>{
-    const checked=(function(){ try{ return localStorage.getItem(goalStepKey(node.id,s))==='1'; }catch(e){ return false; } })();
-    if(checked) done++;
-    return '<div class="goal-focus-leaf goal-step-row"><label><input type="checkbox" class="goal-step-check" data-si="'+i+'" '+
-      (checked?'checked':'')+'><span>'+esc(s)+'</span></label>'+
-      '<button type="button" class="goal-step-help" data-step-help="'+i+'">Help</button></div>';
-  }).join('');
-  return '<div class="cur-sub" id="goal-steps-head">How to do this ('+done+'/'+steps.length+')</div>'+
-    '<div class="goal-focus-mini">'+rows+'</div>'+
-    '<div class="actions goal-step-help-all"><button type="button" class="accent" id="goal-step-help-all">Get help with these steps</button></div>';
+  return '<div class="actions goal-leaf-agent-entry"><button type="button" class="accent goal-open-leaf-agent">'+
+    (APP_LANG==='ko'?'Leaf 에이전트 열기':'Open Leaf Agent')+'</button></div>';
+}
+
+function bindGoalLeafAgentEntry(node,root){
+  if(!root||!node||node.type!=='task') return;
+  const button=root.querySelector('.goal-open-leaf-agent');
+  if(button) button.onclick=()=>openLeafCoach(node);
 }
 
 function goalAskFaerieLabel(node){
@@ -5484,8 +5776,49 @@ function goalAskFaerieLabel(node){
 function closeLeafCoach(){
   const drawer=$('leaf-step-coach');
   if(drawer) drawer.classList.remove('open');
+  leafWorkspaceRequestNonce++;
   leafCoachRetry=null;
   leafCoachLeafId=null;
+  leafCoachView=null;
+  leafWorkspaceSending=false;
+  leafWorkspaceSetLoading(false);
+  leafWorkspaceSetEnabled(false);
+  if($('leaf-coach-messages')) $('leaf-coach-messages').innerHTML='';
+  if($('leaf-workspace-agreement')) $('leaf-workspace-agreement').innerHTML='';
+  if($('leaf-workspace-plan')) $('leaf-workspace-plan').innerHTML='';
+  if($('leaf-workspace-legacy')) $('leaf-workspace-legacy').innerHTML='';
+  leafCoachSetError('');
+}
+
+function initLeafCoachResize(){
+  const drawer=$('leaf-step-coach'),handle=$('leaf-coach-resize');
+  if(!drawer||!handle||handle.dataset.bound) return;
+  handle.dataset.bound='1';
+  const label=APP_LANG==='ko'?'Leaf 에이전트 크기 조절':'Resize Leaf Agent';
+  handle.setAttribute('aria-label',label);handle.title=APP_LANG==='ko'?'드래그하여 Leaf 에이전트 크기 조절':'Drag to resize Leaf Agent';
+  try{
+    const saved=parseInt(localStorage.getItem('faerie_leaf_agent_width')||'',10);
+    if(saved>0) drawer.style.width=Math.min(saved,Math.round(window.innerWidth*.94))+'px';
+  }catch(e){}
+  let dragging=false,startX=0,startWidth=0;
+  const move=event=>{
+    if(!dragging) return;
+    const min=Math.min(380,Math.round(window.innerWidth*.94));
+    const max=Math.max(min,Math.round(window.innerWidth*.94));
+    drawer.style.width=Math.max(min,Math.min(max,startWidth+(startX-event.clientX)))+'px';
+  };
+  const stop=()=>{
+    if(!dragging) return;
+    dragging=false;handle.classList.remove('dragging');
+    try{localStorage.setItem('faerie_leaf_agent_width',String(Math.round(drawer.getBoundingClientRect().width)));}catch(e){}
+  };
+  handle.addEventListener('pointerdown',event=>{
+    dragging=true;startX=event.clientX;startWidth=drawer.getBoundingClientRect().width;
+    handle.classList.add('dragging');event.preventDefault();
+  });
+  document.addEventListener('pointermove',move);
+  document.addEventListener('pointerup',stop);
+  document.addEventListener('pointercancel',stop);
 }
 
 function leafCoachSetError(message,retry){
@@ -5498,9 +5831,28 @@ function leafCoachSetError(message,retry){
   if(button) button.onclick=()=>{ box.hidden=true; retry(); };
 }
 
-function leafCoachMessageHtml(message,allowCompletion){
+function leafWorkspaceSetEnabled(enabled){
+  const input=$('leaf-coach-input'), send=$('leaf-coach-send'), clear=$('leaf-coach-clear');
+  if(input) input.disabled=!enabled;
+  if(send) send.disabled=!enabled||leafWorkspaceSending;
+  if(clear) clear.disabled=!enabled||leafWorkspaceSending;
+}
+
+function leafWorkspaceSetLoading(visible,text){
+  const box=$('leaf-workspace-loading');
+  if(!box) return;
+  box.hidden=!visible;
+  box.innerHTML=visible?thinkingDotsHtml(text||(APP_LANG==='ko'?'답변을 만드는 중…':'Crafting a response…')):'';
+}
+
+function leafWorkspaceResult(result){
+  if(!result||result.ok===false) throw new Error((result&&result.message)||(APP_LANG==='ko'?'Leaf 작업 공간을 불러오지 못했어요.':'Leaf Workspace could not load.'));
+  return result.workspace||result.view||result.coach||(result.leaf_id?result:null);
+}
+
+function legacyLeafCoachMessageHtml(message,allowCompletion){
   const payload=message.payload||{};
-  if(message.role==='focus') return '<div class="leaf-coach-message focus">'+esc(payload.text||'')+'</div>';
+  if(message.role==='focus') return '<div class="leaf-coach-message focus">'+conversationHtml(payload.text||'')+'</div>';
   const examples=(payload.examples||[]).slice(0,4);
   const completion=allowCompletion&&payload.step_completed
     ?'<div class="leaf-coach-completion"><b>'+esc(APP_LANG==='ko'
@@ -5518,24 +5870,23 @@ function leafCoachMessageHtml(message,allowCompletion){
         '<div class="actions"><button type="button" data-revision-action="reject">'+(APP_LANG==='ko'?'현재 단계 유지':'Keep current steps')+'</button>'+
         '<button type="button" class="accent" data-revision-action="approve">'+(APP_LANG==='ko'?'수정된 단계 적용':'Apply revised steps')+'</button></div>')+'</div>'
     :'';
-  return '<div class="leaf-coach-message '+esc(message.role)+'"><div>'+esc(payload.text||'')+'</div>'+
+  return '<div class="leaf-coach-message '+esc(message.role)+'"><div>'+conversationHtml(payload.text||'')+'</div>'+
     (payload.next_action?'<div class="leaf-coach-next"><b>'+(APP_LANG==='ko'?'다음 행동':'Next action')+'</b><br>'+esc(payload.next_action)+'</div>':'')+
     (payload.question?'<div class="leaf-coach-question">'+esc(payload.question)+'</div>':'')+
-    (examples.length?'<div class="hint">'+(APP_LANG==='ko'?'제안된 응답':'Suggested responses')+'</div><div class="leaf-coach-examples">'+examples.map(example=>
-      '<button type="button" class="leaf-coach-example" data-example="'+esc(example)+'">'+esc(example)+'</button>').join('')+'</div>':'')+completion+
+    (examples.length?'<div class="hint">'+(APP_LANG==='ko'?'제안':'Suggestions')+'</div><ul class="leaf-coach-examples">'+examples.map(example=>
+      '<li class="leaf-coach-example-row"><button type="button" class="leaf-coach-example" data-example="'+esc(example)+'">'+esc(example)+'</button></li>').join('')+'</ul>':'')+completion+
     revisionHtml+'</div>';
 }
 
-function renderLeafCoach(){
+function legacyRenderLeafCoach(){
   if(!leafCoachView) return;
-  const view=leafCoachView, focus=view.steps[view.focus_step_index]||{};
-  $('leaf-coach-title').textContent=(APP_LANG==='ko'?'Leaf 코치 · ':'Leaf Coach · ')+view.title;
+  const view=leafCoachView;
+  $('leaf-coach-title').textContent=(APP_LANG==='ko'?'Leaf 에이전트 · ':'Leaf Agent · ')+view.title;
   $('leaf-coach-boundary').innerHTML=(APP_LANG==='ko'
-    ?'이 코치는 이 Leaf와 상위 경로에만 제한돼 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요.'
-    :'This coach is limited to this Leaf and its parent path. It cannot see other Branches, global memory, the main chat, or screen activity.')+
-    '<div class="leaf-coach-focus">'+esc((APP_LANG==='ko'?'현재 단계 ':'Step ')+(view.focus_step_index+1)+'/'+view.steps.length+': '+(focus.text||''))+'</div>';
+    ?'이 에이전트는 이 Leaf와 상위 경로에만 제한돼 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요.'
+    :'This agent is limited to this Leaf and its parent path. It cannot see other Branches, global memory, the main chat, or screen activity.');
   const messages=view.messages||[], lastId=messages.length?messages[messages.length-1].id:null;
-  $('leaf-coach-messages').innerHTML=messages.filter(message=>message.role!=='focus').map(message=>leafCoachMessageHtml(
+  $('leaf-coach-messages').innerHTML=messages.filter(message=>message.role!=='focus').map(message=>legacyLeafCoachMessageHtml(
     message,message.id===lastId&&focus.status!=='completed')).join('');
   document.querySelectorAll('#leaf-coach-messages .leaf-coach-example').forEach(button=>button.onclick=()=>{
     $('leaf-coach-input').value=button.dataset.example||'';
@@ -5550,6 +5901,496 @@ function renderLeafCoach(){
   });
   const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
   if(scroller) scroller.scrollTop=scroller.scrollHeight;
+}
+
+function leafWorkspacePhaseLabel(phase){
+  const key=String(phase||'shape').toLowerCase();
+  const labels={shape:['Shape','방향 잡기'],shaping:['Shape','방향 잡기'],approve:['Approve','승인'],
+    approval:['Approve','승인'],work:['Work','진행'],working:['Work','진행'],doing:['Work','진행'],
+    reflect:['Reflect','성찰'],reflecting:['Reflect','성찰'],complete:['Complete','완료'],completed:['Complete','완료']};
+  const value=labels[key]||[key||'Shape',key||'방향 잡기'];
+  return APP_LANG==='ko'?value[1]:value[0];
+}
+
+function leafWorkspaceKindLabel(kind){
+  const key=String(kind||'action').toLowerCase();
+  const labels={unspecified:['Open mode','열린 방식'],action:['Open mode','열린 방식'],deliverable:['Deliverable','결과물'],decision:['Decision','결정'],
+    experiment:['Experiment','실험'],practice:['Practice','연습'],reflection:['Reflection','성찰'],record:['Record','기록']};
+  const value=labels[key]||[key||'Action',key||'행동'];
+  return APP_LANG==='ko'?value[1]:value[0];
+}
+
+function leafWorkspaceAgreementHtml(agreement){
+  agreement=agreement||{};
+  const constraints=Array.isArray(agreement.constraints)?agreement.constraints.join(' · '):agreement.constraints;
+  const rawOutcome=String(agreement.outcome||'').trim();
+  const stepsAt=rawOutcome.search(/\s+Steps\s*:/i);
+  let outcome=(stepsAt>=0?rawOutcome.slice(0,stepsAt):rawOutcome).replace(/\s+/g,' ').trim();
+  if(outcome.length>650) outcome=outcome.slice(0,647).trimEnd()+'…';
+  const values=[
+    [APP_LANG==='ko'?'결과':'Outcome',outcome],
+    [APP_LANG==='ko'?'접근 방식':'Approach',agreement.approach],
+    [APP_LANG==='ko'?'완료 기준':'Definition of done',agreement.definition_of_done||agreement.definition||agreement.done_when],
+    [APP_LANG==='ko'?'확인된 제약':'Confirmed constraints',constraints],
+    [APP_LANG==='ko'?'확인된 결과':'Confirmed result',agreement.result],
+    [APP_LANG==='ko'?'배운 점':'Lesson',agreement.lesson]
+  ].filter(item=>String(item[1]||'').trim());
+  if(!values.length) return '';
+  const confirmed=agreement.confirmed!==false&&!['draft','pending','proposed'].includes(String(agreement.status||'').toLowerCase());
+  const title=confirmed?(APP_LANG==='ko'?'현재 합의':'Current agreement'):(APP_LANG==='ko'?'작업 중인 이해 · 아직 승인되지 않음':'Working understanding · not approved yet');
+  const preview=outcome||(APP_LANG==='ko'?'확인된 세부 정보를 보려면 여세요.':'Open to see the confirmed details.');
+  return '<details class="leaf-workspace-card leaf-workspace-agreement" aria-label="'+esc(title)+'"><summary><span class="leaf-workspace-agreement-summary">'+
+    '<span class="leaf-workspace-card-title" style="margin:0">'+title+'</span><span class="leaf-workspace-agreement-preview">'+esc(preview)+'</span></span>'+
+    '<span class="leaf-workspace-agreement-toggle">'+(APP_LANG==='ko'?'세부 정보':'Details')+'</span></summary>'+
+    '<div class="leaf-workspace-agreement-grid">'+values.map(item=>
+      '<div class="leaf-workspace-agreement-item"><b>'+esc(item[0])+'</b><span>'+esc(item[1])+'</span></div>').join('')+'</div></details>';
+}
+
+function leafWorkspacePlanHtml(plan){
+  if(!plan||!Array.isArray(plan.items)||!plan.items.length) return '';
+  const completed=plan.items.filter(item=>String(item.status||'').toLowerCase()==='completed').length;
+  const percent=Math.round(completed/plan.items.length*100);
+  const label=APP_LANG==='ko'?'승인된 계획':'Approved plan';
+  return '<section class="leaf-workspace-card" aria-label="'+esc(label)+'"><div class="leaf-workspace-plan-head">'+
+    '<div class="leaf-workspace-card-title" style="margin:0">'+label+'</div>'+
+    '<span class="hint">v'+esc(plan.version||1)+' · '+completed+'/'+plan.items.length+'</span></div>'+
+    '<div class="leaf-workspace-progress" aria-label="'+percent+'%"><span style="width:'+percent+'%"></span></div>'+
+    '<ol class="leaf-workspace-plan-list">'+plan.items.map(item=>{
+      const done=String(item.status||'').toLowerCase()==='completed';
+      return '<li class="leaf-workspace-plan-item '+(done?'completed':'')+'"><span class="leaf-workspace-plan-state">'+(done?'✓':'○')+'</span><div>'+esc(item.text||'')+
+        (item.resolution?'<div class="leaf-workspace-plan-resolution">'+esc(item.resolution)+'</div>':'')+'</div></li>';
+    }).join('')+'</ol></section>';
+}
+
+function leafWorkspaceMessageSuggestions(message,payload){
+  const raw=message.suggestions||payload.suggestions||[];
+  return (Array.isArray(raw)?raw:[]).map((item,index)=>typeof item==='string'
+    ?{id:'suggestion-'+index,label:item,description:''}
+    :{id:String(item.id||'suggestion-'+index),label:String(item.label||item.text||''),description:String(item.description||'')})
+    .filter(item=>item.label);
+}
+
+function leafWorkspaceMessageSelectionMode(message,payload){
+  const explicit=String(message.selection_mode||payload.selection_mode||'').toLowerCase();
+  if(explicit==='multiple'||explicit==='single') return explicit;
+  const content=String(message.content||payload.content||payload.text||'');
+  return /(?:select|choose|check) all|one or more|any of (?:these|the following)|which of (?:these|the following).*(?:apply|fit)/i.test(content)
+    ?'multiple':'single';
+}
+
+function leafWorkspaceMessageProposals(message,payload){
+  const raw=message.proposals||payload.proposals||
+    (message.proposal||payload.proposal?[message.proposal||payload.proposal]:[]);
+  return (Array.isArray(raw)?raw:[]).filter(Boolean);
+}
+
+function leafWorkspaceProposalTypeLabel(type){
+  const labels={agreement:['Proposed agreement','합의 제안'],plan:['Proposed plan','계획 제안'],
+    revise_plan:['Plan revision','계획 수정 제안'],complete_item:['Complete plan item','계획 항목 완료 제안'],
+    complete_leaf:['Complete this Leaf','Leaf 완료 제안'],reshape:['Return to shaping','방향 다시 잡기'],
+    reopen:['Reopen this Leaf','이 Leaf 다시 열기']};
+  const value=labels[String(type||'')]||['Proposed change','변경 제안'];
+  return APP_LANG==='ko'?value[1]:value[0];
+}
+
+function leafWorkspaceProposalStatusLabel(status){
+  const key=String(status||'pending').toLowerCase();
+  const labels={pending:['Pending approval','승인 대기'],proposed:['Pending approval','승인 대기'],
+    approved:['Approved','승인됨'],applied:['Applied','적용됨'],keep_discussing:['Discussing','논의 중'],
+    discussing:['Discussing','논의 중'],rejected:['Not applied','적용하지 않음'],dismissed:['Not applied','적용하지 않음']};
+  const value=labels[key]||[key,key];
+  return APP_LANG==='ko'?value[1]:value[0];
+}
+
+function leafWorkspaceProposalSummary(proposal){
+  const payload=proposal.payload||{}, parts=[];
+  if(payload.outcome) parts.push((APP_LANG==='ko'?'결과: ':'Outcome: ')+payload.outcome);
+  if(payload.approach) parts.push((APP_LANG==='ko'?'접근 방식: ':'Approach: ')+payload.approach);
+  const done=payload.definition_of_done||payload.definition||payload.done_when;
+  if(done) parts.push((APP_LANG==='ko'?'완료 기준: ':'Definition of done: ')+done);
+  const items=payload.items||(payload.plan&&payload.plan.items)||payload.steps;
+  if(Array.isArray(items)) items.forEach((item,index)=>parts.push((index+1)+'. '+(typeof item==='string'?item:item.text||'')));
+  const resolution=payload.resolution||payload.result||payload.summary;
+  if(resolution) parts.push(String(resolution));
+  if(payload.what_happened&&payload.what_happened!==resolution) parts.push((APP_LANG==='ko'?'실제로 일어난 일: ':'What happened: ')+payload.what_happened);
+  if(payload.lesson) parts.push((APP_LANG==='ko'?'배운 점: ':'Lesson: ')+payload.lesson);
+  if(payload.next_adjustment) parts.push((APP_LANG==='ko'?'다음 조정: ':'Next adjustment: ')+payload.next_adjustment);
+  if(payload.handoff_target) parts.push((APP_LANG==='ko'?'다음 Leaf로 인계: ':'Handoff to next Leaf: ')+payload.handoff_target.title);
+  return parts.filter(Boolean).join('\n')||String(proposal.rationale||'');
+}
+
+function leafWorkspaceProposalEditorHtml(proposal,messageContent){
+  const payload=proposal.payload||{}, type=String(proposal.type||'');
+  if(type==='agreement') return '<div class="leaf-workspace-proposal-editor" hidden>'+
+    [['outcome',APP_LANG==='ko'?'결과':'Outcome',payload.outcome],
+     ['approach',APP_LANG==='ko'?'접근 방식':'Approach',payload.approach],
+     ['definition_of_done',APP_LANG==='ko'?'완료 기준':'Definition of done',
+       payload.definition_of_done||payload.definition||payload.done_when],
+     ['constraints',APP_LANG==='ko'?'제약 — 한 줄에 하나':'Constraints — one per line',
+       Array.isArray(payload.constraints)?payload.constraints.join('\n'):payload.constraints]].map(item=>
+      '<label>'+esc(item[1])+'<textarea data-proposal-field="'+item[0]+'">'+esc(item[2]||'')+'</textarea></label>').join('')+'</div>';
+  if(type==='plan'||type==='revise_plan'){
+    const items=payload.items||(payload.plan&&payload.plan.items)||payload.steps||[];
+    return '<div class="leaf-workspace-proposal-editor" hidden><label>'+(APP_LANG==='ko'?'계획 항목 — 한 줄에 하나':'Plan items — one per line')+
+      '<textarea data-proposal-field="items">'+esc(items.map(item=>typeof item==='string'?item:item.text||'').join('\n'))+
+      '</textarea></label></div>';
+  }
+  if(type==='complete_item') return '<div class="leaf-workspace-proposal-editor" hidden><label>'+
+    (APP_LANG==='ko'?'확인된 결과 또는 해결 내용':'Confirmed result or resolution')+
+    '<textarea data-proposal-field="resolution">'+esc(payload.resolution||'')+
+    '</textarea></label></div>';
+  if(type==='complete_leaf'){
+    const resultSuggestion=payload.result||payload.summary||payload.resolution||proposal.rationale||'';
+    const lessonSuggestion=payload.lesson||payload.learning||payload.takeaway||messageContent||proposal.rationale||'';
+    const helpful=payload.helpfulness==null?'':String(payload.helpfulness);
+    const handoff=payload.handoff||{}, target=payload.handoff_target||null;
+    const handoffEditor=target?'<div class="leaf-workspace-handoff-editor"><div class="leaf-workspace-card-title">'+
+      (APP_LANG==='ko'?'다음 Leaf로 인계':'Handoff to the next Leaf')+'</div><p class="hint">'+
+      (APP_LANG==='ko'?'“'+esc(target.title||'')+'” Leaf가 이 승인된 내용으로 바로 이어서 작업해요. 원문 대화는 전달되지 않아요.':'“'+esc(target.title||'')+'” will continue from this approved material. The raw conversation is not transferred.')+'</p>'+
+      '<label>'+(APP_LANG==='ko'?'만들어진 결과':'What was produced')+'<textarea data-proposal-handoff-field="output_summary">'+esc(handoff.output_summary||resultSuggestion)+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'다음 Leaf가 사용할 실제 작업 자료':'Actual working material for the next Leaf')+'<textarea data-proposal-handoff-field="working_material">'+esc(handoff.working_material||payload.what_happened||resultSuggestion)+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'중요한 제약 — 한 줄에 하나':'Important constraints — one per line')+'<textarea data-proposal-handoff-field="constraints">'+esc(Array.isArray(handoff.constraints)?handoff.constraints.join('\n'):handoff.constraints||'')+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'남아 있는 질문':'Unresolved question')+'<textarea data-proposal-handoff-field="unresolved_questions">'+esc(handoff.unresolved_questions||'')+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'다음 Leaf가 시작할 지점':'Suggested starting point')+'<textarea data-proposal-handoff-field="suggested_start">'+esc(handoff.suggested_start||'')+'</textarea></label></div>':
+      '<div class="leaf-workspace-handoff-editor"><p class="hint">'+(APP_LANG==='ko'?'이 Project에 다음 활성 Leaf가 없어요. 완료 후 Project를 검토해 다음 단계를 제안해요.':'There is no next active Leaf in this Project. After completion, Faerie will review the Project for the next step.')+'</p></div>';
+    return '<div class="leaf-workspace-proposal-editor"><p class="hint">'+
+      (APP_LANG==='ko'?'페어리가 대화에서 초안을 만들었어요. 승인하기 전에 자유롭게 수정하세요.':'Faerie drafted these from the conversation. Adjust them freely before approval.')+'</p>'+
+      '<label>'+(APP_LANG==='ko'?'제안된 확인 결과':'Suggested confirmed result')+'<textarea data-proposal-field="result">'+
+      esc(resultSuggestion)+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'실제로 일어난 일':'What happened')+'<textarea data-proposal-field="what_happened">'+
+      esc(payload.what_happened||resultSuggestion)+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'제안된 배운 점':'Suggested lesson')+'<textarea data-proposal-field="lesson">'+
+      esc(lessonSuggestion)+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'예상했던 장애물 · 선택 사항':'Expected obstacle · optional')+'<textarea data-proposal-field="expected_obstacle">'+
+      esc(payload.expected_obstacle||'')+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'놀라웠던 점 · 선택 사항':'What surprised you · optional')+'<textarea data-proposal-field="surprise">'+
+      esc(payload.surprise||'')+'</textarea></label>'+
+      '<label>'+(APP_LANG==='ko'?'도움이 된 정도 · 선택 사항':'How helpful was this? · optional')+'<select data-proposal-field="helpfulness"><option value="">'+
+      (APP_LANG==='ko'?'평가 안 함':'Not rated')+'</option>'+Array.from({length:11},(_,i)=>'<option value="'+i+'" '+(helpful===String(i)?'selected':'')+'>'+i+' / 10</option>').join('')+'</select></label>'+
+      '<label>'+(APP_LANG==='ko'?'다음에는 무엇을 조정할까요? · 선택 사항':'What should change next? · optional')+'<textarea data-proposal-field="next_adjustment">'+
+      esc(payload.next_adjustment||'')+'</textarea></label>'+handoffEditor+'</div>';
+  }
+  return '';
+}
+
+function leafWorkspaceProposalHtml(proposal,messageContent){
+  const status=String(proposal.status||'pending').toLowerCase();
+  const pending=status==='pending'||status==='proposed'||!status;
+  const type=String(proposal.type||''), editor=leafWorkspaceProposalEditorHtml(proposal,messageContent);
+  const approve=(type==='plan'||type==='revise_plan')
+    ?(APP_LANG==='ko'?'계획 적용':'Apply plan'):(type==='complete_leaf'&&proposal.payload&&proposal.payload.handoff_target
+      ?(APP_LANG==='ko'?'완료하고 인계':'Complete & hand off'):(APP_LANG==='ko'?'승인':'Approve'));
+  return '<section class="leaf-workspace-proposal" data-proposal-id="'+esc(proposal.id)+'"><div class="leaf-workspace-proposal-head"><b>'+
+    esc(leafWorkspaceProposalTypeLabel(type))+'</b><span class="leaf-workspace-proposal-status">'+esc(leafWorkspaceProposalStatusLabel(status))+'</span></div>'+
+    (proposal.rationale?'<p class="hint">'+esc(proposal.rationale)+'</p>':'')+
+    '<div class="leaf-workspace-proposal-summary">'+esc(leafWorkspaceProposalSummary(proposal))+'</div>'+editor+
+    (pending?'<div class="actions">'+(editor?'<button type="button" data-proposal-edit>'+
+      (type==='complete_leaf'?(APP_LANG==='ko'?'편집 닫기':'Hide edit'):(APP_LANG==='ko'?'편집':'Edit'))+'</button>':'')+
+      '<button type="button" data-proposal-decision="keep_discussing">'+(APP_LANG==='ko'?'계속 논의':'Keep discussing')+'</button>'+
+      '<button type="button" class="accent" data-proposal-decision="approve">'+approve+'</button></div>':'')+'</section>';
+}
+
+function leafCoachMessageHtml(message){
+  const payload=message.payload||{}, content=message.content||payload.content||payload.text||'';
+  const role=message.role==='user'?'user':'assistant';
+  const suggestions=leafWorkspaceMessageSuggestions(message,payload);
+  const selectionMode=leafWorkspaceMessageSelectionMode(message,payload);
+  const proposals=leafWorkspaceMessageProposals(message,payload);
+  const suggestionsHtml=!suggestions.length?'':selectionMode==='multiple'
+    ?'<fieldset class="leaf-workspace-multiselect" data-selection-message="'+esc(message.id)+'"><legend>'+
+      (APP_LANG==='ko'?'해당하는 항목을 모두 선택하세요':'Select all that apply')+'</legend>'+
+      '<ul class="leaf-workspace-suggestions">'+suggestions.map(item=>
+        '<li><label class="leaf-workspace-suggestion"><input type="checkbox" data-multi-suggestion="'+esc(item.id)+'">'+
+        '<span class="leaf-workspace-suggestion-copy"><span>'+esc(item.label)+'</span>'+
+        (item.description?'<small>'+esc(item.description)+'</small>':'')+'</span></label></li>').join('')+'</ul>'+
+      '<button type="button" class="accent leaf-workspace-submit-suggestions" data-submit-suggestions disabled>'+
+      (APP_LANG==='ko'?'선택 항목 제출':'Submit selected')+'</button></fieldset>'
+    :'<ul class="leaf-workspace-suggestions" aria-label="'+(APP_LANG==='ko'?'제안':'Suggestions')+'">'+suggestions.map(item=>
+      '<li><button type="button" class="leaf-workspace-suggestion" data-message-id="'+esc(message.id)+
+      '" data-suggestion-id="'+esc(item.id)+'"><span>'+esc(item.label)+'</span>'+
+      (item.description?'<small>'+esc(item.description)+'</small>':'')+'</button></li>').join('')+'</ul>';
+  return '<article class="leaf-coach-message '+role+'" data-workspace-message="'+esc(message.id)+'">'+
+    (content?'<div>'+conversationHtml(content)+'</div>':'')+
+    suggestionsHtml+
+    proposals.map(proposal=>leafWorkspaceProposalHtml(proposal,content)).join('')+'</article>';
+}
+
+function leafWorkspaceLegacyHtml(messages){
+  if(!Array.isArray(messages)||!messages.length) return '';
+  return '<details class="leaf-workspace-legacy"><summary>'+(APP_LANG==='ko'?'이전 Leaf 코칭 대화':'Earlier Leaf coaching conversation')+
+    ' · '+messages.length+'</summary><div class="leaf-workspace-legacy-body">'+messages.map(message=>{
+      const payload=message.payload||{}, content=message.content||payload.content||payload.text||'';
+      return '<div class="leaf-coach-message '+(message.role==='user'?'user':'assistant')+'">'+conversationHtml(content)+'</div>';
+    }).join('')+'</div></details>';
+}
+
+function leafWorkspacePlaceholder(phase){
+  const key=String(phase||'shape').toLowerCase();
+  if(APP_LANG==='ko'){
+    if(key==='approve'||key==='approval') return '질문하거나 제안을 다듬어 주세요…';
+    if(key==='work'||key==='working'||key==='doing') return '도움을 요청하거나, 진행 상황을 공유하거나, 계획을 바꿔 주세요…';
+    if(key==='reflect'||key==='reflecting') return '무슨 일이 있었고 무엇을 배웠는지 알려주세요…';
+    if(key==='complete'||key==='completed') return '마지막 메모를 추가하거나 Leaf를 다시 열어 주세요…';
+    return '맞는 점, 아닌 점, 원하는 다른 방향을 알려주세요…';
+  }
+  if(key==='approve'||key==='approval') return 'Ask a question or refine the proposal…';
+  if(key==='work'||key==='working'||key==='doing') return 'Ask for help, share progress, or change the plan…';
+  if(key==='reflect'||key==='reflecting') return 'Tell Faerie what happened or what you learned…';
+  if(key==='complete'||key==='completed') return 'Add a final note or reopen the Leaf…';
+  return "Tell me what fits, what doesn't, or what you want instead…";
+}
+
+function leafWorkspaceIncomingHtml(handoffs){
+  if(!Array.isArray(handoffs)||!handoffs.length) return '';
+  return handoffs.map(item=>{
+    const payload=item.payload||{}, constraints=Array.isArray(payload.constraints)?payload.constraints:[];
+    return '<section class="leaf-workspace-card leaf-workspace-handoff"><div class="leaf-workspace-card-title">'+
+      (APP_LANG==='ko'?'이전 Leaf에서 승인된 인계':'Approved handoff from an earlier Leaf')+'</div><div class="leaf-workspace-handoff-source">'+
+      esc(item.source_title||'')+' → '+esc(item.destination_title||'')+'</div><div class="leaf-workspace-handoff-material">'+
+      esc(payload.output_summary||'')+(payload.working_material&&payload.working_material!==payload.output_summary?'\n\n'+esc(payload.working_material):'')+'</div><div class="leaf-workspace-handoff-meta">'+
+      (constraints.length?'<div><b>'+(APP_LANG==='ko'?'제약':'Constraints')+'</b><div>'+esc(constraints.join(' · '))+'</div></div>':'')+
+      (payload.unresolved_questions?'<div><b>'+(APP_LANG==='ko'?'열린 질문':'Open question')+'</b><div>'+esc(payload.unresolved_questions)+'</div></div>':'')+
+      (payload.suggested_start?'<div><b>'+(APP_LANG==='ko'?'여기서 시작':'Start here')+'</b><div>'+esc(payload.suggested_start)+'</div></div>':'')+
+      '</div></section>';
+  }).join('');
+}
+
+function renderLeafCoach(){
+  if(!leafCoachView) return;
+  const view=leafCoachView;
+  $('leaf-coach-title').textContent=(APP_LANG==='ko'?'Leaf 에이전트 · ':'Leaf Agent · ')+(view.title||'');
+  $('leaf-workspace-badges').innerHTML='<span class="leaf-workspace-badge">'+esc(leafWorkspacePhaseLabel(view.phase))+'</span>'+
+    '<span class="leaf-workspace-badge">'+esc(leafWorkspaceKindLabel(view.kind))+'</span>'+
+    (view.completed?'<span class="leaf-workspace-badge">'+(APP_LANG==='ko'?'완료됨':'Completed')+'</span>':'');
+  const boundary=$('leaf-coach-boundary'), copy=$('leaf-coach-boundary-copy');
+  if(boundary) boundary.querySelector('summary').textContent=APP_LANG==='ko'?'이 에이전트가 볼 수 있는 범위':'What this agent can see';
+  if(copy) copy.textContent=APP_LANG==='ko'
+    ?'이 Leaf, 상위 경로, 연결된 탐구, 이 작업 공간의 대화와 이 Leaf로 명시적으로 승인된 인계만 볼 수 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요. 다른 Leaf의 원문 대화도 전달되지 않아요.'
+    :'It can see this Leaf, its parent path, linked Investigations, this workspace conversation, and handoffs explicitly approved for this Leaf. It cannot see other Branches, global memory, the main chat, or screen activity, and it never receives another Leaf’s raw conversation.';
+  $('leaf-workspace-incoming').innerHTML=leafWorkspaceIncomingHtml(view.incoming_handoffs);
+  $('leaf-workspace-agreement').innerHTML=leafWorkspaceAgreementHtml(view.agreement);
+  $('leaf-workspace-plan').innerHTML=leafWorkspacePlanHtml(view.plan);
+  $('leaf-coach-messages').innerHTML=(view.messages||[]).map(leafCoachMessageHtml).join('');
+  $('leaf-workspace-legacy').innerHTML=leafWorkspaceLegacyHtml(view.legacy_messages);
+  $('leaf-coach-input').placeholder=leafWorkspacePlaceholder(view.completed?'completed':view.phase);
+  leafWorkspaceBindActions();
+  leafWorkspaceSetEnabled(true);
+  const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
+  if(scroller) scroller.scrollTop=scroller.scrollHeight;
+}
+
+function leafWorkspaceFindMessage(messageId){
+  return leafCoachView&&(leafCoachView.messages||[]).find(message=>String(message.id)===String(messageId));
+}
+
+function leafWorkspaceFindProposal(proposalId){
+  for(const message of (leafCoachView&&leafCoachView.messages||[])){
+    const proposals=leafWorkspaceMessageProposals(message,message.payload||{});
+    const found=proposals.find(proposal=>String(proposal.id)===String(proposalId));
+    if(found) return found;
+  }
+  return null;
+}
+
+function leafWorkspaceProposalDraftKey(proposalId){
+  return 'faerie_leaf_proposal_draft_v1:'+(leafCoachView&&leafCoachView.leaf_id||'unknown')+':'+proposalId;
+}
+
+function saveLeafWorkspaceProposalDraft(card){
+  if(!card) return;
+  const values={};
+  card.querySelectorAll('[data-proposal-field]').forEach(field=>values[field.dataset.proposalField]=field.value);
+  card.querySelectorAll('[data-proposal-handoff-field]').forEach(field=>values['handoff.'+field.dataset.proposalHandoffField]=field.value);
+  try{localStorage.setItem(leafWorkspaceProposalDraftKey(card.dataset.proposalId),JSON.stringify(values));}catch(e){}
+}
+
+function restoreLeafWorkspaceProposalDraft(card){
+  if(!card) return;
+  try{
+    const values=JSON.parse(localStorage.getItem(leafWorkspaceProposalDraftKey(card.dataset.proposalId))||'null');
+    if(!values||typeof values!=='object') return;
+    card.querySelectorAll('[data-proposal-field]').forEach(field=>{
+      if(Object.prototype.hasOwnProperty.call(values,field.dataset.proposalField)) field.value=values[field.dataset.proposalField];
+    });
+    card.querySelectorAll('[data-proposal-handoff-field]').forEach(field=>{
+      const key='handoff.'+field.dataset.proposalHandoffField;
+      if(Object.prototype.hasOwnProperty.call(values,key)) field.value=values[key];
+    });
+  }catch(e){}
+}
+
+function clearLeafWorkspaceProposalDraft(proposalId){
+  try{localStorage.removeItem(leafWorkspaceProposalDraftKey(proposalId));}catch(e){}
+}
+
+function leafWorkspaceBindActions(){
+  document.querySelectorAll('#leaf-coach-messages .leaf-workspace-proposal').forEach(card=>{
+    restoreLeafWorkspaceProposalDraft(card);
+    card.querySelectorAll('[data-proposal-field],[data-proposal-handoff-field]').forEach(field=>field.addEventListener('input',()=>saveLeafWorkspaceProposalDraft(card)));
+  });
+  document.querySelectorAll('#leaf-coach-messages button.leaf-workspace-suggestion').forEach(button=>button.onclick=()=>{
+    const message=leafWorkspaceFindMessage(button.dataset.messageId);
+    if(!message) return;
+    const suggestion=leafWorkspaceMessageSuggestions(message,message.payload||{})
+      .find(item=>String(item.id)===String(button.dataset.suggestionId));
+    if(suggestion){
+      button.classList.add('selected');button.setAttribute('aria-pressed','true');
+      document.querySelectorAll('#leaf-coach-messages .leaf-workspace-suggestion').forEach(item=>item.disabled=true);
+      sendLeafCoachMessage(suggestion.label,{
+        kind:'suggestion_selected',suggestion_id:suggestion.id,label:suggestion.label,message_id:message.id
+      },APP_LANG==='ko'?'“'+suggestion.label+'” 선택됨 · 생각하는 중…':'Selected “'+suggestion.label+'” · thinking…');
+    }
+  });
+  document.querySelectorAll('#leaf-coach-messages .leaf-workspace-multiselect').forEach(group=>{
+    const checks=[...group.querySelectorAll('[data-multi-suggestion]')];
+    const submit=group.querySelector('[data-submit-suggestions]');
+    checks.forEach(check=>check.onchange=()=>{
+      check.closest('.leaf-workspace-suggestion').classList.toggle('selected',check.checked);
+      submit.disabled=!checks.some(item=>item.checked);
+    });
+    submit.onclick=()=>{
+      const message=leafWorkspaceFindMessage(group.dataset.selectionMessage);
+      if(!message) return;
+      const available=leafWorkspaceMessageSuggestions(message,message.payload||{});
+      const ids=checks.filter(item=>item.checked).map(item=>item.dataset.multiSuggestion);
+      const selected=ids.map(id=>available.find(item=>String(item.id)===String(id))).filter(Boolean);
+      if(!selected.length) return;
+      group.querySelectorAll('input,button').forEach(control=>control.disabled=true);
+      const labels=selected.map(item=>item.label);
+      const text=(APP_LANG==='ko'?'선택: ':'Selected: ')+labels.join(', ');
+      sendLeafCoachMessage(text,{
+        kind:'select_suggestions',suggestion_ids:selected.map(item=>item.id),
+        labels,message_id:message.id
+      },APP_LANG==='ko'?selected.length+'개 선택됨 · 생각하는 중…':selected.length+' selected · thinking…');
+    };
+  });
+  document.querySelectorAll('#leaf-coach-messages [data-proposal-edit]').forEach(button=>button.onclick=()=>{
+    const card=button.closest('.leaf-workspace-proposal'), editor=card&&card.querySelector('.leaf-workspace-proposal-editor');
+    if(!editor) return;
+    editor.hidden=!editor.hidden;
+    button.textContent=editor.hidden?(APP_LANG==='ko'?'편집':'Edit'):(APP_LANG==='ko'?'편집 닫기':'Hide edit');
+  });
+  document.querySelectorAll('#leaf-coach-messages [data-proposal-decision]').forEach(button=>button.onclick=()=>{
+    const card=button.closest('.leaf-workspace-proposal');
+    if(card) decideLeafWorkspaceProposal(card.dataset.proposalId,button.dataset.proposalDecision,card);
+  });
+}
+
+function leafWorkspaceEditedPayload(card,proposal){
+  const original=proposal&&proposal.payload||{}, payload=JSON.parse(JSON.stringify(original||{}));
+  const fields=card.querySelectorAll('[data-proposal-field]');
+  fields.forEach(field=>{
+    const key=field.dataset.proposalField, value=String(field.value||'').trim();
+    if(key==='items'){
+      const lines=value.split(/\r?\n/).map(line=>line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+      const old=original.items||(original.plan&&original.plan.items)||original.steps||[];
+      payload.items=lines.map((text,index)=>{
+        const prior=old[index];
+        return typeof prior==='object'&&prior?Object.assign({},prior,{text}):{text};
+      });
+      delete payload.steps;
+      if(payload.plan) payload.plan=Object.assign({},payload.plan,{items:payload.items});
+    }else if(key==='constraints'){
+      payload.constraints=value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+    }else{
+      payload[key]=value;
+      if(key==='resolution'){
+        if('result' in payload) payload.result=value;
+        if('summary' in payload) payload.summary=value;
+      }
+    }
+  });
+  const handoffFields=card.querySelectorAll('[data-proposal-handoff-field]');
+  if(handoffFields.length){
+    payload.handoff=Object.assign({},original.handoff||{});
+    handoffFields.forEach(field=>{
+      const key=field.dataset.proposalHandoffField, value=String(field.value||'').trim();
+      payload.handoff[key]=key==='constraints'
+        ?value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean):value;
+    });
+  }
+  return payload;
+}
+
+function refreshAfterLeafCompletion(leafId,parentId,handoffLeafId){
+  if(!api()) return Promise.resolve();
+  if($('goal-status')) $('goal-status').innerHTML='<span class="spin"></span> '+
+    (APP_LANG==='ko'?'다음 Leaf를 찾는 중…':'Finding the next Leaf…');
+  return pywebview.api.goal_state().then(result=>{
+    if($('goal-status')) $('goal-status').textContent='';
+    if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not refresh Growth.');
+    goalState=result;
+    const completed=goalFind(goalState.tree,parseInt(leafId,10));
+    let parent=goalFind(goalState.tree,parseInt(parentId,10))||
+      (completed?goalFindParent(goalState.tree,completed.id):null)||goalState.tree;
+    let next=handoffLeafId?goalFind(goalState.tree,parseInt(handoffLeafId,10)):null;
+    if(next&&(next.type!=='task'||next.status!=='active')) next=null;
+    let reviewScope=parent;
+    while(reviewScope&&reviewScope.type!=='umbrella'&&reviewScope.semantic_role!=='project'){
+      const above=goalFindParent(goalState.tree,reviewScope.id);
+      if(!above) break;
+      reviewScope=above;
+    }
+    if(!reviewScope||reviewScope.type==='umbrella') reviewScope=parent;
+    selectedGoalId=next?next.id:reviewScope.id;
+    renderGrowthViewMode();
+    loadGoalAIOverview();
+    if(next){
+      loadGoalAgent(next.id);
+      toast(APP_LANG==='ko'
+        ?'Leaf를 완료했어요. 다음 활성 Leaf를 열었습니다.'
+        :'Leaf completed. The next active Leaf is open.');
+      return;
+    }
+    loadGoalAgent(reviewScope.id);
+    toast(APP_LANG==='ko'
+      ?'Leaf를 완료했어요. 이 Project를 검토하여 다음 단계 또는 완료 제안을 준비하고 있습니다.'
+      :'Leaf completed. Faerie is reviewing this Project for its next step or completion.');
+    reviewGoalAgent(reviewScope.id,false);
+  }).catch(error=>{
+    if($('goal-status')) $('goal-status').textContent='';
+    toast((APP_LANG==='ko'?'완료 후 화면을 새로 고칠 수 없어요: ':'Could not refresh after completion: ')+error,true);
+    return loadGoals();
+  });
+}
+
+function decideLeafWorkspaceProposal(proposalId,decision,card){
+  if(!leafCoachView||!api()||!pywebview.api.goal_leaf_workspace_decide) return;
+  const proposal=leafWorkspaceFindProposal(proposalId);
+  if(!proposal) return;
+  const leafId=leafCoachView.leaf_id, nonce=leafWorkspaceRequestNonce;
+  const completing=decision==='approve'&&proposal.type==='complete_leaf';
+  const parent=goalState&&goalState.tree?goalFindParent(goalState.tree,parseInt(leafId,10)):null;
+  const editedPayload=leafWorkspaceEditedPayload(card,proposal);
+  card.querySelectorAll('button,textarea,select,input').forEach(control=>control.disabled=true);
+  leafWorkspaceSetLoading(true,APP_LANG==='ko'?'제안을 업데이트하는 중…':'Updating the proposal…');
+  const run=()=>pywebview.api.goal_leaf_workspace_decide(leafId,proposalId,decision,editedPayload).then(result=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    const view=leafWorkspaceResult(result);
+    if(!view) throw new Error(APP_LANG==='ko'?'업데이트된 Leaf 작업 공간이 없어요.':'Updated Leaf Workspace is missing.');
+    leafCoachView=view;
+    clearLeafWorkspaceProposalDraft(proposalId);
+    leafWorkspaceSetLoading(false);
+    leafCoachSetError('');
+    if(completing){
+      const warning=view.learning_sync_warning;
+      closeLeafCoach();
+      if(warning) toast(APP_LANG==='ko'
+        ?'Leaf는 완료되었고 결과도 안전하게 저장되었지만 일부 추가 학습 동기화는 완료되지 않았어요.'
+        :'The Leaf and its outcome were saved, but part of the additional learning sync did not finish.',true);
+      refreshAfterLeafCompletion(leafId,parent&&parent.id,
+        view.completion_handoff&&view.completion_handoff.destination_leaf_id);
+      return;
+    }
+    renderLeafCoach();
+    if(decision==='approve') loadGoals();
+  }).catch(error=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    leafWorkspaceSetLoading(false);
+    card.querySelectorAll('button,textarea,select,input').forEach(control=>control.disabled=false);
+    leafCoachSetError(String(error.message||error),run);
+  });
+  run();
 }
 
 function decideLeafCoachRevision(messageId,approved,box){
@@ -5615,26 +6456,32 @@ function syncLeafCoachStepCompletion(view){
   return changed;
 }
 
-function openLeafCoach(node,stepIndex){
+function openLegacyLeafCoach(node,stepIndex){
   if(!api()||!node||node.type!=='task') return;
   const steps=goalLeafSteps(node);
-  if(stepIndex<0||stepIndex>=steps.length) return;
+  if(stepIndex<0||stepIndex>=Math.max(1,steps.length)) stepIndex=0;
   leafCoachLeafId=node.id;
   const drawer=$('leaf-step-coach');
   drawer.classList.add('open');
-  $('leaf-coach-title').textContent=APP_LANG==='ko'?'Leaf 코치':'Leaf Coach';
-  $('leaf-coach-boundary').textContent=APP_LANG==='ko'?'가장 관련 있는 첫 질문을 준비하는 중…':'Preparing the most relevant first question…';
-  $('leaf-coach-messages').innerHTML='<div class="hint"><span class="spin"></span> Loading…</div>';
-  leafCoachSetError('');
-  const run=()=>pywebview.api.goal_step_coach_open(node.id,stepIndex).then(result=>{
-    if(!result||result.ok===false) throw new Error((result&&result.message)||'Leaf Coach could not open.');
-    leafCoachView=result.coach; syncLeafCoachStepCompletion(leafCoachView);
-    renderLeafCoach(); $('leaf-coach-input').focus();
-  }).catch(error=>leafCoachSetError(String(error.message||error),run));
+  $('leaf-coach-title').textContent=APP_LANG==='ko'?'Leaf 에이전트':'Leaf Agent';
+  $('leaf-coach-boundary').textContent=APP_LANG==='ko'?'이 Leaf에 맞는 제안을 준비하는 중…':'Preparing useful suggestions for this Leaf…';
+  const run=()=>{
+    $('leaf-coach-messages').innerHTML='<div class="hint"><span class="spin"></span> '+
+      (APP_LANG==='ko'?'불러오는 중…':'Loading…')+'</div>';
+    leafCoachSetError('');
+    return pywebview.api.goal_step_coach_open(node.id,stepIndex).then(result=>{
+      if(!result||result.ok===false) throw new Error((result&&result.message)||'Leaf Coach could not open.');
+      leafCoachView=result.coach; syncLeafCoachStepCompletion(leafCoachView);
+      renderLeafCoach(); $('leaf-coach-input').focus();
+    }).catch(error=>{
+      $('leaf-coach-messages').innerHTML='';
+      leafCoachSetError(String(error.message||error),run);
+    });
+  };
   run();
 }
 
-function sendLeafCoachMessage(text){
+function sendLegacyLeafCoachMessage(text){
   text=String(text||'').trim();
   if(!text||!leafCoachView||!api()) return;
   const button=$('leaf-coach-send');
@@ -5650,28 +6497,130 @@ function sendLeafCoachMessage(text){
   run();
 }
 
+function openLeafCoach(node){
+  if(!api()||!node||node.type!=='task') return;
+  const drawer=$('leaf-step-coach'), nonce=++leafWorkspaceRequestNonce;
+  leafCoachLeafId=node.id;
+  leafCoachView=null;
+  leafWorkspaceSending=false;
+  drawer.classList.add('open');
+  $('leaf-coach-title').textContent=(APP_LANG==='ko'?'Leaf 에이전트 · ':'Leaf Agent · ')+(node.title||'');
+  $('leaf-workspace-badges').innerHTML='';
+  $('leaf-coach-messages').innerHTML='';
+  $('leaf-workspace-incoming').innerHTML='';
+  $('leaf-workspace-agreement').innerHTML='';
+  $('leaf-workspace-plan').innerHTML='';
+  $('leaf-workspace-legacy').innerHTML='';
+  $('leaf-coach-input').value='';
+  leafWorkspaceSetEnabled(false);
+  leafCoachSetError('');
+  leafWorkspaceSetLoading(true,APP_LANG==='ko'?'이 Leaf 작업 공간을 불러오는 중…':'Loading this Leaf Workspace…');
+  const run=()=>{
+    leafCoachSetError('');
+    leafWorkspaceSetLoading(true,APP_LANG==='ko'?'이 Leaf 작업 공간을 불러오는 중…':'Loading this Leaf Workspace…');
+    if(!pywebview.api.goal_leaf_workspace_open){
+      leafWorkspaceSetLoading(false);
+      leafCoachSetError(APP_LANG==='ko'
+        ?'Leaf 작업 공간 브리지를 사용할 수 없어요. Faerie Fire를 완전히 닫았다가 다시 열어 주세요.'
+        :'The Leaf Workspace bridge is unavailable. Fully close and reopen Faerie Fire.');
+      return Promise.resolve();
+    }
+    return pywebview.api.goal_leaf_workspace_open(node.id).then(result=>{
+      if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(node.id)) return;
+      const view=leafWorkspaceResult(result);
+      if(!view) throw new Error(APP_LANG==='ko'?'Leaf 작업 공간 응답이 비어 있어요.':'Leaf Workspace returned an empty response.');
+      if(String(view.leaf_id)!==String(node.id)) return;
+      leafCoachView=view;
+      leafWorkspaceSetLoading(false);
+      renderLeafCoach();
+      $('leaf-coach-input').focus();
+    }).catch(error=>{
+      if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(node.id)) return;
+      leafWorkspaceSetLoading(false);
+      leafWorkspaceSetEnabled(false);
+      leafCoachSetError(String(error.message||error),run);
+    });
+  };
+  run();
+}
+
+function sendLeafCoachMessage(text,event,loadingText){
+  text=String(text||'').trim();
+  if(!text||!leafCoachView||leafWorkspaceSending||!api()||!pywebview.api.goal_leaf_workspace_send) return;
+  const leafId=leafCoachView.leaf_id, nonce=leafWorkspaceRequestNonce;
+  leafWorkspaceSending=true;
+  leafWorkspaceSetEnabled(true);
+  leafCoachSetError('');
+  const input=$('leaf-coach-input');
+  if(input){input.value='';input.style.height='auto';autoGrow(input);}
+  const messageBox=$('leaf-coach-messages');
+  if(messageBox){
+    const optimistic=document.createElement('article');
+    optimistic.className='leaf-coach-message user';optimistic.dataset.optimistic='true';
+    optimistic.textContent=text;messageBox.appendChild(optimistic);
+    const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
+    if(scroller) scroller.scrollTop=scroller.scrollHeight;
+  }
+  leafWorkspaceSetLoading(true,loadingText||(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…'));
+  const messageEvent=event||{kind:'message'};
+  const run=()=>pywebview.api.goal_leaf_workspace_send(leafId,text,messageEvent).then(result=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    const view=leafWorkspaceResult(result);
+    if(!view) throw new Error(APP_LANG==='ko'?'Leaf 작업 공간 응답이 비어 있어요.':'Leaf Workspace returned an empty response.');
+    leafCoachView=view;
+    leafWorkspaceSending=false;
+    leafWorkspaceSetLoading(false);
+    leafCoachSetError('');
+    renderLeafCoach();
+  }).catch(error=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    leafWorkspaceSending=false;
+    leafWorkspaceSetLoading(false);
+    leafWorkspaceSetEnabled(true);
+    document.querySelectorAll('#leaf-coach-messages button').forEach(button=>button.disabled=false);
+    leafCoachSetError(String(error.message||error),run);
+    if(input){input.value=text;autoGrow(input);input.focus();}
+  });
+  run();
+}
+
+function clearLeafWorkspaceConversation(){
+  if(!leafCoachView||!api()||!pywebview.api.goal_leaf_workspace_clear) return;
+  if(!confirm(APP_LANG==='ko'
+    ?'이 Leaf의 대화만 지울까요? 승인된 합의, 계획, 진행 상태와 확인된 해결 기록은 유지돼요.'
+    :'Clear only this Leaf’s conversation? Its approved agreement, plan, progress, and confirmed resolutions will remain.')) return;
+  const leafId=leafCoachView.leaf_id, nonce=leafWorkspaceRequestNonce;
+  leafWorkspaceSending=true;
+  leafWorkspaceSetEnabled(true);
+  leafWorkspaceSetLoading(true,APP_LANG==='ko'?'대화를 지우는 중…':'Clearing conversation…');
+  const run=()=>pywebview.api.goal_leaf_workspace_clear(leafId).then(result=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    const view=leafWorkspaceResult(result);
+    if(!view) throw new Error(APP_LANG==='ko'?'업데이트된 Leaf 작업 공간이 없어요.':'Updated Leaf Workspace is missing.');
+    leafCoachView=view;
+    leafWorkspaceSending=false;
+    leafWorkspaceSetLoading(false);
+    leafCoachSetError('');
+    renderLeafCoach();
+  }).catch(error=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    leafWorkspaceSending=false;
+    leafWorkspaceSetLoading(false);
+    leafWorkspaceSetEnabled(true);
+    leafCoachSetError(String(error.message||error),run);
+  });
+  run();
+}
+
+initLeafCoachResize();
 if($('leaf-coach-close')) $('leaf-coach-close').onclick=closeLeafCoach;
 if($('leaf-coach-send')) $('leaf-coach-send').onclick=()=>sendLeafCoachMessage($('leaf-coach-input').value);
 if($('leaf-coach-input')) $('leaf-coach-input').addEventListener('keydown',event=>{
-  if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)&&!event.isComposing){
+  if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){
     event.preventDefault(); sendLeafCoachMessage(event.currentTarget.value);
   }
 });
-document.querySelectorAll('[data-coach-shortcut]').forEach(button=>button.onclick=()=>{
-  const prompts={example:'Show me a concrete example I can copy.',smaller:'Make this step smaller and easier to start.',stuck:'I’m stuck. Ask me the one question that will identify why.'};
-  sendLeafCoachMessage(prompts[button.dataset.coachShortcut]||button.textContent);
-});
-if($('leaf-coach-clear')) $('leaf-coach-clear').onclick=()=>{
-  if(!leafCoachView||!confirm(APP_LANG==='ko'
-    ?'이 Leaf의 코칭 대화를 지울까요? 확인된 단계 해결 기록은 유지돼요.'
-    :'Clear this Leaf’s coaching conversation? Confirmed step resolutions will remain.')) return;
-  pywebview.api.goal_step_coach_clear(leafCoachView.leaf_id).then(result=>{
-    if(!result||result.ok===false){ leafCoachSetError((result&&result.message)||'Could not clear Leaf Coach.'); return; }
-    const node=goalFind(goalState.tree,leafCoachView.leaf_id);
-    const step=leafCoachView.focus_step_index;
-    leafCoachView=null; openLeafCoach(node,step);
-  }).catch(error=>leafCoachSetError(String(error.message||error)));
-};
+if($('leaf-coach-clear')) $('leaf-coach-clear').onclick=clearLeafWorkspaceConversation;
 
 function goalNodeNeedsDefinition(node){
   if(!node||node.type==='umbrella') return false;
@@ -5689,14 +6638,11 @@ function goalDefinitionLabel(node){
 }
 
 function goalDefinitionStarterHtml(node){
+  if(node.type==='task') return goalLeafStepsHtml(node);
   const label=goalDefinitionLabel(node);
   const hint=APP_LANG==='ko'
-    ?(node.type==='task'
-      ?'이 Leaf는 아직 제목만 있어요. 결과, 완료도, 성찰을 추적하기 전에 구체적인 행동을 정의하세요.'
-      :'이 '+goalTypeLabel(node.type,node)+'는 아직 제목만 있어요. 페어리가 평가하거나 확장하기 전에 의미를 정의하세요.')
-    :(node.type==='task'
-      ?'This Leaf only has a title so far. Define the concrete action before tracking outcomes, completion, or reflection.'
-      :'This '+goalTypeLabel(node.type,node)+' only has a title so far. Define what it means before Faerie evaluates or expands it.');
+    ?'이 '+goalTypeLabel(node.type,node)+'는 아직 제목만 있어요. 페어리가 평가하거나 확장하기 전에 의미를 정의하세요.'
+    :'This '+goalTypeLabel(node.type,node)+' only has a title so far. Define what it means before Faerie evaluates or expands it.';
   return '<div class="goal-recap-card goal-definition-starter"><div class="cur-sub">'+esc(label)+'</div>'+
     '<p class="goal-focus-muted">'+esc(hint)+'</p>'+
     '<div class="actions"><button class="accent" id="goal-focus-draft-steps">Draft steps with GoalAI</button></div>'+
@@ -5772,6 +6718,92 @@ function goalRecapHtml(node,agentState,curiosities,evidence){
       : '')+'</div>';
 }
 
+function goalLeafWorkspaceTabHtml(node){
+  if(!node||node.type!=='task') return '';
+  const workspace=node.leaf_workspace||{}, agreement=workspace.agreement||{};
+  const pending=workspace.pending_proposal||null, outcome=(node.outcomes||[])[0]||{};
+  const result=agreement.result||outcome.what_happened||node.title||'';
+  const lesson=agreement.lesson||outcome.changed_understanding||'';
+  const next=agreement.next_adjustment||outcome.next_adjustment||'';
+  if(node.status==='completed'){
+    return '<section class="goal-recap-card goal-completion-receipt"><div class="cur-sub">'+
+      (APP_LANG==='ko'?'완료된 Leaf':'Completed Leaf')+'</div><div class="goal-recap-grid">'+
+      (result?'<div class="goal-recap-item"><b>'+(APP_LANG==='ko'?'확인된 결과':'Confirmed result')+'</b>'+goalReadableBlock(result)+'</div>':'')+
+      (lesson?'<div class="goal-recap-item"><b>'+(APP_LANG==='ko'?'배운 점':'What was learned')+'</b>'+goalReadableBlock(lesson)+'</div>':'')+
+      (next?'<div class="goal-recap-item"><b>'+(APP_LANG==='ko'?'다음에 반영할 점':'Carry forward')+'</b>'+goalReadableBlock(next)+'</div>':'')+
+      '</div><p class="hint">'+(APP_LANG==='ko'
+        ?'이 Leaf는 활성 지도에서 숨겨졌지만 결과, 대화와 증거는 그대로 보존돼요.'
+        :'This Leaf is hidden from the active map, while its result, conversation, and evidence remain preserved.')+'</p>'+
+      '<div class="actions"><button class="goal-completed-conversation">'+(APP_LANG==='ko'?'대화 보기':'View conversation')+'</button>'+
+      '<button class="accent goal-completed-reopen">'+(APP_LANG==='ko'?'이 Leaf 다시 열기':'Reopen this Leaf')+'</button></div></section>';
+  }
+  const values=[];
+  const rawOutcome=String(agreement.outcome||'');
+  const stepsAt=rawOutcome.search(/\s+Steps\s*:\s*(?:\d+[.)]?\s*)?(?:STEP\b|\*\*)/i);
+  const agreedOutcome=goalShortText(stepsAt>=0?rawOutcome.slice(0,stepsAt):rawOutcome,650);
+  if(agreedOutcome) values.push([APP_LANG==='ko'?'합의된 결과':'Agreed outcome',agreedOutcome]);
+  if(agreement.approach) values.push([APP_LANG==='ko'?'선택한 접근 방식':'Chosen approach',agreement.approach]);
+  if(agreement.definition_of_done) values.push([APP_LANG==='ko'?'완료 기준':'Definition of done',agreement.definition_of_done]);
+  const constraints=Array.isArray(agreement.constraints)?agreement.constraints.join(' · '):agreement.constraints;
+  if(constraints) values.push([APP_LANG==='ko'?'확인된 제약':'Confirmed constraints',constraints]);
+  if(workspace.conversation_summary) values.push([APP_LANG==='ko'?'페어리가 현재 이해한 내용':'What Faerie currently understands',goalShortText(workspace.conversation_summary,700)]);
+  if(workspace.plan&&Array.isArray(workspace.plan.items)){
+    const finished=workspace.plan.items.filter(item=>item.status==='completed').length;
+    values.push([APP_LANG==='ko'?'승인된 진행 상황':'Approved progress',APP_LANG==='ko'
+      ?workspace.plan.items.length+'개 중 '+finished+'개 완료 · 계속하려면 Leaf 에이전트를 여세요.'
+      :finished+' of '+workspace.plan.items.length+' complete · Open the Leaf Agent to continue.']);
+  }
+  const ready=pending&&pending.type==='complete_leaf';
+  if(!values.length&&!workspace.plan&&!ready) return '';
+  return '<section class="goal-recap-card goal-leaf-workspace-summary"><div class="cur-sub">'+
+    (APP_LANG==='ko'?'Leaf 대화에서 배운 내용':'What this Leaf conversation established')+'</div>'+
+    (values.length?'<div class="goal-recap-grid">'+values.map(item=>'<div class="goal-recap-item"><b>'+esc(item[0])+'</b>'+goalReadableBlock(item[1])+'</div>').join('')+'</div>':'')+
+    (ready?'<div class="goal-next-action"><b>'+(APP_LANG==='ko'?'완료 검토 준비됨':'Completion review ready')+'</b><span>'+esc(leafWorkspaceProposalSummary(pending))+'</span></div>':'')+
+    '<p class="hint">'+(APP_LANG==='ko'
+      ?'여기에는 원문 대화가 아니라 이 Leaf에서 확인되었거나 검토 중인 이해만 표시돼요.'
+      :'This shows the confirmed or review-ready understanding from the Leaf—not the raw transcript.')+'</p>'+goalLeafStepsHtml(node)+'</section>';
+}
+
+function goalCompletedHistoryHtml(node){
+  if(!node||node.type==='task') return '';
+  const completed=goalFlat(node,[]).slice(1).filter(child=>child.type==='task'&&child.status==='completed');
+  if(!completed.length) return '';
+  return '<details class="goal-full-note goal-completed-history"><summary>'+
+    (APP_LANG==='ko'?'완료된 Leaf':'Completed Leaves')+' · '+completed.length+'</summary><p class="goal-focus-muted">'+
+    (APP_LANG==='ko'?'완료된 작업은 활성 지도에서 벗어나지만 학습과 기록은 여기에 남아요.'
+      :'Finished work leaves the active map, while its learning and history remain here.')+'</p><div>'+completed.map(child=>{
+        const ws=child.leaf_workspace||{}, agreement=ws.agreement||{}, latest=(child.outcomes||[])[0]||{};
+        const result=agreement.result||latest.what_happened||child.title||'';
+        const lesson=agreement.lesson||latest.changed_understanding||'';
+        return '<button class="goal-completed-history-item" data-open="'+child.id+'"><b>'+esc(child.title)+'</b>'+
+          (child.completed_at?'<small>'+esc(new Date(child.completed_at).toLocaleDateString())+'</small>':'')+
+          (result?'<span>'+esc(goalShortText(result,180))+'</span>':'')+
+          (lesson?'<span class="hint">'+esc(goalShortText(lesson,180))+'</span>':'')+'</button>';
+      }).join('')+'</div></details>';
+}
+
+function bindGoalCompletedLeafControls(node,root){
+  if(!node||node.type!=='task'||!root) return;
+  const conversation=root.querySelector('.goal-completed-conversation');
+  if(conversation) conversation.onclick=()=>openLeafCoach(node);
+  const reopen=root.querySelector('.goal-completed-reopen');
+  if(!reopen) return;
+  reopen.onclick=()=>{
+    if(!api()||!pywebview.api.goal_leaf_workspace_reopen) return;
+    reopen.disabled=true;
+    reopen.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'다시 여는 중…':'Reopening…');
+    pywebview.api.goal_leaf_workspace_reopen(node.id).then(result=>{
+      if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not reopen this Leaf.');
+      toast(APP_LANG==='ko'?'Leaf를 활성 지도에 다시 열었어요.':'Leaf reopened on the active map.');
+      return loadGoals();
+    }).catch(error=>{
+      reopen.disabled=false;
+      reopen.textContent=APP_LANG==='ko'?'이 Leaf 다시 열기':'Reopen this Leaf';
+      toast((APP_LANG==='ko'?'Leaf를 다시 열 수 없어요: ':'Could not reopen Leaf: ')+error,true);
+    });
+  };
+}
+
 function goalArchivedHistoryHtml(node){
   const archived=(node.children||[]).filter(child=>child.status==='archived');
   if(!archived.length) return '';
@@ -5779,6 +6811,62 @@ function goalArchivedHistoryHtml(node){
     '<p class="goal-focus-muted">These remain part of your history without cluttering the current map.</p>'+
     '<div>'+archived.map(child=>'<span class="goal-chip" data-open="'+child.id+'">'+
       esc(child.title)+' · '+esc(goalTypeLabel(child.type,child))+'</span>').join('')+'</div></details>';
+}
+
+function goalLifecycleButtonHtml(node){
+  if(!node||node.type==='umbrella') return '';
+  return node.status==='archived'
+    ? '<button class="accent goal-node-restore">'+(APP_LANG==='ko'?'이 항목 복원':'Restore this node')+'</button>'
+    : '<button class="skip goal-node-archive">'+(APP_LANG==='ko'?'이 항목 보관':'Archive this node')+'</button>';
+}
+
+function goalLifecycleActionHtml(node){
+  const button=goalLifecycleButtonHtml(node);
+  return button?'<div class="actions goal-lifecycle-actions">'+button+'</div>':'';
+}
+
+function bindGoalArchiveControls(node,root){
+  if(!node||!root||node.type==='umbrella') return;
+  const archive=root.querySelector('.goal-node-archive');
+  const restore=root.querySelector('.goal-node-restore');
+  if(archive) archive.onclick=()=>{
+    const parent=goalFindParent(goalState.tree,node.id);
+    const count=goalFlat(node,[]).filter(item=>item.status!=='archived').length;
+    const type=goalTypeLabel(node.type,node);
+    const reset=()=>{archive.disabled=false;archive.textContent=APP_LANG==='ko'?'이 항목 보관':'Archive this node';};
+    archive.disabled=true;archive.textContent=APP_LANG==='ko'?'지식 인계 준비 중…':'Preparing knowledge handoff…';
+    pywebview.api.goal_archive_prepare(node.id).then(prepared=>{
+      if(!prepared||prepared.ok===false) throw new Error((prepared&&prepared.message)||'Could not prepare the archive handoff.');
+      const harvest=prepared.harvest||{}, draft=harvest.draft||{};
+      const insightTitles=(draft.insights||[]).slice(0,4).map(item=>'• '+String(item.title||item.detail||'').trim()).filter(Boolean);
+      const message=APP_LANG==='ko'
+        ?'페어리가 첨부된 기록을 검토해 상위 경로로 전달할 지식 인계를 준비했어요.\n\n'+
+          (draft.summary||'재사용할 수 있는 학습을 상위 경로에 남깁니다.')+(insightTitles.length?'\n'+insightTitles.join('\n'):'')+'\n\n'+
+          '“'+node.title+'” '+type+(count>1?' 및 하위 항목 '+(count-1)+'개를':'를')+' 보관할까요? 원본 기록과 완료 상태는 이 항목에 그대로 남고, 요약된 학습만 상위 경로로 흐릅니다.'
+        :'Faerie reviewed the attached context and prepared this knowledge handoff for the parent path:\n\n'+
+          (draft.summary||'Reusable learning will remain visible to the parent path.')+(insightTitles.length?'\n'+insightTitles.join('\n'):'')+'\n\n'+
+          'Archive “'+node.title+'”'+(count>1?' and '+(count-1)+' descendant'+(count>2?'s':''):'')+'? Raw history and completion states stay attached to this node; only the reviewed summary flows upward.';
+      if(!confirm(message)){reset();return;}
+      archive.textContent=APP_LANG==='ko'?'보관 및 인계 중…':'Archiving and handing off…';
+      return pywebview.api.goal_archive(node.id,harvest.id).then(result=>{
+        if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not archive this node.');
+        selectedGoalId=parent?parent.id:goalState.tree.id;
+        applyGoalTreeUpdate(result);
+        toast(APP_LANG==='ko'?'항목을 보관하고 학습 요약을 상위 경로에 전달했어요.':'Node archived and its reviewed learning now flows up the parent path.');
+      });
+    }).catch(error=>{reset();toast('Could not prepare or archive this node: '+error,true);});
+  };
+  if(restore) restore.onclick=()=>{
+    if(!confirm(APP_LANG==='ko'
+      ?'“'+node.title+'” 항목과 함께 보관된 하위 구조를 이전 상태로 복원할까요?'
+      :'Restore “'+node.title+'” and its archived subtree to their previous statuses?')) return;
+    restore.disabled=true;restore.textContent=APP_LANG==='ko'?'복원 중…':'Restoring…';
+    pywebview.api.goal_restore(node.id).then(result=>{
+      if(!result||result.ok===false){restore.disabled=false;restore.textContent=APP_LANG==='ko'?'이 항목 복원':'Restore this node';toast((result&&result.message)||'Could not restore this node.',true);return;}
+      applyGoalTreeUpdate(result);
+      toast(APP_LANG==='ko'?'항목과 하위 구조를 복원했어요.':'Node and subtree restored.');
+    }).catch(error=>{restore.disabled=false;restore.textContent=APP_LANG==='ko'?'이 항목 복원':'Restore this node';toast('Could not restore this node: '+error,true);});
+  };
 }
 
 function goalGardeningProposalHtml(proposal){
@@ -5846,6 +6934,9 @@ function goalOutcomeHtml(node){
     (latest&&latest.next_adjustment?'<div class="goal-next-action"><b>Next experiment should reflect this</b><span>'+esc(latest.next_adjustment)+'</span></div>':'')+
     (history?'<details><summary>Outcome history · '+outcomes.length+'</summary>'+history+'</details>':'')+
     '<details class="outcome-form" '+(outcomes.length?'':'open')+'><summary>Record an outcome</summary>'+
+    '<p class="hint">'+(APP_LANG==='ko'
+      ?'이것은 짧은 실험 회고예요. 실제 결과와 예상의 차이, 놀라웠던 점, 다음에 바꿀 점을 기록하면 페어리가 이후 제안을 조정할 근거로 사용해요. 저장 전 초안은 자동으로 보존돼요.'
+      :'This is a short experiment debrief. Record what differed from expectations, what surprised you, and what to change next; Faerie uses it as evidence when shaping later suggestions. Your draft is autosaved before submission.')+'</p>'+
     '<label>Result<select class="outcome-result"><option value="completed">Completed</option>'+
       '<option value="attempted">Attempted / partial</option><option value="avoided">Avoided</option><option value="abandoned">Abandoned intentionally</option></select></label>'+
     '<label>What happened?<textarea class="outcome-happened" rows="3" placeholder="What actually happened, in plain language?"></textarea></label>'+
@@ -5858,9 +6949,53 @@ function goalOutcomeHtml(node){
     '<div class="actions"><button class="outcome-save accent">Save outcome and teach Faerie</button></div></details></div>';
 }
 
+function goalOutcomeDraftKey(nodeId){ return 'faerie_goal_outcome_draft_v1:'+nodeId; }
+
+function goalOutcomeDraftValues(root){
+  const selectors={result:'.outcome-result',what_happened:'.outcome-happened',
+    expected_obstacle:'.outcome-obstacle',surprise:'.outcome-surprise',
+    helpfulness:'.outcome-helpfulness',changed_understanding:'.outcome-changed',
+    next_adjustment:'.outcome-next'};
+  const values={};
+  Object.entries(selectors).forEach(([key,selector])=>{
+    const field=root.querySelector(selector);if(field) values[key]=field.value;
+  });
+  return values;
+}
+
+function saveGoalOutcomeDraft(nodeId,root){
+  try{localStorage.setItem(goalOutcomeDraftKey(nodeId),JSON.stringify(goalOutcomeDraftValues(root)));}catch(e){}
+}
+
+function restoreGoalOutcomeDraft(nodeId,root){
+  try{
+    const values=JSON.parse(localStorage.getItem(goalOutcomeDraftKey(nodeId))||'null');
+    if(!values||typeof values!=='object') return;
+    const selectors={result:'.outcome-result',what_happened:'.outcome-happened',
+      expected_obstacle:'.outcome-obstacle',surprise:'.outcome-surprise',
+      helpfulness:'.outcome-helpfulness',changed_understanding:'.outcome-changed',
+      next_adjustment:'.outcome-next'};
+    Object.entries(selectors).forEach(([key,selector])=>{
+      const field=root.querySelector(selector);
+      if(field&&Object.prototype.hasOwnProperty.call(values,key)) field.value=values[key];
+    });
+    const form=root.querySelector('.outcome-form');if(form) form.open=true;
+    root.querySelectorAll('.outcome-form textarea').forEach(autoGrow);
+  }catch(e){}
+}
+
+function clearGoalOutcomeDraft(nodeId){
+  try{localStorage.removeItem(goalOutcomeDraftKey(nodeId));}catch(e){}
+}
+
 function bindGoalOutcomeControls(node,root){
   if(!root||node.type!=='task') return;
   const save=root.querySelector('.outcome-save'); if(!save) return;
+  restoreGoalOutcomeDraft(node.id,root);
+  root.querySelectorAll('.outcome-form textarea,.outcome-form select').forEach(field=>{
+    field.addEventListener('input',()=>saveGoalOutcomeDraft(node.id,root));
+    field.addEventListener('change',()=>saveGoalOutcomeDraft(node.id,root));
+  });
   save.onclick=()=>{
     const value=selector=>(root.querySelector(selector)&&root.querySelector(selector).value||'').trim();
     const happened=value('.outcome-happened');
@@ -5873,6 +7008,7 @@ function bindGoalOutcomeControls(node,root){
     save.disabled=true;save.textContent='Saving learning…';
     pywebview.api.goal_experiment_outcome(node.id,payload).then(r=>{
       if(!r||r.ok===false){save.disabled=false;save.textContent='Save outcome and teach Faerie';toast((r&&r.message)||'Could not save outcome.',true);return;}
+      clearGoalOutcomeDraft(node.id);
       toast(r.synthesis_drafted?'Outcome saved. A lower-confidence interpretation is ready for review.':'Outcome saved. GoalAI will use it when proposing what comes next.');
       loadGoals();loadCuriosity();
     }).catch(e=>{save.disabled=false;save.textContent='Save outcome and teach Faerie';toast('Could not save outcome: '+e,true);});
@@ -5929,18 +7065,21 @@ function renderGoalFocusPanel(){
   const proposals=(agent&&agent.proposals||[]).slice(0,3);
   const curiosities=(node.curiosities||[]).slice(0,6);
   const evidence=(node.evidence||[]).slice(0,4);
-  if(goalNodeNeedsDefinition(node)){
+  if(node.status!=='completed'&&goalNodeNeedsDefinition(node)){
     panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
       '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
       '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span></div>'+
-      goalDefinitionStarterHtml(node);
+      goalDefinitionStarterHtml(node)+goalLifecycleActionHtml(node);
     const draft=$('goal-focus-draft-steps');
     if(draft) draft.onclick=()=>draftLeafSteps(node);
     bindGoalStepDraft(node,panel);
+    bindGoalLeafAgentEntry(node,panel);
+    bindGoalArchiveControls(node,panel);
     return;
   }
   const recap=goalRecapHtml(node,agentState,curiosities,evidence);
   const relevance=goalRelevanceHasContent(node)?goalRelevanceHtml(node):'';
+  const workspaceHtml=node.type==='task'?goalLeafWorkspaceTabHtml(node):'';
   const originalNote=node.description||agentState.next_focus||'';
   const mode=goalFocusMode(node);
   const completion=node.completion||{};
@@ -5949,7 +7088,7 @@ function renderGoalFocusPanel(){
     :'';
   const launchReadOnly=appProfile==='launch';
   const pending=goalFocusPending&&goalFocusPending.nodeId===node.id?goalFocusPending:null;
-  const questionCards=(launchReadOnly||pending)?'':(mode==='leaf'?goalQuestionCards(node,agentState,agentQuestions)
+  const questionCards=(launchReadOnly||pending||node.type==='task')?'':(mode==='leaf'?goalQuestionCards(node,agentState,agentQuestions)
     :mode==='brainstorm'?goalBrainstormCards(node):'');
   const pendingCard=pending
     ? '<div class="goal-question-card goal-focus-pending"><b><span class="spin"></span> '+esc(pending.title||'Generating follow-up questions…')+'</b>'+
@@ -5972,7 +7111,7 @@ function renderGoalFocusPanel(){
         '<p class="goal-focus-muted">No active Leaves under this node yet.</p>');
   const agentBrief=String(agentState.brief||'').trim();
   const goalAiHasContent=!!(agent&&(agentBrief||(agentQuestions||[]).length||(proposals||[]).length));
-  const showGoalAi=goalAiHasContent&&(node.type!=='task'||node.status==='completed');
+  const showGoalAi=goalAiHasContent&&node.type!=='task';
   const agentMeta=(agentState.health||Number(agentState.confidence||0)>0||agentState.dirty)
     ?'<div class="goal-focus-muted">'+(agentState.health?esc(agentState.health)+' · ':'')+
       Math.round((agentState.confidence||0)*100)+'% confidence'+
@@ -5981,47 +7120,52 @@ function renderGoalFocusPanel(){
   const goalAiHtml=showGoalAi
     ? (agentBrief?'<div class="agent-brief">'+esc(agentBrief)+'</div>':'')+agentMeta
     : '';
+  const creationButtons=node.type==='umbrella'
+    ? '<button class="accent goal-root-starters-open">'+(APP_LANG==='ko'?'시작 Root 설정':'Set up starter Roots')+'</button>'+
+      '<button class="goal-new-root">'+(APP_LANG==='ko'?'새 Root':'New Root')+'</button>'
+    : (node.type!=='task'
+      ? '<button class="accent goal-add-something">'+(APP_LANG==='ko'?'무언가 추가':'Add something')+'</button>'
+      : '');
   const actionHtml=launchReadOnly
     ? '<div class="actions"><button class="accent" id="goal-focus-ask-command">'+esc(goalAskFaerieLabel(node))+'</button>'+
       (node.type!=='umbrella'?'<button id="goal-focus-restructure">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+'</div>'
-    : '<div class="actions">'+(questionCards?'<button class="accent" id="goal-focus-submit">Submit answers & review node</button>':'')+
+    : (node.type==='task'?'':'<div class="actions">'+(questionCards?'<button class="accent" id="goal-focus-submit">Submit answers & review node</button>':'')+
       (mode==='leaf'?'<button id="goal-focus-dismiss">Dismiss & rethink</button>':'')+
       '<button id="goal-focus-edit">Edit details</button>'+
       '<button id="goal-focus-ask">Ask Agent</button><button id="goal-focus-review">Review node</button>'+
       '<button id="goal-focus-relevance">Review relevance</button>'+
       (node.type!=='umbrella'?'<button id="goal-focus-restructure">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+
-      ((childType||(node.type!=='task'&&node.type!=='umbrella'))
-        ? '<span class="goal-add-wrap"><button id="goal-focus-add" title="Add to this node">+</button>'+
-          '<div class="goal-add-menu" id="goal-focus-add-menu">'+
-          (childType?'<button data-add="'+childType+'">Add '+esc(goalTypeLabel(childType))+'</button>':'')+
-          (node.type!=='task'&&node.type!=='umbrella'?'<button data-add="task">Add Leaf</button>':'')+
-          '</div></span>'
-        : '')+
-      '</div>';
+      creationButtons+
+      '</div>');
+  const visibleActionHtml=node.type==='task'&&node.status==='completed'
+    ?''
+    :node.status==='archived'
+    ?goalLifecycleActionHtml(node)
+    :actionHtml+goalLifecycleActionHtml(node);
   panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
     '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
     '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+
     esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>'+
-    recap+relevance+
-    progressHtml+
-    (node.type==='task'?goalLeafStepsHtml(node)+goalOutcomeHtml(node):'')+
+    (node.type==='task'?(workspaceHtml||(recap+relevance+goalLeafStepsHtml(node))):(recap+relevance+progressHtml))+
     (mode==='rollup'?'<div class="cur-sub">Where each area stands</div>'+goalRollupHtml(node):'')+
     (mode==='brainstorm'
-      ? '<div class="goal-next-action"><b>Brainstorm unlocked</b><span>No active Leaves here. Answer the rethink questions below, then Add Leaf to commit the next experiment.</span></div>'
+      ? '<div class="goal-next-action"><b>Brainstorm unlocked</b><span>'+(APP_LANG==='ko'?'활성 Leaf가 없어요. 아래 질문에 답한 다음 무언가 추가를 눌러 다음 실험을 설명하세요.':'No active Leaves here. Answer the rethink questions below, then use Add something to describe the next experiment.')+'</span></div>'
       : (mode==='leaf'
         ? (leafRows?'<div class="goal-focus-mini">'+leafRows+'</div>':'')
         : '<div class="cur-sub">Address these Leaves next</div><div class="goal-focus-mini">'+leafRows+'</div>'))+
     (mode==='locked'
       ? '<p class="goal-focus-muted">Questions are asked on each Leaf, not here. Open a Leaf to answer them or mark it complete — dismissing one unlocks this Branch for a rethink.</p>'
       : '')+
-    goalArchivedHistoryHtml(node)+
+    goalCompletedHistoryHtml(node)+goalArchivedHistoryHtml(node)+
     pendingCard+
     (questionCards
       ? '<div class="cur-sub">'+(mode==='brainstorm'?'Rethink this Branch':'What are we trying to answer?')+'</div><div id="goal-evidence-questions">'+questionCards+'</div>'
       : '')+
-    (originalNote?'<details class="goal-full-note"><summary>Show full original note</summary><div>'+
+    (originalNote&&!(node.type==='task'&&node.status==='completed')?'<details class="goal-full-note"><summary>Show full original note</summary><div>'+
       esc(originalNote)+'</div></details>':'')+
-    actionHtml+(node.type!=='umbrella'?'<div id="goal-focus-restructure-panel" hidden></div>':'')+
+    visibleActionHtml+(node.type!=='umbrella'?'<div id="goal-focus-restructure-panel" hidden></div>':'')+
+    (node.type==='umbrella'?'<div class="goal-root-starters-panel" hidden></div>':'')+
+    (node.type!=='umbrella'&&node.type!=='task'?'<div class="goal-intake-panel" hidden></div>':'')+
     (showGoalAi?'<div class="cur-sub">What does GoalAI think right now?</div>'+goalAiHtml:'')+
     (showGoalAi&&agentQuestions.length?'<div class="cur-sub">What is GoalAI still asking?</div>'+agentQuestions.map(q=>
       '<div class="resolved-row"><div class="rr-body">'+esc(q.text||q.question||q)+'</div><span class="rr-tag">question</span></div>').join(''):'')+
@@ -6031,6 +7175,7 @@ function renderGoalFocusPanel(){
       '<button class="agent-p-approve accent">'+(['restructure_node','restructure_tree'].includes(p.type)?(APP_LANG==='ko'?'구조 변경 승인':'Approve restructure'):(APP_LANG==='ko'?'승인':'Approve'))+'</button></div></div>').join(''):'');
   bindCollapsePrefs(panel);
   bindGoalFocusPanel(node,childType);
+  bindGoalCompletedLeafControls(node,panel);
 }
 
 function bindGoalRelevanceControls(node,root,reviewButton){
@@ -6070,10 +7215,127 @@ function bindGoalRelevanceControls(node,root,reviewButton){
   });
 }
 
+function bindGoalCreationControls(node,root){
+  if(!root) return;
+  const newRoot=root.querySelector('.goal-new-root');
+  if(newRoot) newRoot.onclick=()=>{
+    const title=prompt(APP_LANG==='ko'?'새 Root의 이름은 무엇인가요?':'What should this new Root be called?');
+    if(!title||!title.trim()) return;
+    newRoot.disabled=true;
+    pywebview.api.goal_create('overgoal',title.trim(),goalState.tree.id).then(r=>{
+      newRoot.disabled=false;
+      if(!r||r.ok===false){toast((r&&r.message)||(APP_LANG==='ko'?'Root를 만들 수 없어요.':'Could not create the Root.'),true);return;}
+      selectedGoalId=r.goal_id||selectedGoalId;
+      applyGoalTreeUpdate(r);
+      toast(APP_LANG==='ko'?'새 Root를 만들었어요.':'New Root created.');
+    }).catch(error=>{newRoot.disabled=false;toast((APP_LANG==='ko'?'Root를 만들 수 없어요: ':'Could not create the Root: ')+error,true);});
+  };
+
+  const starters=root.querySelector('.goal-root-starters-open');
+  const starterPanel=root.querySelector('.goal-root-starters-panel');
+  if(starters&&starterPanel) starters.onclick=()=>renderGoalRootStarters(starterPanel);
+
+  const add=root.querySelector('.goal-add-something');
+  const intakePanel=root.querySelector('.goal-intake-panel');
+  if(add&&intakePanel) add.onclick=()=>renderGoalIntake(node,intakePanel);
+}
+
+function renderGoalRootStarters(panel){
+  panel.hidden=false;
+  panel.innerHTML='<p class="goal-focus-muted"><span class="spin"></span> '+(APP_LANG==='ko'?'선택 가능한 Root를 불러오는 중…':'Loading optional starter Roots…')+'</p>';
+  pywebview.api.goal_root_starters(APP_LANG).then(r=>{
+    if(!r||r.ok===false){panel.innerHTML='<p class="goal-focus-muted">'+esc((r&&r.message)||(APP_LANG==='ko'?'Root를 불러올 수 없어요.':'Could not load starter Roots.'))+'</p>';return;}
+    const options=(r.starters||[]).map(item=>
+      '<label class="starter-root-option"><input type="checkbox" value="'+esc(item.key)+'" '+(item.active?'checked disabled':'')+'>'+
+      '<span><b>'+esc(item.title)+(item.active?' · '+(APP_LANG==='ko'?'이미 있음':'already present'):'')+'</b><small>'+esc(item.description||'')+'</small></span></label>'
+    ).join('');
+    panel.innerHTML='<div class="cur-sub">'+(APP_LANG==='ko'?'선택형 시작 Root':'Optional starter Roots')+'</div>'+
+      '<p class="goal-focus-muted">'+(APP_LANG==='ko'
+        ?'필요한 것만 선택하세요. 이미 있는 비슷한 Root는 중복으로 만들지 않아요. 나중에 새 Root를 직접 추가할 수도 있어요.'
+        :'Choose only what fits. Similar Roots already in your map will not be duplicated, and you can create a different Root later.')+'</p>'+
+      '<div class="starter-root-grid">'+options+'</div><div class="actions">'+
+      '<button class="starter-root-cancel">'+(APP_LANG==='ko'?'닫기':'Close')+'</button>'+
+      '<button class="accent starter-root-apply">'+(APP_LANG==='ko'?'선택한 Root 만들기':'Create selected Roots')+'</button></div>';
+    panel.querySelector('.starter-root-cancel').onclick=()=>{panel.hidden=true;panel.innerHTML='';};
+    panel.querySelector('.starter-root-apply').onclick=()=>{
+      const keys=[...panel.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')].map(x=>x.value);
+      if(!keys.length){toast(APP_LANG==='ko'?'새로 만들 Root를 하나 이상 선택하세요.':'Select at least one new Root.');return;}
+      const button=panel.querySelector('.starter-root-apply');button.disabled=true;
+      button.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'Root 만드는 중…':'Creating Roots…');
+      pywebview.api.goal_root_starters_apply(keys,APP_LANG).then(result=>{
+        if(!result||result.ok===false){button.disabled=false;button.textContent=APP_LANG==='ko'?'선택한 Root 만들기':'Create selected Roots';toast((result&&result.message)||'Could not create starter Roots.',true);return;}
+        applyGoalTreeUpdate(result);
+        toast(APP_LANG==='ko'?(result.created_goal_ids||[]).length+'개의 Root를 만들었어요.':(result.created_goal_ids||[]).length+' starter Roots created.');
+      }).catch(error=>{button.disabled=false;button.textContent=APP_LANG==='ko'?'선택한 Root 만들기':'Create selected Roots';toast('Could not create starter Roots: '+error,true);});
+    };
+  }).catch(error=>{panel.innerHTML='<p class="goal-focus-muted">'+esc('Could not load starter Roots: '+error)+'</p>';});
+}
+
+function renderGoalIntake(node,panel,seed){
+  panel.hidden=false;
+  panel.innerHTML='<div class="cur-sub">'+(APP_LANG==='ko'?'무엇을 추가하고 싶나요?':'What would you like to add?')+'</div>'+
+    '<p class="goal-focus-muted">'+(APP_LANG==='ko'
+      ?'일상적인 말로 설명하세요. 페어리가 중복을 확인하고 알맞은 위치와 역할을 제안해요. 구조 용어를 고를 필요는 없어요.'
+      :'Describe it naturally. Faerie will check for overlap and suggest the right place and role; you do not need to choose a structural type.')+'</p>'+
+    '<textarea class="goal-intake-text" placeholder="'+esc(APP_LANG==='ko'?'예: 프리랜스 일을 시작하기 전에 포트폴리오를 만들고 싶어요.':'For example: I want to build a portfolio before I start freelancing.')+'">'+esc(seed||'')+'</textarea>'+
+    '<div class="actions"><button class="goal-intake-cancel">'+(APP_LANG==='ko'?'닫기':'Close')+'</button>'+
+    '<button class="accent goal-intake-analyze">'+(APP_LANG==='ko'?'페어리에게 배치 요청':'Ask Faerie where it fits')+'</button></div>'+
+    '<div class="goal-intake-result"></div>';
+  const text=panel.querySelector('.goal-intake-text');
+  panel.querySelector('.goal-intake-cancel').onclick=()=>{panel.hidden=true;panel.innerHTML='';};
+  panel.querySelector('.goal-intake-analyze').onclick=()=>{
+    const value=text.value.trim();if(!value){toast(APP_LANG==='ko'?'추가하고 싶은 것을 먼저 설명하세요.':'Describe what you want to add first.',true);return;}
+    const button=panel.querySelector('.goal-intake-analyze'), result=panel.querySelector('.goal-intake-result');
+    button.disabled=true;button.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'겹침과 위치 확인 중…':'Checking overlap and placement…');
+    result.innerHTML='<p class="goal-focus-muted"><span class="spin"></span> '+(APP_LANG==='ko'?'페어리가 현재 Growth 지도를 살펴보고 있어요…':'Faerie is reviewing your current Growth map…')+'</p>';
+    pywebview.api.goal_intake_recommend(node.id,value).then(r=>{
+      button.disabled=false;button.textContent=APP_LANG==='ko'?'다시 확인':'Check again';
+      if(!r||r.ok===false){result.innerHTML='<p class="goal-focus-muted">'+esc((r&&r.message)||'Could not classify this addition.')+'</p>';return;}
+      if(r.action==='existing'){
+        result.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'이미 지도에 비슷한 항목이 있어요':'This may already exist in your map')+'</b>'+
+          '<p>'+esc(r.existing_path||r.existing_title||'')+'</p><p class="hint">'+esc(r.rationale||'')+'</p>'+
+          '<div class="actions"><button class="accent goal-intake-open-existing">'+(APP_LANG==='ko'?'기존 항목 열기':'Open existing item')+'</button></div></div>';
+        result.querySelector('.goal-intake-open-existing').onclick=()=>selectGrowthNode(r.existing_goal_id);
+        return;
+      }
+      if(r.action!=='propose'||!r.recommendation){
+        result.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'조금 더 설명이 필요해요':'Faerie needs a little more context')+'</b>'+
+          '<p>'+esc(r.question||(APP_LANG==='ko'?'무엇을 바꾸거나 끝내고 싶은지 한 문장 더 적어 주세요.':'Add one sentence about what you want to change or finish.'))+'</p></div>';
+        return;
+      }
+      const rec=r.recommendation;
+      const role=rec.new_type==='overgoal'?(APP_LANG==='ko'?'Root':'Root'):
+        rec.new_type==='task'?(APP_LANG==='ko'?'Leaf':'Leaf'):goalSemanticRoleLabel(rec.semantic_role);
+      result.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'페어리의 배치 제안':'Faerie’s placement suggestion')+'</b>'+
+        '<div class="goal-recap-item" style="margin-top:8px"><b>'+esc(role)+'</b><span>'+esc(rec.proposed_path||rec.title)+'</span></div>'+
+        '<p class="hint">'+esc(r.rationale||'')+' · '+Math.round(Number(r.confidence||0)*100)+'%</p>'+
+        '<p class="goal-focus-muted">'+(APP_LANG==='ko'?'아직 지도는 바뀌지 않았어요. 승인하면 추가됩니다.':'Nothing has changed yet. Approve to add it to the map.')+'</p>'+
+        '<div class="actions"><button class="accent goal-intake-approve">'+(APP_LANG==='ko'?'승인하고 추가':'Approve and add')+'</button></div></div>';
+      result.querySelector('.goal-intake-approve').onclick=()=>{
+        const approve=result.querySelector('.goal-intake-approve');approve.disabled=true;
+        approve.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'제안 만드는 중…':'Creating approval proposal…');
+        pywebview.api.goal_intake_propose(rec,r.rationale||'').then(proposed=>{
+          if(!proposed||proposed.ok===false){approve.disabled=false;approve.textContent=APP_LANG==='ko'?'승인하고 추가':'Approve and add';toast((proposed&&proposed.message)||'Could not create the proposal.',true);return;}
+          approve.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'Growth 지도에 추가 중…':'Adding to Growth…');
+          return pywebview.api.goal_ai_proposal(proposed.proposal_id,'approve').then(approved=>{
+            if(!approved||approved.ok===false){approve.disabled=false;approve.textContent=APP_LANG==='ko'?'승인하고 추가':'Approve and add';toast((approved&&approved.message)||'Could not approve the addition.',true);return;}
+            selectedGoalId=approved.created_goal_id||selectedGoalId;
+            applyGoalTreeUpdate(approved);
+            toast(APP_LANG==='ko'?role+'로 추가했어요.':'Added as a '+role+'.');
+          });
+        }).catch(error=>{approve.disabled=false;approve.textContent=APP_LANG==='ko'?'승인하고 추가':'Approve and add';toast('Could not add this: '+error,true);});
+      };
+    }).catch(error=>{button.disabled=false;button.textContent=APP_LANG==='ko'?'페어리에게 배치 요청':'Ask Faerie where it fits';result.innerHTML='<p class="goal-focus-muted">'+esc('Could not classify this addition: '+error)+'</p>';});
+  };
+  setTimeout(()=>text.focus(),0);
+}
+
 function bindGoalFocusPanel(node,childType){
   bindGoalStepDraft(node,$('goal-focus-panel'));
   bindGoalRelevanceControls(node,$('goal-focus-panel'),'goal-focus-relevance');
   bindGoalOutcomeControls(node,$('goal-focus-panel'));
+  bindGoalLeafAgentEntry(node,$('goal-focus-panel'));
+  bindGoalArchiveControls(node,$('goal-focus-panel'));
   if($('goal-focus-ask-command')) $('goal-focus-ask-command').onclick=()=>{
     switchView('self');
     setTimeout(()=>{
@@ -6099,68 +7361,13 @@ function bindGoalFocusPanel(node,childType){
   if($('goal-focus-review')) $('goal-focus-review').onclick=()=>reviewGoalAgent(node.id,false);
   if($('goal-focus-restructure')) $('goal-focus-restructure').onclick=()=>
     renderGoalRestructurePanel(node,$('goal-focus-restructure-panel'));
-  const createChild=(type)=>{
-    if(type==='task'){
-      const active=goalActiveLeaves(node).length;
-      if(active>=3&&!confirm('This Branch already has '+active+' active Leaves. Focus works best at 3 or fewer — add another anyway?')) return;
-    }
-    const title=prompt('Title for this '+goalTypeLabel(type)+':'); if(!title) return;
-    pywebview.api.goal_create(type,title,node.id).then(handleGoalMutation);
-  };
-  const addBtn=$('goal-focus-add'), addMenu=$('goal-focus-add-menu');
-  if(addBtn&&addMenu){
-    const options=addMenu.querySelectorAll('button[data-add]');
-    addBtn.onclick=e=>{
-      e.stopPropagation();
-      if(options.length===1){ createChild(options[0].dataset.add); return; }
-      addMenu.classList.toggle('open');
-    };
-    options.forEach(b=>b.onclick=e=>{ e.stopPropagation();
-      addMenu.classList.remove('open'); createChild(b.dataset.add); });
-    document.addEventListener('click',()=>{ if(addMenu.isConnected) addMenu.classList.remove('open'); },{once:true});
-  }
+  bindGoalCreationControls(node,$('goal-focus-panel'));
   if($('goal-focus-draft-steps')) $('goal-focus-draft-steps').onclick=()=>draftLeafSteps(node);
   document.querySelectorAll('#goal-focus-panel .agent-proposal[data-pid]').forEach(box=>{
     const id=parseInt(box.dataset.pid,10);
     box.querySelector('.agent-p-dismiss').onclick=()=>goalProposalAction(id,'dismiss',node.id);
     box.querySelector('.agent-p-approve').onclick=()=>goalProposalAction(id,'approve',node.id);
     box.querySelector('.agent-p-refine').onclick=()=>openGoalAgentChat(node.id,node.title);
-  });
-  const stepList=goalLeafSteps(node);
-  document.querySelectorAll('#goal-focus-panel [data-step-help]').forEach(button=>button.onclick=event=>{
-    event.preventDefault(); event.stopPropagation();
-    openLeafCoach(node,parseInt(button.dataset.stepHelp,10));
-  });
-  if($('goal-step-help-all')) $('goal-step-help-all').onclick=()=>{
-    let index=stepList.findIndex(step=>{
-      try{ return localStorage.getItem(goalStepKey(node.id,step))!=='1'; }catch(e){ return true; }
-    });
-    if(index<0) index=Math.max(0,stepList.length-1);
-    openLeafCoach(node,index);
-  };
-  document.querySelectorAll('#goal-focus-panel .goal-step-check').forEach(box=>{
-    box.onchange=()=>{
-      const step=stepList[parseInt(box.dataset.si,10)]||'';
-      try{ localStorage.setItem(goalStepKey(node.id,step), box.checked?'1':'0'); }catch(e){}
-      const head=$('goal-steps-head');
-      if(head){
-        const done=[...document.querySelectorAll('#goal-focus-panel .goal-step-check')].filter(b=>b.checked).length;
-        head.textContent='How to do this ('+done+'/'+stepList.length+')';
-      }
-      if(api()&&pywebview.api.goal_step_coach_set_status){
-        const checked=box.checked;
-        pywebview.api.goal_step_coach_set_status(
-          node.id,parseInt(box.dataset.si,10),checked?'completed':'reopened').then(result=>{
-          if(!result||result.ok===false) throw new Error((result&&result.message)||'Could not update step status.');
-          if(leafCoachView&&leafCoachView.leaf_id===node.id){ leafCoachView=result.coach; renderLeafCoach(); }
-        }).catch(error=>{
-          box.checked=!checked;
-          try{ localStorage.setItem(goalStepKey(node.id,step), box.checked?'1':'0'); }catch(e){}
-          toast('Could not update Leaf Coach status: '+error,true);
-          renderGoalFocusPanel();
-        });
-      }
-    };
   });
   if($('goal-focus-dismiss')) $('goal-focus-dismiss').onclick=()=>{
     const reason=prompt('Why didn’t this Leaf work? One line — it feeds the Branch rethink.');
@@ -6377,7 +7584,10 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const care=goalNeedsMapCare(node)?' needs-care':'';
     const greatest=goalNodeLinkedToGreatest(node);
     const status=node.status?(' '+node.status):'';
-    const radius={umbrella:15,overgoal:11,subgoal:8,task:5}[node.type]||7;
+    const roleRadius={area:9.5,project:8,stage:6.5};
+    const radius=node.type==='subgoal'
+      ?(roleRadius[String(node.semantic_role||'').toLowerCase()]||8)
+      :({umbrella:15,overgoal:11,task:5}[node.type]||7);
     const glow=radius*(node.id===selected.id?5.7:4.5);
     const structurePrefix=node.type==='overgoal'||node.type==='subgoal'?goalTypeLabel(node.type,node)+' · ':'';
     const label=goalLabelShort(structurePrefix+node.title,node.type==='task'?24:34);
@@ -6386,7 +7596,9 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const orderTitle=order?(APP_LANG==='ko'
       ?' · '+order.scope+' 안의 추천 실행 순서 '+order.rank+'/'+order.total
       :' · recommended execution order '+order.rank+' of '+order.total+' within '+order.scope):'';
-    return '<g class="constellation-node '+esc(node.type)+status+selectedClass+care+(greatest?' greatest':'')+
+    const semanticClass=node.type==='subgoal'&&node.semantic_role
+      ?' semantic-'+String(node.semantic_role).toLowerCase():'';
+    return '<g class="constellation-node '+esc(node.type)+semanticClass+status+selectedClass+care+(greatest?' greatest':'')+
       '" tabindex="0" role="button" data-map-goal-id="'+node.id+'" transform="translate('+
       item.x.toFixed(1)+' '+item.y.toFixed(1)+')">'+
       '<title>'+esc(goalTypeLabel(node.type,node)+' · '+node.title+' · '+goalCompletionLabel(node)+
@@ -6407,6 +7619,9 @@ function renderGoalConstellation(summaryId,treeId,opts){
     '<defs><radialGradient id="solarSun" cx="34%" cy="30%"><stop offset="0" stop-color="#fffde2"></stop><stop offset=".42" stop-color="#dfff7f"></stop><stop offset="1" stop-color="#6f8f27"></stop></radialGradient>'+
     '<radialGradient id="solarPlanet" cx="32%" cy="28%"><stop offset="0" stop-color="#e5fbff"></stop><stop offset=".4" stop-color="#6ed5ff"></stop><stop offset="1" stop-color="#164e78"></stop></radialGradient>'+
     '<radialGradient id="solarMoon" cx="32%" cy="28%"><stop offset="0" stop-color="#f6efff"></stop><stop offset=".42" stop-color="#b78cff"></stop><stop offset="1" stop-color="#513273"></stop></radialGradient>'+
+    '<radialGradient id="solarArea" cx="32%" cy="28%"><stop offset="0" stop-color="#fbf8ff"></stop><stop offset=".42" stop-color="#9c7cff"></stop><stop offset="1" stop-color="#3b286f"></stop></radialGradient>'+
+    '<radialGradient id="solarProject" cx="32%" cy="28%"><stop offset="0" stop-color="#fffbed"></stop><stop offset=".42" stop-color="#ffbe53"></stop><stop offset="1" stop-color="#7a4912"></stop></radialGradient>'+
+    '<radialGradient id="solarStage" cx="32%" cy="28%"><stop offset="0" stop-color="#fff4f9"></stop><stop offset=".42" stop-color="#ff77b0"></stop><stop offset="1" stop-color="#772647"></stop></radialGradient>'+
     '<radialGradient id="solarSatellite" cx="32%" cy="28%"><stop offset="0" stop-color="#eafff1"></stop><stop offset=".45" stop-color="#55df95"></stop><stop offset="1" stop-color="#17613b"></stop></radialGradient>'+
     '<filter id="starSoftGlow" x="-80%" y="-80%" width="260%" height="260%">'+
     '<feGaussianBlur stdDeviation="5" result="blur"></feGaussianBlur>'+
@@ -6710,22 +7925,40 @@ function renderGoalRestructureManual(node,panel,recommendation,autoPreview){
   collect(node);
   const all=goalFlat(goalState.tree).filter(candidate=>candidate.id!==node.id&&!descendants.has(candidate.id)&&candidate.status!=='archived');
   const defaultType=(recommendation&&recommendation.new_type)||(node.type==='overgoal'?'subgoal':node.type);
+  const defaultRole=String((recommendation&&recommendation.semantic_role)||node.semantic_role||'').toLowerCase();
+  const defaultKind=defaultType==='overgoal'?'root':defaultType==='task'?'leaf':
+    (['area','project','stage'].includes(defaultRole)?defaultRole:'project');
+  const restructureKinds=['root','area','project','stage','leaf'];
+  const kindLabel=kind=>APP_LANG==='ko'
+    ?({root:'루트',area:'영역',project:'프로젝트',stage:'단계',leaf:'리프'}[kind]||kind)
+    :kind.charAt(0).toUpperCase()+kind.slice(1);
+  const selectedStructure=()=>{
+    const kind=typeSelect.value;
+    return {newType:kind==='root'?'overgoal':kind==='leaf'?'task':'subgoal',
+      semanticRole:['area','project','stage'].includes(kind)?kind:null};
+  };
   panel.innerHTML='<div class="cur-sub">'+(APP_LANG==='ko'?'구조 안전하게 변경':'Restructure safely')+'</div>'+
     '<p class="hint">'+(APP_LANG==='ko'
       ?'삭제하거나 다시 만들지 않습니다. 같은 ID에 단계, 완료 기록, 코칭, 증거, 결과와 Investigation 연결을 유지한 채 유형과 상위 위치를 함께 바꿉니다.'
       :'Nothing is deleted or recreated. The same node ID keeps its steps, completion, coaching, evidence, outcomes, and Investigation links while its type and parent change together.')+'</p>'+
     '<div class="goal-grid"><label class="goal-field">'+(APP_LANG==='ko'?'새 유형':'New type')+'<select class="goal-restructure-type">'+
-      ['overgoal','subgoal','task'].map(type=>'<option value="'+type+'"'+(type===defaultType?' selected':'')+'>'+esc(goalTypeLabel(type))+'</option>').join('')+
+      restructureKinds.map(kind=>'<option value="'+kind+'"'+(kind===defaultKind?' selected':'')+'>'+esc(kindLabel(kind))+'</option>').join('')+
     '</select></label><label class="goal-field">'+(APP_LANG==='ko'?'새 상위 영역':'New parent')+'<select class="goal-restructure-parent"></select></label></div>'+
-    '<label class="goal-field">'+(APP_LANG==='ko'?'같은 상위 영역 안의 위치':'Position under new parent')+'<input class="goal-restructure-position" type="number" min="1" value="'+(((recommendation&&recommendation.preview&&recommendation.preview.proposed.position)||0)+1)+'"></label>'+
+    '<label class="goal-field">'+(APP_LANG==='ko'?'같은 상위 영역 안의 위치':'Position under new parent')+'<input class="goal-restructure-position" type="number" min="1" value="'+(((recommendation&&recommendation.preview&&recommendation.preview.proposed.position)!=null?recommendation.preview.proposed.position:Number(node.position||0))+1)+'"></label>'+
     '<label class="goal-field">'+(APP_LANG==='ko'?'변경 이유':'Reason for restructuring')+'<textarea class="goal-restructure-reason" rows="2" placeholder="'+esc(APP_LANG==='ko'?'예: 이 프로젝트는 Career 영역 안의 실험입니다.':'Example: This is a temporary experiment owned by the Career area.')+'"></textarea></label>'+
     '<div class="actions"><button class="accent goal-restructure-preview">'+(APP_LANG==='ko'?'변경 미리보기':'Preview restructure')+'</button>'+
     '<button class="skip goal-restructure-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div><div class="goal-restructure-preview-box"></div>';
   const typeSelect=panel.querySelector('.goal-restructure-type'), parentSelect=panel.querySelector('.goal-restructure-parent');
   const refreshParents=()=>{
-    const type=typeSelect.value;
-    const valid=all.filter(candidate=>type==='overgoal'?candidate.type==='umbrella':['overgoal','subgoal'].includes(candidate.type));
-    parentSelect.innerHTML=valid.map(candidate=>'<option value="'+candidate.id+'">'+esc((goalPathTitles(goalState.tree,candidate.id)||[candidate.title]).join(' › '))+' · '+esc(goalTypeLabel(candidate.type))+'</option>').join('');
+    const kind=typeSelect.value;
+    const valid=all.filter(candidate=>{
+      if(kind==='root') return candidate.type==='umbrella';
+      if(kind==='area') return candidate.type==='overgoal';
+      if(kind==='project') return candidate.type==='overgoal'||(candidate.type==='subgoal'&&candidate.semantic_role==='area');
+      if(kind==='stage') return candidate.type==='subgoal'&&candidate.semantic_role==='project';
+      return ['overgoal','subgoal'].includes(candidate.type);
+    });
+    parentSelect.innerHTML=valid.map(candidate=>'<option value="'+candidate.id+'">'+esc((goalPathTitles(goalState.tree,candidate.id)||[candidate.title]).join(' › '))+' · '+esc(goalTypeLabel(candidate.type,candidate))+'</option>').join('');
     const recommendedParent=recommendation&&valid.find(candidate=>candidate.id===recommendation.parent_id);
     const career=valid.find(candidate=>/career|work|building|직업|커리어/i.test(candidate.title+' '+(candidate.description||'')));
     if(recommendedParent){
@@ -6747,7 +7980,9 @@ function renderGoalRestructureManual(node,panel,recommendation,autoPreview){
     button.disabled=true;button.textContent=APP_LANG==='ko'?'확인 중…':'Checking…';
     box.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'보존될 데이터와 구조를 확인하는 중…':'Checking structure and retained data…');
     const position=Math.max(0,(parseInt(panel.querySelector('.goal-restructure-position').value,10)||1)-1);
-    pywebview.api.goal_restructure_preview(node.id,typeSelect.value,parseInt(parentSelect.value,10),position).then(result=>{
+    const structure=selectedStructure();
+    pywebview.api.goal_restructure_preview(node.id,structure.newType,parseInt(parentSelect.value,10),position,
+      structure.semanticRole,panel.querySelector('.goal-restructure-reason').value).then(result=>{
       button.disabled=false;button.textContent=APP_LANG==='ko'?'변경 미리보기':'Preview restructure';
       if(!result||result.ok===false){box.innerHTML='';toast((result&&result.message)||'Could not preview restructure.',true);return;}
       const preview=result.preview, counts=preview.retained_counts||{};
@@ -6761,8 +7996,8 @@ function renderGoalRestructureManual(node,panel,recommendation,autoPreview){
         '<div class="actions"><button class="accent goal-restructure-propose">'+(APP_LANG==='ko'?'승인 대기 제안 만들기':'Create proposal for approval')+'</button></div></div>';
       box.querySelector('.goal-restructure-propose').onclick=()=>{
         const create=box.querySelector('.goal-restructure-propose');create.disabled=true;
-        pywebview.api.goal_restructure_propose(node.id,typeSelect.value,parseInt(parentSelect.value,10),position,
-          panel.querySelector('.goal-restructure-reason').value).then(proposed=>{
+        pywebview.api.goal_restructure_propose(node.id,structure.newType,parseInt(parentSelect.value,10),position,
+          panel.querySelector('.goal-restructure-reason').value,structure.semanticRole).then(proposed=>{
             if(!proposed||proposed.ok===false){create.disabled=false;toast((proposed&&proposed.message)||'Could not create restructure proposal.',true);return;}
             panel.innerHTML='<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'구조 변경 제안이 승인 대기 중입니다.':'Restructure proposal is awaiting approval.')+'</b>'+
               '<p class="hint">'+(APP_LANG==='ko'?'아직 트리는 바뀌지 않았습니다. 아래 GoalAI 제안에서 승인하면 한 번에 적용됩니다.':'The tree has not changed. Approve the GoalAI proposal below to apply it atomically.')+'</p></div>';
@@ -6789,16 +8024,19 @@ function renderGoalDetail(){
     node.type==='overgoal'?x.type==='umbrella':['overgoal','subgoal'].includes(x.type));
   const parentOptions=parentCandidates.map(x=>'<option value="'+x.id+'"'+
       (x.id===node.parent_id?' selected':'')+'>'+esc(x.title)+' ('+esc(goalTypeLabel(x.type,x))+')</option>').join('');
+  const statusChoices=node.status==='archived'?['archived']:['active','paused','completed'];
   $('goal-detail').innerHTML='<div class="cur-head"><span class="cur-label">'+esc(node.title)+'</span>'+
     '<span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+esc(node.status)+'</span></div>'+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Task completion</span><span>'+pctText+'</span></div>'+
     '<div class="metric-progress"><i style="width:'+(c.percent||0)+'%"></i></div></div>'+
-    goalRelevanceHtml(node)+goalArchivedHistoryHtml(node)+goalOutcomeHtml(node)+
+    (node.type==='task'
+      ?(goalLeafWorkspaceTabHtml(node)||(goalRelevanceHtml(node)+goalLeafStepsHtml(node)))
+      :(goalRelevanceHtml(node)+goalCompletedHistoryHtml(node)))+goalArchivedHistoryHtml(node)+
     '<label class="goal-field">Title<input id="goal-title" value="'+esc(node.title)+'"></label>'+
     '<label class="goal-field">Description <span class="hint" id="goal-description-status" style="margin:0"></span><textarea id="goal-description" rows="3">'+esc(node.description||'')+'</textarea></label>'+
     '<label class="goal-field">Notes<textarea id="goal-notes" rows="3">'+esc(node.notes||'')+'</textarea></label>'+
     '<div class="goal-grid"><label class="goal-field">Status<select id="goal-node-status">'+
-      ['active','paused','completed','archived'].filter(x=>node.type!=='umbrella'||!['completed','archived'].includes(x)).map(x=>
+      statusChoices.filter(x=>node.type!=='umbrella'||x!=='completed').map(x=>
         '<option'+(x===node.status?' selected':'')+'>'+x+'</option>').join('')+'</select></label>'+
       '<label class="goal-field">Priority<select id="goal-priority">'+['low','normal','high'].map(x=>
         '<option'+(x===node.priority?' selected':'')+'>'+x+'</option>').join('')+'</select></label></div>'+
@@ -6811,10 +8049,13 @@ function renderGoalDetail(){
       '<button id="goal-detail-relevance">Review relevance</button>'+
       '<button id="goal-rename">Rename</button>'+
       (node.type!=='umbrella'?'<button id="goal-restructure-open">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+
-      (childType?'<button id="goal-add-child">Add '+goalTypeLabel(childType)+'</button>':'')+
-      (node.type!=='task'&&node.type!=='umbrella'?'<button id="goal-add-task">Add Leaf</button>':'')+
-      '<button id="goal-export-notion">Export to Notion</button></div>'+
+      (node.type==='umbrella'
+        ?'<button class="accent goal-root-starters-open">'+(APP_LANG==='ko'?'시작 Root 설정':'Set up starter Roots')+'</button><button class="goal-new-root">'+(APP_LANG==='ko'?'새 Root':'New Root')+'</button>'
+        :(node.type!=='task'?'<button class="accent goal-add-something">'+(APP_LANG==='ko'?'무언가 추가':'Add something')+'</button>':''))+
+      '<button id="goal-export-notion">Export to Notion</button>'+goalLifecycleButtonHtml(node)+'</div>'+
     (node.type!=='umbrella'?'<div id="goal-restructure-panel" hidden></div>':'')+
+    (node.type==='umbrella'?'<div class="goal-root-starters-panel" hidden></div>':'')+
+    (node.type!=='umbrella'&&node.type!=='task'?'<div class="goal-intake-panel" hidden></div>':'')+
     '<div class="cur-sub">Curiosity context</div><div>'+((node.curiosities||[]).map(x=>
       '<span class="goal-chip">'+esc(x.label)+
       (x.inherited_from_id?' · inherited from '+esc(x.inherited_from_title):
@@ -6829,7 +8070,9 @@ function renderGoalDetail(){
     '<div class="agent-panel" id="goal-ai-panel"><span class="spin"></span>Loading GoalAI…</div>';
 
   bindGoalRelevanceControls(node,$('goal-detail'),'goal-detail-relevance');
-  bindGoalOutcomeControls(node,$('goal-detail'));
+  bindGoalLeafAgentEntry(node,$('goal-detail'));
+  bindGoalCompletedLeafControls(node,$('goal-detail'));
+  bindGoalArchiveControls(node,$('goal-detail'));
   $('goal-detail').querySelectorAll('[data-open]').forEach(el=>{
     el.onclick=e=>{e.preventDefault();selectGrowthNode(el.dataset.open);};
   });
@@ -6848,12 +8091,7 @@ function renderGoalDetail(){
     const title=prompt('Rename this '+goalTypeLabel(node.type,node)+':',node.title); if(!title||title.trim()===node.title) return;
     pywebview.api.goal_update(node.id,{title:title.trim()}).then(handleGoalMutation);
   };
-  const createChild=(type)=>{
-    const title=prompt('Title for this '+goalTypeLabel(type)+':'); if(!title) return;
-    pywebview.api.goal_create(type,title,node.id).then(handleGoalMutation);
-  };
-  if($('goal-add-child')) $('goal-add-child').onclick=()=>createChild(childType);
-  if($('goal-add-task')) $('goal-add-task').onclick=()=>createChild('task');
+  bindGoalCreationControls(node,$('goal-detail'));
   if($('goal-restructure-open')) $('goal-restructure-open').onclick=()=>
     renderGoalRestructurePanel(node,$('goal-restructure-panel'));
   if($('goal-move')) $('goal-move').onclick=()=>
@@ -7037,6 +8275,16 @@ function goalProposalSummaryHtml(p){
       '<div class="goal-recap-item" style="margin-top:8px"><b>'+(APP_LANG==='ko'?'변경 후':'Proposed')+'</b><span>'+esc(proposed.path||'')+' · '+esc(proposed.type_label||'')+'</span></div>'+
       '<p class="hint"><b>'+(APP_LANG==='ko'?'같은 노드 ID 유지':'Same node ID preserved')+'</b> · '+
         (APP_LANG==='ko'?'승인하면 유형과 상위 위치가 하나의 트랜잭션에서 함께 변경됩니다.':'Type and parent change together in one transaction when approved.')+'</p><div>'+kept+'</div>';
+  }
+  if(p.type==='create_child'){
+    const target=goalState&&goalState.tree?goalFind(goalState.tree,p.target_node_id):null;
+    const kind=payload.type==='overgoal'?'Root':payload.type==='task'?'Leaf':
+      goalSemanticRoleLabel(payload.semantic_role);
+    return '<div class="cur-text"><b>'+(APP_LANG==='ko'?'Growth에 추가 제안':'Proposed Growth addition')+'</b> · '+esc(kind)+'</div>'+
+      '<div class="hint">'+esc(p.rationale||'')+'</div>'+
+      '<div class="goal-recap-item" style="margin-top:8px"><b>'+esc(payload.title||'')+'</b><span>'+
+      esc((target&&target.title)||'')+(payload.description?' · '+esc(goalShortText(payload.description,220)):'')+'</span></div>'+
+      '<p class="hint">'+(APP_LANG==='ko'?'승인하기 전에는 지도에 추가되지 않습니다.':'It will not enter the map until you approve it.')+'</p>';
   }
   if(p.type==='promote_insight'){
     const target=goalState&&goalState.tree?goalFind(goalState.tree,p.target_node_id):null;
@@ -7226,19 +8474,29 @@ function openGoalAgentChat(nodeId,title){
 function renderGoalAgentChat(){
   const messages=(goalAgentView&&goalAgentView.messages)||[];
   $('agent-chat-messages').innerHTML=messages.map(m=>'<div class="planner-msg '+esc(m.role)+'">'+
-    esc(m.content)+'</div>').join('');
+    conversationHtml(m.content)+'</div>').join('');
 }
 
 $('agent-chat-close').onclick=()=>$('goal-agent-chat').classList.remove('open');
 $('agent-chat-send').onclick=()=>{
   const text=$('agent-chat-input').value.trim(); if(!text){toast('Write a message first.',true);return;}
-  const btn=$('agent-chat-send');btn.disabled=true;
+  const btn=$('agent-chat-send'),input=$('agent-chat-input'),box=$('agent-chat-messages');
+  btn.disabled=true;input.value='';
+  box.insertAdjacentHTML('beforeend','<div class="planner-msg user">'+esc(text)+'</div>'+
+    '<div class="planner-msg assistant goal-agent-thinking">'+thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…')+'</div>');
+  box.lastElementChild.scrollIntoView({block:'nearest'});
+  const fail=message=>{
+    btn.disabled=false;input.value=text;
+    const thinking=box.querySelector('.goal-agent-thinking');if(thinking) thinking.remove();
+    toast(message,true);
+  };
   pywebview.api.goal_ai_chat(selectedGoalId,text).then(r=>{
     btn.disabled=false;
-    if(!r||r.ok===false){toast((r&&r.message)||'GoalAI could not reply.',true);return;}
-    goalAgentView=r.view;$('agent-chat-input').value='';renderGoalAgentChat();loadGoalAgent(selectedGoalId);loadGoalAIOverview();
-  }).catch(e=>{btn.disabled=false;toast('GoalAI could not reply: '+e,true);});
+    if(!r||r.ok===false){fail((r&&r.message)||'GoalAI could not reply.');return;}
+    goalAgentView=r.view;renderGoalAgentChat();loadGoalAgent(selectedGoalId);loadGoalAIOverview();
+  }).catch(e=>fail('GoalAI could not reply: '+e));
 };
+bindShiftEnterSubmit($('agent-chat-input'),()=>$('agent-chat-send').click());
 
 function handleGoalMutation(r){
   if(!r||r.ok===false){ toast((r&&r.message)||'Could not update goal.',true); return; }
@@ -7256,9 +8514,9 @@ function applyGoalTreeUpdate(r){
 }
 
 function loadGoals(){
-  if(!api()) return;
+  if(!api()) return Promise.resolve();
   $('goal-status').innerHTML='<span class="spin"></span>Loading…';
-  pywebview.api.goal_state().then(r=>{
+  return pywebview.api.goal_state().then(r=>{
     $('goal-status').textContent='';
     if(!r||r.ok===false){ toast((r&&r.message)||'Could not load goals.',true); return; }
     goalState=r;
@@ -7288,17 +8546,11 @@ if($('goal-backfill-origin')) $('goal-backfill-origin').onclick=()=>{
 if($('growth-map-close')) $('growth-map-close').onclick=closeGrowthMap;
 if($('growth-map-overlay')) $('growth-map-overlay').onclick=e=>{ if(e.target===$('growth-map-overlay')) closeGrowthMap(); };
 if($('goal-edit-close')) $('goal-edit-close').onclick=()=>$('goal-edit-drawer').classList.remove('open');
-if($('goal-add-overgoal')) $('goal-add-overgoal').onclick=()=>{
-  const title=prompt('New Root:'); if(!title) return;
-  const parent=goalState&&goalState.tree?goalState.tree.id:null;
-  pywebview.api.goal_create('overgoal',title,parent).then(handleGoalMutation);
-};
-
 function renderPlanner(){
   if(!plannerSession) return;
   $('goal-planner').classList.add('open');
   $('planner-messages').innerHTML=(plannerSession.messages||[]).map(m=>
-    '<div class="planner-msg '+esc(m.role)+'">'+esc(m.content)+'</div>').join('');
+    '<div class="planner-msg '+esc(m.role)+'">'+conversationHtml(m.content)+'</div>').join('');
   const ready=plannerSession.status==='ready';
   $('planner-review').style.display=ready?'block':'none';
   if(ready) $('planner-draft').value=JSON.stringify(plannerSession.draft,null,2);
@@ -7321,7 +8573,7 @@ function openGoalPlanner(itemId,btn,targetParentId,placement){
 $('planner-close').onclick=()=>$('goal-planner').classList.remove('open');
 function plannerThinking(text){
   const box=$('planner-messages');
-  box.insertAdjacentHTML('beforeend','<div class="planner-msg assistant planner-thinking">'+esc(text)+'</div>');
+  box.insertAdjacentHTML('beforeend','<div class="planner-msg assistant planner-thinking">'+thinkingDotsHtml(text)+'</div>');
   box.lastElementChild.scrollIntoView({block:'nearest'});
 }
 function plannerBusy(on){['planner-send','planner-summary','planner-abandon'].forEach(id=>{const b=$(id);if(b)b.disabled=on;});}
@@ -7346,6 +8598,7 @@ $('planner-send').onclick=()=>{
     toast('Could not continue: '+e,true);
   });
 };
+bindShiftEnterSubmit($('planner-answer'),()=>$('planner-send').click());
 $('planner-summary').onclick=()=>{
   plannerBusy(true);
   plannerThinking(APP_LANG==='ko'?'페어리가 계획 요약을 작성하는 중…':'Faerie is drafting the plan summary…');

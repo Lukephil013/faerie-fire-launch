@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -63,6 +64,67 @@ class TestGuiApi(unittest.TestCase):
         self.assertTrue(state["ok"])
         self.assertEqual(state["initial_view"], "self")
         self.assertEqual(state["profile"], "personal")
+
+    def test_leaf_workspace_bridges_wrap_workspace_views(self):
+        opened_view = {"node": {"id": 7}, "phase": "shaping"}
+        sent_view = {"node": {"id": 7}, "phase": "doing"}
+        decided_view = {"node": {"id": 7}, "phase": "doing", "proposals": []}
+        cleared_view = {"node": {"id": 7}, "messages": []}
+        reopened_view = {"node": {"id": 7}, "phase": "doing", "completed": False}
+        with patch("livingpc.goal_ai.open_leaf_workspace",
+                   return_value=opened_view) as opened, \
+             patch("livingpc.goal_ai.send_leaf_workspace",
+                   return_value=sent_view) as sent, \
+             patch("livingpc.goal_ai.decide_leaf_workspace_proposal",
+                   return_value=decided_view) as decided, \
+             patch("livingpc.goal_ai.clear_leaf_workspace_messages",
+                   return_value=cleared_view) as cleared, \
+             patch("livingpc.goal_ai.reopen_leaf_workspace",
+                   return_value=reopened_view) as reopened:
+            self.assertEqual(
+                self.api.goal_leaf_workspace_open("7"),
+                {"ok": True, "workspace": opened_view})
+            self.assertEqual(
+                self.api.goal_leaf_workspace_send(
+                    "7", "Use both options", {"kind": "select", "ids": ["a", "b"]}),
+                {"ok": True, "workspace": sent_view})
+            self.assertEqual(
+                self.api.goal_leaf_workspace_decide(
+                    "7", "plan-2", "approve", {"title": "Revised plan"}),
+                {"ok": True, "workspace": decided_view})
+            self.assertEqual(
+                self.api.goal_leaf_workspace_clear("7"),
+                {"ok": True, "workspace": cleared_view})
+            self.assertEqual(
+                self.api.goal_leaf_workspace_reopen("7"),
+                {"ok": True, "workspace": reopened_view})
+
+        opened.assert_called_once_with(self.cfg, 7)
+        sent.assert_called_once_with(
+            self.cfg, 7, "Use both options",
+            event={"kind": "select", "ids": ["a", "b"]})
+        decided.assert_called_once_with(
+            self.cfg, 7, "plan-2", "approve",
+            edited_payload={"title": "Revised plan"})
+        cleared.assert_called_once_with(self.cfg, 7)
+        reopened.assert_called_once_with(self.cfg, 7)
+
+    def test_leaf_workspace_bridges_reject_unsafe_arguments(self):
+        with patch("livingpc.goal_ai.send_leaf_workspace") as sent, \
+             patch("livingpc.goal_ai.decide_leaf_workspace_proposal") as decided:
+            bad_id = self.api.goal_leaf_workspace_send(0, "hello")
+            bad_event = self.api.goal_leaf_workspace_send(7, "hello", ["not", "an object"])
+            bad_payload = self.api.goal_leaf_workspace_decide(
+                7, "proposal-1", "approve", ["not", "an object"])
+            missing_proposal = self.api.goal_leaf_workspace_decide(
+                7, "", "approve")
+
+        self.assertFalse(bad_id["ok"])
+        self.assertFalse(bad_event["ok"])
+        self.assertFalse(bad_payload["ok"])
+        self.assertFalse(missing_proposal["ok"])
+        sent.assert_not_called()
+        decided.assert_not_called()
 
     def test_background_images_prefer_project_asset_rotation(self):
         result = self.api.background_images()

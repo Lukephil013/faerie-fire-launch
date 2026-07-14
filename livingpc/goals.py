@@ -26,6 +26,52 @@ NODE_STATUSES = {"active", "paused", "completed", "archived"}
 PRIORITIES = {"low", "normal", "high"}
 SESSION_STATUSES = {"active", "ready", "implemented", "abandoned"}
 
+STARTER_ROOTS = (
+    {
+        "key": "work", "title_en": "Work & Contribution", "title_ko": "일과 기여",
+        "description_en": "Career, livelihood, building, service, and meaningful contribution.",
+        "description_ko": "커리어, 생계, 만들기, 봉사와 의미 있는 기여.",
+        "keywords": {"work", "career", "business", "building", "client", "직업", "커리어", "일"},
+    },
+    {
+        "key": "health", "title_en": "Health & Energy", "title_ko": "건강과 에너지",
+        "description_en": "Physical health, mental wellbeing, energy, sleep, food, and movement.",
+        "description_ko": "신체 건강, 마음의 안정, 에너지, 수면, 음식과 움직임.",
+        "keywords": {"health", "energy", "wellbeing", "sleep", "food", "건강", "에너지", "수면"},
+    },
+    {
+        "key": "relationships", "title_en": "Relationships & Belonging",
+        "title_ko": "관계와 소속감",
+        "description_en": "Close relationships, family, friendship, community, and belonging.",
+        "description_ko": "가까운 관계, 가족, 우정, 공동체와 소속감.",
+        "keywords": {"relationship", "relationships", "family", "friend", "community", "관계", "가족", "친구"},
+    },
+    {
+        "key": "learning", "title_en": "Learning & Growth", "title_ko": "배움과 성장",
+        "description_en": "Languages, study, skills, understanding, and personal development.",
+        "description_ko": "언어, 공부, 기술, 이해와 개인적 성장.",
+        "keywords": {"learning", "language", "education", "study", "korean", "배움", "언어", "교육", "한국어"},
+    },
+    {
+        "key": "creativity", "title_en": "Creativity & Play", "title_ko": "창작과 놀이",
+        "description_en": "Creative expression, hobbies, games, experimentation, and restorative play.",
+        "description_ko": "창의적 표현, 취미, 게임, 실험과 회복을 위한 놀이.",
+        "keywords": {"creativity", "creative", "play", "gaming", "games", "hobby", "창작", "놀이", "게임", "취미"},
+    },
+    {
+        "key": "home", "title_en": "Home & Environment", "title_ko": "집과 환경",
+        "description_en": "Home, surroundings, routines, possessions, and the environments you inhabit.",
+        "description_ko": "집, 주변 환경, 일상, 소유물과 생활 공간.",
+        "keywords": {"home", "environment", "house", "space", "routine", "집", "환경", "공간", "일상"},
+    },
+    {
+        "key": "resources", "title_en": "Money & Resources", "title_ko": "돈과 자원",
+        "description_en": "Income, spending, saving, financial resilience, and practical resources.",
+        "description_ko": "수입, 지출, 저축, 재정적 회복력과 실용적 자원.",
+        "keywords": {"money", "finance", "finances", "income", "saving", "돈", "재정", "수입", "저축"},
+    },
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -188,6 +234,17 @@ CREATE TABLE IF NOT EXISTS goal_semantic_role (
     CHECK (role IN ('area','project','stage')),
     FOREIGN KEY (goal_id) REFERENCES goal_node(id)
 );
+
+CREATE TABLE IF NOT EXISTS goal_archive_snapshot (
+    archive_root_id INTEGER NOT NULL,
+    goal_id INTEGER NOT NULL,
+    prior_status TEXT NOT NULL,
+    archived_at TEXT NOT NULL,
+    PRIMARY KEY (archive_root_id, goal_id),
+    CHECK (prior_status IN ('active','paused','completed','archived')),
+    FOREIGN KEY (archive_root_id) REFERENCES goal_node(id),
+    FOREIGN KEY (goal_id) REFERENCES goal_node(id)
+);
 """
 
 
@@ -201,6 +258,34 @@ def _clean_date(value: str | None) -> str | None:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:60]
+
+
+def _derived_branch_role(title: str, description: str, *, parent_type: str,
+                         parent_role: str = "", has_branch_children: bool = False) -> str:
+    """Choose a presentation role for legacy Branches without persisting an inference."""
+    text = f"{title} {description}".casefold()
+    words = set(re.findall(r"[\w]+", text))
+    project_words = {
+        "project", "experiment", "prototype", "launch", "migration", "redesign",
+        "interface", "app", "upwork", "automation", "product", "gig", "test",
+        "프로젝트", "실험", "출시", "자동화", "앱", "인터페이스",
+    }
+    area_words = {
+        "career", "work", "health", "wellbeing", "relationship", "relationships",
+        "family", "language", "korean", "learning", "education", "finance",
+        "finances", "creativity", "creative", "gaming", "games", "hobby",
+        "recreation", "league", "legends", "커리어", "직업", "건강", "관계",
+        "가족", "언어", "한국어", "학습", "교육", "재정", "창작", "게임", "취미",
+    }
+    if parent_type == "overgoal":
+        if words & project_words:
+            return "project"
+        if words & area_words or has_branch_children:
+            return "area"
+        return "project"
+    if parent_role == "area":
+        return "project"
+    return "stage"
 
 
 class GoalStore:
@@ -343,6 +428,9 @@ class GoalStore:
             raise ValueError("semantic roles apply only to Branches")
         if role not in {"area", "project", "stage"}:
             raise ValueError("Branch role must be Area, Project, or Stage")
+        self._validate_semantic_placement(
+            "subgoal", role, int(node["parent_id"]),
+            nested_stage_justification=rationale)
         self.conn.execute(
             "INSERT INTO goal_semantic_role (goal_id,role,rationale,source,updated_at) "
             "VALUES (?,?,?,?,?) ON CONFLICT(goal_id) DO UPDATE SET role=excluded.role,"
@@ -351,6 +439,41 @@ class GoalStore:
         self._mark_goal_ai_dirty(int(goal_id))
         if commit:
             self.conn.commit()
+
+    def resolved_semantic_role(self, goal_id: int) -> str | None:
+        """Return a stored role, or the same deterministic role used by tree rendering."""
+        node = self.get(int(goal_id))
+        if not node or node["type"] != "subgoal":
+            return None
+        stored = self.semantic_role(int(goal_id))
+        if stored:
+            return str(stored["role"])
+        parent = self.get(int(node["parent_id"])) if node.get("parent_id") else None
+        parent_role = (self.resolved_semantic_role(int(parent["id"]))
+                       if parent and parent["type"] == "subgoal" else "")
+        has_branch_children = bool(self.conn.execute(
+            "SELECT 1 FROM goal_node WHERE parent_id=? AND node_type='subgoal' "
+            "AND status!='archived' LIMIT 1", (int(goal_id),)).fetchone())
+        return _derived_branch_role(
+            node.get("title", ""), node.get("description", ""),
+            parent_type=str(parent.get("type") if parent else ""),
+            parent_role=str(parent_role or ""),
+            has_branch_children=has_branch_children)
+
+    def _validate_semantic_placement(self, node_type: str, semantic_role: str | None,
+                                     parent_id: int, *,
+                                     nested_stage_justification: str = "") -> None:
+        """Prevent accidental Stage → Stage chains while retaining explicit substages."""
+        role = str(semantic_role or "").strip().lower() or None
+        if str(node_type) != "subgoal" or role != "stage":
+            return
+        if self.resolved_semantic_role(int(parent_id)) != "stage":
+            return
+        explanation = " ".join(str(nested_stage_justification or "").split())
+        if len(explanation) < 20:
+            raise ValueError(
+                "placing a Stage beneath another Stage requires an explicit "
+                "macro-stage/substage justification")
 
     def get(self, goal_id: int) -> dict | None:
         node = self._row(self.conn.execute(
@@ -423,6 +546,69 @@ class GoalStore:
             "path": " › ".join(self._goal_path_titles(int(r["id"]))),
             "status": r["status"],
         } for r in rows]
+
+    def starter_root_catalog(self, language: str = "en") -> list[dict]:
+        language = "ko" if str(language).lower().startswith("ko") else "en"
+        roots = [self._row(row) for row in self.conn.execute(
+            "SELECT * FROM goal_node WHERE node_type='overgoal' AND status!='archived' "
+            "ORDER BY position,id")]
+        origin_rows = self.conn.execute(
+            "SELECT o.goal_id,o.source_id FROM goal_origin o JOIN goal_node g ON g.id=o.goal_id "
+            "WHERE o.source_kind='starter_root' AND g.node_type='overgoal' "
+            "AND g.status!='archived'"
+        ).fetchall()
+        by_source = {str(row["source_id"]): int(row["goal_id"]) for row in origin_rows}
+        result = []
+        for spec in STARTER_ROOTS:
+            matched_id = by_source.get(spec["key"])
+            if not matched_id:
+                for root in roots:
+                    text = f"{root['title']} {root.get('description', '')}".casefold()
+                    words = set(re.findall(r"[\w]+", text))
+                    if words & set(spec["keywords"]):
+                        matched_id = int(root["id"])
+                        break
+            result.append({
+                "key": spec["key"], "title": spec[f"title_{language}"],
+                "description": spec[f"description_{language}"],
+                "active": bool(matched_id), "root_id": matched_id,
+            })
+        return result
+
+    def apply_starter_roots(self, keys: list[str], language: str = "en") -> dict:
+        selected = list(dict.fromkeys(str(key or "").strip() for key in keys))[:len(STARTER_ROOTS)]
+        specs = {spec["key"]: spec for spec in STARTER_ROOTS}
+        if not selected or any(key not in specs for key in selected):
+            raise ValueError("choose one or more valid starter Roots")
+        language = "ko" if str(language).lower().startswith("ko") else "en"
+        existing = {item["key"]: item for item in self.starter_root_catalog(language)}
+        created: list[int] = []
+        now = _now()
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            for key in selected:
+                if existing[key]["active"]:
+                    continue
+                spec = specs[key]
+                title = spec[f"title_{language}"]
+                description = spec[f"description_{language}"]
+                goal_id = self.create(
+                    "overgoal", title, parent_id=self.root_id,
+                    description=description, _commit=False)
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO goal_origin "
+                    "(goal_id,source_kind,source_id,source_proposal_id,source_label,summary,detail,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (goal_id, "starter_root", key, None, crypto.enc(title),
+                     crypto.enc("Selected from the optional starter Root catalog."),
+                     crypto.enc(description), now))
+                created.append(goal_id)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return {"created_goal_ids": created, "starters": self.starter_root_catalog(language),
+                "tree": self.tree()}
 
     def _linked_curiosity_origin_bits(self, goal_id: int) -> tuple[list[str], list[str]]:
         tables = {r["name"] for r in self.conn.execute(
@@ -691,17 +877,30 @@ class GoalStore:
         }
 
     def restructure_preview(self, goal_id: int, new_type: str, parent_id: int,
-                            position: int | None = None) -> dict:
+                            position: int | None = None,
+                            semantic_role: str | None = None, *,
+                            nested_stage_justification: str = "") -> dict:
         node = self.get(int(goal_id))
         if not node or node["type"] == "umbrella" or node["status"] == "archived":
             raise ValueError("an active Root, Branch, or Leaf is required")
         new_type = str(new_type or "").strip().lower()
         if new_type not in {"overgoal", "subgoal", "task"}:
             raise ValueError("new type must be Root, Branch, or Leaf")
+        requested_role = str(semantic_role or "").strip().lower() or None
+        if requested_role and (new_type != "subgoal" or
+                               requested_role not in {"area", "project", "stage"}):
+            raise ValueError("Area, Project, and Stage roles require a Branch")
+        current_role_row = self.semantic_role(int(goal_id)) if node["type"] == "subgoal" else None
+        current_role = current_role_row["role"] if current_role_row else None
+        proposed_role = (requested_role if requested_role is not None else
+                         (current_role if new_type == "subgoal" else None))
         parent = self.get(int(parent_id))
         if not parent or parent["status"] == "archived":
             raise ValueError("active destination parent not found")
         self._validate_parent(new_type, int(parent_id), int(goal_id))
+        self._validate_semantic_placement(
+            new_type, proposed_role, int(parent_id),
+            nested_stage_justification=nested_stage_justification)
         child_types = [row["node_type"] for row in self.conn.execute(
             "SELECT node_type FROM goal_node WHERE parent_id=? AND status!='archived'",
             (int(goal_id),)).fetchall()]
@@ -713,7 +912,9 @@ class GoalStore:
         invalid_children = [kind for kind in child_types if kind not in allowed_children]
         if invalid_children:
             raise ValueError("the selected type cannot contain the node's current children")
-        if node["type"] == new_type and int(node["parent_id"] or 0) == int(parent_id):
+        role_changed = proposed_role != current_role
+        if (node["type"] == new_type and
+                int(node["parent_id"] or 0) == int(parent_id) and not role_changed):
             requested_position = node["position"] if position is None else max(0, int(position))
             if requested_position == int(node["position"]):
                 raise ValueError("the proposed structure is unchanged")
@@ -725,14 +926,19 @@ class GoalStore:
         scope_ids = self._subtree_ids(int(goal_id))
         labels = {"umbrella": "Soul", "overgoal": "Root",
                   "subgoal": "Branch", "task": "Leaf"}
+        role_labels = {"area": "Area", "project": "Project", "stage": "Stage"}
         current_path = " › ".join(self._goal_path_titles(int(goal_id)))
         proposed_path = " › ".join([*self._goal_path_titles(int(parent_id)), node["title"]])
         return {
             "goal_id": int(goal_id), "node_id_preserved": True,
-            "current": {"type": node["type"], "type_label": labels[node["type"]],
+            "current": {"type": node["type"],
+                        "type_label": role_labels.get(current_role, labels[node["type"]]),
+                        "semantic_role": current_role,
                         "parent_id": node["parent_id"], "path": current_path,
                         "position": int(node["position"])},
-            "proposed": {"type": new_type, "type_label": labels[new_type],
+            "proposed": {"type": new_type,
+                         "type_label": role_labels.get(proposed_role, labels[new_type]),
+                         "semantic_role": proposed_role,
                          "parent_id": int(parent_id), "parent_title": parent["title"],
                          "path": proposed_path, "position": proposed_position},
             "retained_counts": self._restructure_retained_counts(scope_ids),
@@ -740,9 +946,12 @@ class GoalStore:
         }
 
     def restructure(self, goal_id: int, new_type: str, parent_id: int,
-                    position: int | None = None, *, proposal_id: int | None = None,
+                    position: int | None = None, *, semantic_role: str | None = None,
+                    proposal_id: int | None = None,
                     rationale: str = "", commit: bool = True) -> dict:
-        preview = self.restructure_preview(goal_id, new_type, parent_id, position)
+        preview = self.restructure_preview(
+            goal_id, new_type, parent_id, position, semantic_role,
+            nested_stage_justification=rationale)
         old_parent = int(preview["current"]["parent_id"])
         new_parent = int(preview["proposed"]["parent_id"])
         insert_at = int(preview["proposed"]["position"])
@@ -755,6 +964,16 @@ class GoalStore:
             self.conn.execute(
                 "UPDATE goal_node SET parent_id=?,node_type=?,position=?,updated_at=? WHERE id=?",
                 (new_parent, str(new_type), insert_at, now, int(goal_id)))
+            proposed_role = preview["proposed"].get("semantic_role")
+            if (str(new_type) == "subgoal" and proposed_role and
+                    (preview["current"].get("semantic_role") != proposed_role or
+                     preview["current"].get("type") != "subgoal")):
+                self._set_semantic_role(
+                    int(goal_id), proposed_role, rationale=str(rationale or ""),
+                    source="manual", commit=False)
+            elif str(new_type) != "subgoal":
+                self.conn.execute(
+                    "DELETE FROM goal_semantic_role WHERE goal_id=?", (int(goal_id),))
             new_siblings = [int(row["id"]) for row in self.conn.execute(
                 "SELECT id FROM goal_node WHERE parent_id=? AND id!=? ORDER BY position,id",
                 (new_parent, int(goal_id))).fetchall()]
@@ -865,14 +1084,13 @@ class GoalStore:
                 role = existing_roles.get(goal_id)
                 if not role:
                     parent = nodes.get(int(node.get("parent_id") or 0))
-                    if parent and parent["type"] == "overgoal":
-                        role = ("area" if any(nodes[child]["type"] == "subgoal"
-                                              for child in children_by_parent.get(goal_id, []))
-                                else "project")
-                    elif parent_role == "area":
-                        role = "project"
-                    else:
-                        role = "stage"
+                    role = _derived_branch_role(
+                        node.get("title", ""), node.get("description", ""),
+                        parent_type=str(parent.get("type") if parent else ""),
+                        parent_role=parent_role,
+                        has_branch_children=any(
+                            nodes[child]["type"] == "subgoal"
+                            for child in children_by_parent.get(goal_id, [])))
                 display_roles[goal_id] = role
                 next_parent_role = role
             for child_id in children_by_parent.get(goal_id, []):
@@ -884,6 +1102,7 @@ class GoalStore:
             derive_roles(soul_id)
         normalized_roles: list[dict] = []
         role_seen: set[int] = set()
+        role_inputs: dict[int, dict] = {}
         for raw in role_updates:
             try:
                 goal_id = int(raw.get("goal_id"))
@@ -897,9 +1116,38 @@ class GoalStore:
                 raise ValueError("Area, Project, and Stage roles apply only to Branches")
             if role not in {"area", "project", "stage"}:
                 raise ValueError("Branch role must be Area, Project, or Stage")
-            if existing_roles.get(goal_id) != role:
+            nested_justification = str(
+                raw.get("nested_stage_justification") or "")[:700]
+            role_inputs[goal_id] = {
+                "role": role, "nested_stage_justification": nested_justification}
+            if existing_roles.get(goal_id) != role or nested_justification:
                 normalized_roles.append({"goal_id": goal_id, "role": role,
-                                         "reason": str(raw.get("reason") or "")[:700]})
+                                         "reason": str(raw.get("reason") or "")[:700],
+                                         "nested_stage_justification": nested_justification})
+
+        final_roles = dict(display_roles)
+        final_roles.update({goal_id: item["role"] for goal_id, item in role_inputs.items()})
+        for goal_id, state in final.items():
+            if state["type"] != "subgoal" or final_roles.get(goal_id) != "stage":
+                continue
+            parent_id = int(state.get("parent_id") or 0)
+            if (not parent_id or final.get(parent_id, {}).get("type") != "subgoal" or
+                    final_roles.get(parent_id) != "stage"):
+                continue
+            original_parent = int(nodes[goal_id].get("parent_id") or 0)
+            already_nested = (
+                nodes[goal_id]["type"] == "subgoal" and
+                display_roles.get(goal_id) == "stage" and
+                original_parent == parent_id and
+                display_roles.get(original_parent) == "stage")
+            if already_nested:
+                continue
+            justification = str(
+                role_inputs.get(goal_id, {}).get("nested_stage_justification") or "")
+            if len(" ".join(justification.split())) < 20:
+                raise ValueError(
+                    "placing a Stage beneath another Stage requires an explicit "
+                    "macro-stage/substage justification")
         if not normalized and not normalized_roles:
             raise ValueError("the proposed structure is unchanged")
 
@@ -986,7 +1234,9 @@ class GoalStore:
             for item in roles:
                 self._set_semantic_role(
                     int(item["goal_id"]), item["proposed_role"],
-                    rationale=item.get("reason") or rationale, source="ai", commit=False)
+                    rationale=(item.get("nested_stage_justification") or
+                               item.get("reason") or rationale),
+                    source="ai", commit=False)
             self._mark_goal_ai_dirty(*preview["affected_node_ids"], *touched_parents)
             if commit:
                 self.conn.commit()
@@ -1006,6 +1256,8 @@ class GoalStore:
             raise ValueError("goal not found")
         if node["type"] == "umbrella":
             raise ValueError("the umbrella cannot be archived")
+        if node["status"] == "archived":
+            raise ValueError("this node is already archived")
         to_visit = [int(goal_id)]
         ids: list[int] = []
         while to_visit:
@@ -1014,13 +1266,63 @@ class GoalStore:
             rows = self.conn.execute(
                 "SELECT id FROM goal_node WHERE parent_id=?", (current,)).fetchall()
             to_visit.extend(int(r["id"]) for r in rows)
+        rows = self.conn.execute(
+            f"SELECT id,status FROM goal_node WHERE id IN ({','.join('?' for _ in ids)})",
+            ids).fetchall()
         now = _now()
-        self.conn.executemany(
-            "UPDATE goal_node SET status='archived',updated_at=? WHERE id=?",
-            [(now, node_id) for node_id in ids])
-        self._mark_goal_ai_dirty(*ids)
-        self.conn.commit()
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute(
+                "DELETE FROM goal_archive_snapshot WHERE archive_root_id=?", (int(goal_id),))
+            self.conn.executemany(
+                "INSERT INTO goal_archive_snapshot "
+                "(archive_root_id,goal_id,prior_status,archived_at) VALUES (?,?,?,?)",
+                [(int(goal_id), int(row["id"]), row["status"], now) for row in rows])
+            self.conn.executemany(
+                "UPDATE goal_node SET status='archived',updated_at=? WHERE id=?",
+                [(now, node_id) for node_id in ids])
+            self._mark_goal_ai_dirty(*ids, node.get("parent_id"))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
         return len(ids)
+
+    def restore_subtree(self, goal_id: int) -> int:
+        """Restore a soft-archived subtree to the exact statuses it had before archive."""
+        node = self.get(int(goal_id))
+        if not node or node["type"] == "umbrella":
+            raise ValueError("archived node not found")
+        if node["status"] != "archived":
+            raise ValueError("this node is not archived")
+        parent = self.get(int(node["parent_id"])) if node.get("parent_id") else None
+        if parent and parent["status"] == "archived":
+            raise ValueError("restore the archived parent first")
+        rows = self.conn.execute(
+            "SELECT goal_id,prior_status FROM goal_archive_snapshot "
+            "WHERE archive_root_id=? ORDER BY goal_id", (int(goal_id),)).fetchall()
+        now = _now()
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            if rows:
+                self.conn.executemany(
+                    "UPDATE goal_node SET status=?,updated_at=? WHERE id=?",
+                    [(row["prior_status"], now, int(row["goal_id"])) for row in rows])
+                restored_ids = [int(row["goal_id"]) for row in rows]
+            else:
+                # Compatibility for nodes archived before snapshots were introduced.
+                self.conn.execute(
+                    "UPDATE goal_node SET status='active',updated_at=? WHERE id=?",
+                    (now, int(goal_id)))
+                restored_ids = [int(goal_id)]
+            self.conn.execute(
+                "DELETE FROM goal_archive_snapshot WHERE archive_root_id=?", (int(goal_id),))
+            self._mark_goal_ai_dirty(*restored_ids, node.get("parent_id"))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return len(restored_ids)
 
     def link_curiosity(self, goal_id: int, curiosity_id: int) -> None:
         if not self.get(goal_id):
@@ -1112,6 +1414,10 @@ class GoalStore:
             " WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?"
         return [self._outcome_dict(row) for row in
                 self.conn.execute(sql, tuple(params)).fetchall()]
+
+    def outcome(self, outcome_id: int) -> dict | None:
+        return self._outcome_dict(self.conn.execute(
+            "SELECT * FROM experiment_outcome WHERE id=?", (int(outcome_id),)).fetchone())
 
     def _outcome_links(self, goal_id: int) -> tuple[int | None, int | None]:
         source = self.conn.execute(
@@ -1304,15 +1610,12 @@ class GoalStore:
             if node["type"] == "subgoal":
                 if not node.get("semantic_role"):
                     parent = nodes.get(node.get("parent_id"))
-                    if parent and parent["type"] == "overgoal":
-                        node["semantic_role"] = (
-                            "area" if any(child["type"] == "subgoal"
-                                          for child in node["children"])
-                            else "project")
-                    elif parent_role == "area":
-                        node["semantic_role"] = "project"
-                    else:
-                        node["semantic_role"] = "stage"
+                    node["semantic_role"] = _derived_branch_role(
+                        node.get("title", ""), node.get("description", ""),
+                        parent_type=str(parent.get("type") if parent else ""),
+                        parent_role=parent_role,
+                        has_branch_children=any(
+                            child["type"] == "subgoal" for child in node["children"]))
                     node["semantic_role_source"] = "derived"
                 parent_role = str(node["semantic_role"])
             for child in node["children"]:
@@ -1556,31 +1859,19 @@ class GoalStore:
         self.conn.commit()
 
 
-def record_experiment_outcome(config, goal_id: int, payload: dict) -> dict:
-    """Store a user-reported Leaf outcome and propagate it as bounded evidence."""
+def propagate_experiment_outcome(config, outcome_id: int) -> dict:
+    """Propagate one stored Leaf debrief into bounded learning contexts."""
     from .curiosity import CuriosityStore
     from .inference import InferenceStore, concept_similarity
     curiosities = CuriosityStore(config.memory_db_path)
     goals = GoalStore(config.memory_db_path)
     inferences = InferenceStore(config.memory_db_path)
     try:
-        helpfulness = payload.get("helpfulness")
-        if helpfulness in {"", None}:
-            helpfulness = None
-        outcome = goals.add_outcome(
-            int(goal_id), str(payload.get("result") or ""),
-            str(payload.get("what_happened") or ""),
-            expected_obstacle=str(payload.get("expected_obstacle") or ""),
-            surprise=str(payload.get("surprise") or ""),
-            helpfulness=float(helpfulness) if helpfulness is not None else None,
-            changed_understanding=str(payload.get("changed_understanding") or ""),
-            next_adjustment=str(payload.get("next_adjustment") or ""),
-            curiosity_id=(int(payload["curiosity_id"])
-                          if payload.get("curiosity_id") is not None else None),
-            source_item_id=(int(payload["source_item_id"])
-                            if payload.get("source_item_id") is not None else None))
-
-        node = goals.get(int(goal_id))
+        outcome = goals.outcome(int(outcome_id))
+        if not outcome:
+            raise ValueError("experiment outcome not found")
+        goal_id = int(outcome["goal_id"])
+        node = goals.get(goal_id)
         observation = (outcome["changed_understanding"] or outcome["what_happened"]).strip()
         evidence_text = (
             f"Experiment {node['title'] if node else goal_id} {outcome['result']}: {observation}" +
@@ -1677,6 +1968,30 @@ def record_experiment_outcome(config, goal_id: int, payload: dict) -> dict:
         inferences.close(); goals.close(); curiosities.close()
 
 
+def record_experiment_outcome(config, goal_id: int, payload: dict) -> dict:
+    """Store a user-reported Leaf outcome and propagate it as bounded evidence."""
+    goals = GoalStore(config.memory_db_path)
+    try:
+        helpfulness = payload.get("helpfulness")
+        if helpfulness in {"", None}:
+            helpfulness = None
+        outcome = goals.add_outcome(
+            int(goal_id), str(payload.get("result") or ""),
+            str(payload.get("what_happened") or ""),
+            expected_obstacle=str(payload.get("expected_obstacle") or ""),
+            surprise=str(payload.get("surprise") or ""),
+            helpfulness=float(helpfulness) if helpfulness is not None else None,
+            changed_understanding=str(payload.get("changed_understanding") or ""),
+            next_adjustment=str(payload.get("next_adjustment") or ""),
+            curiosity_id=(int(payload["curiosity_id"])
+                          if payload.get("curiosity_id") is not None else None),
+            source_item_id=(int(payload["source_item_id"])
+                            if payload.get("source_item_id") is not None else None))
+    finally:
+        goals.close()
+    return propagate_experiment_outcome(config, int(outcome["id"]))
+
+
 PLANNER_SYSTEM = """You help turn one grounded suggestion into an actionable goal plan.
 Ask exactly one decision-bearing question at a time. Briefly recommend a current
 approach, then ask the question. Never activate goals yourself. Return strict JSON:
@@ -1703,6 +2018,26 @@ the evidence is too uncertain. Ask at most one short placement question when con
 the temporary proposal itself.
 """
 
+INTAKE_SYSTEM = """Classify one thing a user wants to add to their personal Growth tree.
+Users should not have to choose structural terminology. Roots are enduring life domains. A Branch
+may be an Area (ongoing scope), Project (finite outcome), or Stage (phase inside a project). A
+Leaf is one concrete action or finishable outcome. Skip unnecessary levels. Prefer the most
+specific supplied parent that genuinely owns the addition. If substantially equivalent work
+already exists, point to it instead of creating a duplicate. Recommend a new Root only when the
+text clearly describes a durable life domain that remains after current projects finish.
+
+Return strict JSON:
+{"action":"propose"|"existing"|"uncertain", "parent_id":int|null,
+ "new_type":"overgoal"|"subgoal"|"task"|null,
+ "semantic_role":"area"|"project"|"stage"|null, "existing_goal_id":int|null,
+ "title":str, "description":str, "confidence":0..1, "rationale":str, "question":str,
+ "nested_stage_justification":str}.
+Use only supplied ids. Ask at most one short question. Do not create or mutate anything.
+Normally use Project → Stage or Stage → Leaf. Only propose Stage → Stage when the child is a
+genuine substage of a distinct macro-stage, and explain that boundary in
+nested_stage_justification. Otherwise leave that field empty.
+"""
+
 RESTRUCTURE_SYSTEM = """Review one existing node inside a personal Growth tree and decide whether
 its structural role is misleading. Use meaning and durable ownership, not title overlap alone.
 Soul is the whole person; Root is an enduring life domain; Branch is a project, strategy, area,
@@ -1722,16 +2057,22 @@ whole person; a Root is a durable life domain; a Branch may be an Area, Project,
 is one concrete outcome or action. Nested Branches are allowed only when their scopes are genuinely
 different. Do not preserve a project-shaped Root or use several generic Branch labels when Area,
 Project, and Stage explain the nesting. Prefer the smallest set of changes that makes the path
-understandable. Never delete, merge, archive, rename, or recreate a node.
+understandable. When a generic catch-all Root contains work that now has specific durable Root
+owners, move its descendants to those supplied Roots instead of nesting the catch-all beneath one
+of them. Leave the emptied catch-all Root unchanged and warn that the user may archive it after
+review. Never delete, merge, archive, rename, or recreate a node.
 
 Return strict JSON:
 {"action":"keep"|"restructure"|"uncertain", "confidence":0..1, "rationale":str,
  "question":str, "nodes":[{"goal_id":int,"new_type":"overgoal"|"subgoal"|"task",
- "parent_id":int,"semantic_role":"area"|"project"|"stage"|null,"reason":str}],
+ "parent_id":int,"semantic_role":"area"|"project"|"stage"|null,"reason":str,
+ "nested_stage_justification":str}],
  "warnings":[str]}.
 Include a node only when its type, parent, or Branch role should change. Use only supplied ids.
 Area/Project/Stage applies only when new_type is subgoal. Ask at most one short question when the
 meaning is genuinely uncertain. Return at most 16 node changes.
+Normally normalize Stage → Stage to Project → Stage or Stage → Leaf. Keep nested Stages only when
+the child entry explicitly explains the macro-stage/substage distinction.
 """
 
 SUMMARY_SYSTEM = """Turn this planning dialogue into one concise editable goal tree.
@@ -1836,9 +2177,12 @@ class StubGoalPlanner:
         nodes = {int(node["id"]): dict(node) for node in review.get("nodes", [])}
         durable_words = {"career", "work", "health", "wellbeing", "relationship",
                          "relationships", "learning", "education", "finance", "finances",
-                         "creativity", "creative", "home", "family", "community"}
+                         "creativity", "creative", "home", "family", "community",
+                         "language", "korean", "gaming", "games", "hobby", "recreation",
+                         "league", "legends"}
         project_words = {"project", "experiment", "test", "launch", "build", "upwork",
-                         "automation", "product", "gig", "prototype", "migration"}
+                         "automation", "product", "gig", "prototype", "migration",
+                         "interface", "app"}
         stage_words = {"brainstorm", "evaluate", "select", "validate", "review", "prepare",
                        "plan", "write", "post", "log", "measure", "choose", "research"}
         generic_words = {"life", "lives", "overall", "actualized", "self", "world"}
@@ -1919,6 +2263,71 @@ class StubGoalPlanner:
             "question": "", "nodes": changes[:16], "warnings": [],
         }
 
+    def classify_intake(self, text: str, selected: dict, candidates: list[dict],
+                        soul: dict) -> dict:
+        from .inference import concept_similarity
+        cleaned = " ".join(str(text or "").split())
+        words = set(re.findall(r"[\w]+", cleaned.casefold()))
+        ranked_existing = []
+        for candidate in candidates:
+            if candidate.get("node_type") == "umbrella":
+                continue
+            score = concept_similarity(
+                cleaned, f"{candidate.get('title', '')} {candidate.get('description', '')}")
+            ranked_existing.append((score, candidate))
+        ranked_existing.sort(key=lambda item: item[0], reverse=True)
+        if ranked_existing and ranked_existing[0][0] >= .78:
+            match = ranked_existing[0][1]
+            return {"action": "existing", "existing_goal_id": int(match["id"]),
+                    "parent_id": None, "new_type": None, "semantic_role": None,
+                    "title": match["title"], "description": "", "confidence": .88,
+                    "rationale": f"This appears to describe the existing {match['path']}.",
+                    "question": ""}
+        if re.search(r"\b(new root|new life domain|ongoing life area)\b", cleaned, re.I):
+            return {"action": "propose", "parent_id": int(soul["id"]),
+                    "new_type": "overgoal", "semantic_role": None,
+                    "existing_goal_id": None, "title": cleaned[:120],
+                    "description": cleaned[:1000], "confidence": .82,
+                    "rationale": "You described this explicitly as an enduring life domain.",
+                    "question": ""}
+        project_words = {"project", "build", "create", "launch", "experiment", "test",
+                         "prototype", "migration", "redesign", "app", "프로젝트", "만들기",
+                         "출시", "실험"}
+        stage_words = {"stage", "phase", "brainstorm", "evaluate", "prepare", "review",
+                       "research", "plan", "단계", "평가", "준비", "검토", "조사", "계획"}
+        area_words = {"practice", "learning", "language", "career", "health", "relationships",
+                      "finance", "gaming", "hobby", "연습", "배움", "언어", "커리어",
+                      "건강", "관계", "재정", "게임", "취미"}
+        destination = selected
+        ranked_parents = []
+        for candidate in candidates:
+            if candidate.get("node_type") == "umbrella" or not candidate.get("can_parent"):
+                continue
+            score = concept_similarity(
+                cleaned, f"{candidate.get('path', '')} {candidate.get('description', '')}")
+            ranked_parents.append((score, candidate))
+        ranked_parents.sort(key=lambda item: item[0], reverse=True)
+        if ranked_parents and ranked_parents[0][0] >= .42:
+            destination = ranked_parents[0][1]
+        if words & stage_words:
+            node_type, role = "subgoal", "stage"
+        elif words & project_words:
+            node_type, role = "subgoal", "project"
+        elif words & area_words and destination.get("node_type") == "overgoal":
+            node_type, role = "subgoal", "area"
+        else:
+            imperative = bool(re.match(
+                r"^(write|send|call|buy|schedule|post|finish|complete|practice|open|make|"
+                r"작성|보내|전화|구매|예약|게시|완료|연습|열기)", cleaned, re.I))
+            node_type, role = (
+                ("task", None) if imperative or len(words) <= 8 else ("subgoal", "project"))
+        return {"action": "propose", "parent_id": int(destination["id"]),
+                "new_type": node_type, "semantic_role": role, "existing_goal_id": None,
+                "title": cleaned[:120], "description": cleaned[:1000], "confidence": .76,
+                "rationale": (f"This fits beneath {destination.get('path') or destination.get('title')} "
+                              f"as a {role.title() if role else 'Leaf'}."),
+                "question": ""}
+
     def first(self, suggestion: str, target: dict,
               placement: dict | None = None) -> tuple[str, dict]:
         message = (f'I can turn “{suggestion}” into a plan. My starting approach is to make '
@@ -1998,6 +2407,14 @@ class ClaudeGoalPlanner:
                   f"SELECTED PATH AND SUBTREE: {json.dumps(review, ensure_ascii=False)}\n"
                   f"VALID DESTINATIONS: {json.dumps(candidates, ensure_ascii=False)}")
         return self._call(TREE_RESTRUCTURE_SYSTEM, prompt)
+
+    def classify_intake(self, text: str, selected: dict, candidates: list[dict],
+                        soul: dict) -> dict:
+        prompt = (f"SOUL: {json.dumps(soul, ensure_ascii=False)}\n"
+                  f"CURRENTLY SELECTED SCOPE: {json.dumps(selected, ensure_ascii=False)}\n"
+                  f"VALID PARENTS AND EXISTING NODES: {json.dumps(candidates, ensure_ascii=False)}\n"
+                  f"USER ADDITION: {str(text)[:3000]}")
+        return self._call(INTAKE_SYSTEM, prompt)
 
     def first(self, suggestion: str, target: dict,
               placement: dict | None = None) -> tuple[str, dict]:
@@ -2280,7 +2697,11 @@ def recommend_goal_tree_restructure(config, planner, goal_id: int,
                                        "parent_id": parent_id, "reason": reason})
                 role = str(raw_node.get("semantic_role") or "").strip().lower()
                 if new_type == "subgoal" and role in {"area", "project", "stage"}:
-                    roles.append({"goal_id": node_id, "role": role, "reason": reason})
+                    roles.append({
+                        "goal_id": node_id, "role": role, "reason": reason,
+                        "nested_stage_justification": str(
+                            raw_node.get("nested_stage_justification") or "")[:700],
+                    })
             try:
                 preview = store.restructure_batch_preview(structural, roles)
             except ValueError as error:
@@ -2301,6 +2722,189 @@ def recommend_goal_tree_restructure(config, planner, goal_id: int,
         }
     finally:
         store.close()
+
+
+def recommend_goal_intake(config, planner, selected_id: int, text: str,
+                          *, max_candidates: int = 80) -> dict:
+    """Classify a plain-language addition without exposing node types to the user."""
+    store = GoalStore(config.memory_db_path)
+    try:
+        selected = store.get(int(selected_id))
+        text = " ".join(str(text or "").split())
+        if (not selected or selected["status"] == "archived" or
+                selected["type"] not in {"overgoal", "subgoal"}):
+            raise ValueError("select an active Root, Area, Project, or Stage")
+        if not text:
+            raise ValueError("describe what you want to add")
+        subtree_ids = set(store._subtree_ids(int(selected_id)))
+        tree = store.tree()
+        rendered: dict[int, dict] = {}
+        pending = [tree]
+        while pending:
+            node = pending.pop()
+            rendered[int(node["id"])] = node
+            pending.extend(node.get("children", []))
+        selected_rendered = rendered.get(int(selected_id)) or selected
+        soul_node = rendered[store.root_id]
+        soul = {"id": store.root_id, "title": soul_node["title"],
+                "description": soul_node.get("description", "")}
+        candidates = [{
+            "id": store.root_id, "node_type": "umbrella", "semantic_role": None,
+            "title": soul["title"], "description": soul["description"],
+            "path": soul["title"], "can_parent": False,
+        }]
+        for entry in store.catalog(max_candidates):
+            if entry["status"] != "active" or entry["id"] == store.root_id:
+                continue
+            node = rendered.get(int(entry["id"])) or store.get(int(entry["id"]))
+            candidates.append({
+                "id": int(entry["id"]), "node_type": node["type"],
+                "semantic_role": node.get("semantic_role"),
+                "title": entry["title"], "path": entry["path"],
+                "description": (str(node.get("description") or "")[:500]
+                                if int(entry["id"]) in subtree_ids else ""),
+                "can_parent": (int(entry["id"]) in subtree_ids and
+                               node["type"] in {"overgoal", "subgoal"}),
+            })
+        if not any(item["id"] == int(selected_id) for item in candidates):
+            candidates.append({
+                "id": int(selected_id), "node_type": selected_rendered["type"],
+                "semantic_role": selected_rendered.get("semantic_role"),
+                "title": selected["title"],
+                "path": " › ".join(store._goal_path_titles(int(selected_id))),
+                "description": str(selected_rendered.get("description") or "")[:500],
+                "can_parent": True,
+            })
+        selected_context = next(item for item in candidates if item["id"] == int(selected_id))
+        raw = planner.classify_intake(text, selected_context, candidates, soul) or {}
+        action = str(raw.get("action") or "uncertain").strip().lower()
+        if action not in {"propose", "existing", "uncertain"}:
+            action = "uncertain"
+        try:
+            confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if action == "existing":
+            try:
+                existing_id = int(raw.get("existing_goal_id"))
+            except (TypeError, ValueError):
+                existing_id = 0
+            existing = rendered.get(existing_id)
+            if not existing or existing.get("status") == "archived":
+                action = "uncertain"
+            else:
+                return {
+                    "action": "existing", "confidence": round(confidence, 3),
+                    "rationale": str(raw.get("rationale") or "")[:700],
+                    "question": "", "existing_goal_id": existing_id,
+                    "existing_title": existing["title"],
+                    "existing_path": " › ".join(store._goal_path_titles(existing_id)),
+                    "recommendation": None,
+                }
+        recommendation = None
+        if action == "propose":
+            try:
+                parent_id = int(raw.get("parent_id"))
+                new_type = str(raw.get("new_type") or "").strip().lower()
+            except (TypeError, ValueError):
+                parent_id, new_type = 0, ""
+            valid_parent_ids = {
+                item["id"] for item in candidates if item.get("can_parent")}
+            if new_type == "overgoal":
+                valid_parent_ids.add(store.root_id)
+            role = str(raw.get("semantic_role") or "").strip().lower() or None
+            nested_stage_justification = str(
+                raw.get("nested_stage_justification") or "")[:700]
+            if (parent_id not in valid_parent_ids or
+                    new_type not in {"overgoal", "subgoal", "task"}):
+                action = "uncertain"
+            else:
+                try:
+                    store._validate_parent(new_type, parent_id)
+                except ValueError:
+                    action = "uncertain"
+                if new_type == "subgoal":
+                    parent = rendered.get(parent_id) or store.get(parent_id)
+                    if role not in {"area", "project", "stage"}:
+                        role = _derived_branch_role(
+                            str(raw.get("title") or text), str(raw.get("description") or text),
+                            parent_type=parent["type"],
+                            parent_role=str(parent.get("semantic_role") or ""))
+                else:
+                    role = None
+                try:
+                    store._validate_semantic_placement(
+                        new_type, role, parent_id,
+                        nested_stage_justification=nested_stage_justification)
+                except ValueError:
+                    action = "uncertain"
+                if action == "propose":
+                    title = str(raw.get("title") or text).strip()[:160]
+                    description = str(raw.get("description") or text).strip()[:1200]
+                    if not title:
+                        action = "uncertain"
+                    else:
+                        parent_path = store._goal_path_titles(parent_id)
+                        recommendation = {
+                            "selected_id": int(selected_id), "parent_id": parent_id,
+                            "new_type": new_type, "semantic_role": role,
+                            "nested_stage_justification": nested_stage_justification,
+                            "title": title, "description": description,
+                            "proposed_path": " › ".join([*parent_path, title]),
+                        }
+        if action == "propose" and confidence < .58:
+            action, recommendation = "uncertain", None
+        return {
+            "action": action, "confidence": round(confidence, 3),
+            "rationale": str(raw.get("rationale") or "")[:700],
+            "question": str(raw.get("question") or "")[:300],
+            "existing_goal_id": None, "recommendation": recommendation,
+        }
+    finally:
+        store.close()
+
+
+def propose_goal_intake(config, recommendation: dict, rationale: str = "") -> dict:
+    """Turn one validated intake classification into an approval-only proposal."""
+    from .goal_ai import AgentProposal, GoalAgentStore
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        parent_id = int(recommendation.get("parent_id"))
+        new_type = str(recommendation.get("new_type") or "").strip().lower()
+        title = str(recommendation.get("title") or "").strip()[:160]
+        description = str(recommendation.get("description") or "").strip()[:1200]
+        role = str(recommendation.get("semantic_role") or "").strip().lower() or None
+        nested_stage_justification = str(
+            recommendation.get("nested_stage_justification") or "")[:700]
+        parent = goals.get(parent_id)
+        if not parent or parent["status"] == "archived" or not title:
+            raise ValueError("classified addition has an invalid destination")
+        goals._validate_parent(new_type, parent_id)
+        if new_type == "subgoal" and role not in {"area", "project", "stage"}:
+            raise ValueError("classified Branch needs an Area, Project, or Stage role")
+        if new_type != "subgoal":
+            role = None
+        goals._validate_semantic_placement(
+            new_type, role, parent_id,
+            nested_stage_justification=nested_stage_justification)
+        payload = {
+            "type": new_type, "title": title, "description": description,
+            "priority": "normal", "semantic_role": role,
+            "nested_stage_justification": nested_stage_justification,
+            "source": "plain_language_intake",
+        }
+        reason = str(rationale or "").strip() or (
+            f"Create this beneath {parent['title']} after reviewing Faerie's classification.")
+        proposal_id = agents.add_proposal(
+            parent_id, AgentProposal("create_child", parent_id, payload, reason))
+        if proposal_id is None:
+            raise ValueError("the same addition is already proposed or was dismissed")
+        return {"proposal_id": proposal_id, "parent_id": parent_id,
+                "recommendation": {**payload, "proposed_path":
+                                   " › ".join([*goals._goal_path_titles(parent_id), title])}}
+    finally:
+        agents.close(); goals.close()
 
 
 def start_planning(store: GoalStore, planner, source_item_id: int,
@@ -2447,16 +3051,19 @@ def suggestion_leaf_overlaps(config, source_item_id: int, *, limit: int = 5) -> 
 
 
 def propose_goal_restructure(config, goal_id: int, new_type: str, parent_id: int,
-                             position: int | None = None, rationale: str = "") -> dict:
+                             position: int | None = None, rationale: str = "",
+                             semantic_role: str | None = None) -> dict:
     """Stage an identity-preserving structural migration for explicit approval."""
     from .goal_ai import AgentProposal, GoalAgentStore
     goals = GoalStore(config.memory_db_path)
     agents = GoalAgentStore(config.memory_db_path)
     try:
         preview = goals.restructure_preview(
-            int(goal_id), str(new_type), int(parent_id), position)
+            int(goal_id), str(new_type), int(parent_id), position, semantic_role,
+            nested_stage_justification=str(rationale or ""))
         payload = {
             "new_type": preview["proposed"]["type"],
+            "semantic_role": preview["proposed"].get("semantic_role"),
             "parent_id": preview["proposed"]["parent_id"],
             "position": preview["proposed"]["position"],
             "current": preview["current"], "proposed": preview["proposed"],

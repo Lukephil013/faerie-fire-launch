@@ -1,11 +1,19 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
+  @font-face { font-family:'Atkinson Hyperlegible';
+    src:url("assets/fonts/AtkinsonHyperlegible-Regular.ttf") format("truetype");
+    font-style:normal; font-weight:400; font-display:swap; }
+  @font-face { font-family:'Atkinson Hyperlegible';
+    src:url("assets/fonts/AtkinsonHyperlegible-Bold.ttf") format("truetype");
+    font-style:normal; font-weight:700; font-display:swap; }
   :root {
+    --app-font:'Atkinson Hyperlegible','Malgun Gothic','Segoe UI Symbol',sans-serif;
     --line:rgba(110,140,240,.28); --fg:#e8edff; --muted:#8fa3d4; --cyan:#46ecff;
     --red:#ff6b8a;
   }
   html,body { margin:0; height:100%; overflow:hidden;
-    font-family:'Segoe UI',Helvetica,Arial,sans-serif; background:transparent; }
+    font-family:var(--app-font); background:transparent; }
+  button,input,textarea,select,option { font-family:var(--app-font); }
   #panel { display:flex; flex-direction:column; height:100%; box-sizing:border-box;
     background: radial-gradient(120% 80% at 50% 0%, #15183a 0%, #0a0c1c 55%, #06070f 100%);
     border:1px solid var(--line); border-radius:18px; overflow:hidden; color:var(--fg); }

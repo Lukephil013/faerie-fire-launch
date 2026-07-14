@@ -1723,6 +1723,9 @@ class GuiApi:
             def enrich(node):
                 node["relevance"] = goal_relevance_view(
                     goals, agents, node["id"], stale_days=stale_days)
+                node["leaf_workspace"] = (
+                    agents.leaf_workspace_summary(node["id"])
+                    if node.get("type") == "task" else {})
                 for child in node.get("children", []):
                     enrich(child)
 
@@ -1737,6 +1740,43 @@ class GuiApi:
             curiosities.close()
             agents.close()
             goals.close()
+
+    def goal_root_starters(self, language="en") -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, "starters": store.starter_root_catalog(str(language or "en"))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_root_starters_apply(self, keys=None, language="en") -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            return {"ok": True, **store.apply_starter_roots(
+                list(keys or []), str(language or "en"))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_intake_recommend(self, selected_id, text) -> dict:
+        from livingpc.goals import get_goal_planner, recommend_goal_intake
+        try:
+            return {"ok": True, **recommend_goal_intake(
+                self.cfg, get_goal_planner(self.cfg), int(selected_id), str(text or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_intake_propose(self, recommendation=None, rationale="") -> dict:
+        from livingpc.goals import propose_goal_intake
+        try:
+            return {"ok": True, **propose_goal_intake(
+                self.cfg, dict(recommendation or {}), str(rationale or ""))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
     def goal_relevance_review(self, goal_id) -> dict:
         from livingpc.goal_ai import review_goal_relevance
@@ -1939,6 +1979,77 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def goal_leaf_workspace_open(self, goal_id) -> dict:
+        from livingpc.goal_ai import open_leaf_workspace
+        try:
+            node_id = int(goal_id)
+            if node_id <= 0:
+                raise ValueError("goal_id must be a positive integer")
+            workspace = open_leaf_workspace(self.cfg, node_id)
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_workspace_send(self, goal_id, text, event=None) -> dict:
+        from livingpc.goal_ai import send_leaf_workspace
+        try:
+            node_id = int(goal_id)
+            if node_id <= 0:
+                raise ValueError("goal_id must be a positive integer")
+            if event is not None and not isinstance(event, dict):
+                raise ValueError("event must be an object")
+            workspace = send_leaf_workspace(
+                self.cfg, node_id, str(text or ""),
+                event=dict(event) if event is not None else None)
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_workspace_decide(self, goal_id, proposal_id, decision,
+                                   edited_payload=None) -> dict:
+        from livingpc.goal_ai import decide_leaf_workspace_proposal
+        try:
+            node_id = int(goal_id)
+            if node_id <= 0:
+                raise ValueError("goal_id must be a positive integer")
+            proposal_key = str(proposal_id or "").strip()
+            if not proposal_key:
+                raise ValueError("proposal_id is required")
+            chosen = str(decision or "").strip()
+            if not chosen:
+                raise ValueError("decision is required")
+            if edited_payload is not None and not isinstance(edited_payload, dict):
+                raise ValueError("edited_payload must be an object")
+            workspace = decide_leaf_workspace_proposal(
+                self.cfg, node_id, proposal_key, chosen,
+                edited_payload=(dict(edited_payload)
+                                if edited_payload is not None else None))
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_workspace_clear(self, goal_id) -> dict:
+        from livingpc.goal_ai import clear_leaf_workspace_messages
+        try:
+            node_id = int(goal_id)
+            if node_id <= 0:
+                raise ValueError("goal_id must be a positive integer")
+            workspace = clear_leaf_workspace_messages(self.cfg, node_id)
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_workspace_reopen(self, goal_id) -> dict:
+        from livingpc.goal_ai import reopen_leaf_workspace
+        try:
+            node_id = int(goal_id)
+            if node_id <= 0:
+                raise ValueError("goal_id must be a positive integer")
+            workspace = reopen_leaf_workspace(self.cfg, node_id)
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def goal_ai_question(self, question_id, action, answer="") -> dict:
         from livingpc.goal_ai import GoalAgentStore, summarize_goal_answer
         store = GoalAgentStore(self.cfg.memory_db_path)
@@ -2023,6 +2134,54 @@ class GuiApi:
         finally:
             store.close()
 
+    def goal_archive_prepare(self, goal_id) -> dict:
+        from livingpc.goal_ai import prepare_goal_archive
+        try:
+            return {"ok": True, **prepare_goal_archive(self.cfg, int(goal_id))}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_archive(self, goal_id, harvest_id=None) -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            node = store.get(int(goal_id))
+            if not node:
+                raise ValueError("goal not found")
+            handoff = None
+            if harvest_id is not None:
+                from livingpc.goal_ai import GoalAgentStore
+                agents = GoalAgentStore(self.cfg.memory_db_path)
+                try:
+                    handoff = agents.harvest(int(harvest_id))
+                    if int(handoff["source_node_id"]) != int(goal_id):
+                        raise ValueError("archive handoff belongs to another node")
+                    if handoff["status"] == "draft":
+                        handoff = agents.commit_harvest(int(harvest_id))
+                    elif handoff["status"] != "committed":
+                        raise ValueError("archive handoff is no longer available")
+                finally:
+                    agents.close()
+            count = store.delete_subtree(int(goal_id))
+            return {"ok": True, "archived_count": count,
+                    "parent_id": node.get("parent_id"), "handoff": handoff,
+                    "tree": store.tree()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_restore(self, goal_id) -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            count = store.restore_subtree(int(goal_id))
+            return {"ok": True, "restored_count": count, "tree": store.tree()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
     def goal_move(self, goal_id, parent_id, position=None) -> dict:
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)
@@ -2036,13 +2195,16 @@ class GuiApi:
             store.close()
 
     def goal_restructure_preview(self, goal_id, new_type, parent_id,
-                                 position=None) -> dict:
+                                 position=None, semantic_role=None,
+                                 nested_stage_justification="") -> dict:
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)
         try:
             return {"ok": True, "preview": store.restructure_preview(
                 int(goal_id), str(new_type), int(parent_id),
-                None if position is None else int(position))}
+                None if position is None else int(position),
+                None if semantic_role is None else str(semantic_role),
+                nested_stage_justification=str(nested_stage_justification or ""))}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
@@ -2075,12 +2237,13 @@ class GuiApi:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
     def goal_restructure_propose(self, goal_id, new_type, parent_id,
-                                 position=None, rationale="") -> dict:
+                                 position=None, rationale="", semantic_role=None) -> dict:
         from livingpc.goals import propose_goal_restructure
         try:
             return {"ok": True, **propose_goal_restructure(
                 self.cfg, int(goal_id), str(new_type), int(parent_id),
-                None if position is None else int(position), str(rationale or ""))}
+                None if position is None else int(position), str(rationale or ""),
+                None if semantic_role is None else str(semantic_role))}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 

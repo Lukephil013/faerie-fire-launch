@@ -11,15 +11,19 @@ from livingpc import crypto
 from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goal_ai import (
-    AgentProposal, AgentReport, ChatResult, GardeningProposal, GoalAgentStore,
-    LeafStepDraft, RelevanceReview, StubGoalAgentModel,
-    StepCoachReply, build_agent_context, build_leaf_step_draft_context, build_step_coach_context,
+    AgentProposal, AgentReport, ChatResult, ClaudeGoalAgentModel, GardeningProposal, GoalAgentStore,
+    LEAF_WORKSPACE_SYSTEM, STEP_COACH_SYSTEM, LeafStepDraft, LeafWorkspaceReply,
+    RelevanceReview, StubGoalAgentModel,
+    StepCoachReply, build_agent_context, build_leaf_step_draft_context,
+    build_leaf_workspace_context, build_step_coach_context,
     chat_with_goal_agent, confirm_step_coach_completion, decide_proposal,
     decide_step_coach_revision, due_goal_nodes,
     decide_gardening_proposal, draft_leaf_steps, generate_goal_description, goal_relevance_view,
     open_step_coach, parse_leaf_step_draft, parse_report, parse_step_coach, relevance_due_nodes, review_goal_relevance,
     propose_leaf_boundary_merge, propose_leaf_boundary_rewrite, send_step_coach, set_step_coach_status, start_goal_harvest,
-    summarize_goal_answer,
+    prepare_goal_archive, summarize_goal_answer,
+    open_leaf_workspace, send_leaf_workspace, decide_leaf_workspace_proposal,
+    clear_leaf_workspace_messages, parse_leaf_workspace_reply, reopen_leaf_workspace,
 )
 from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
@@ -38,6 +42,16 @@ def cfg_for(directory):
     cfg.inference_backend = "stub"
     cfg.goal_ai_batch_size = 12
     return cfg
+
+
+def test_leaf_agents_use_recognition_led_memory_reconstruction():
+    for prompt in (LEAF_WORKSPACE_SYSTEM, STEP_COACH_SYSTEM):
+        assert "easiest first" in prompt or "smallest" in prompt
+        assert "recognition" in prompt
+        assert "hypothesis" in prompt or "hypotheses" in prompt
+        assert "organization" in prompt or "organizing" in prompt
+    assert "one main" in LEAF_WORKSPACE_SYSTEM and "question\nper turn" in LEAF_WORKSPACE_SYSTEM
+    assert "Never require a complete inventory" in LEAF_WORKSPACE_SYSTEM
 
 
 @pytest.fixture
@@ -99,6 +113,22 @@ class StaticCoachModel:
 class FailingCoachModel:
     def coach(self, context, messages, *, opening=False):
         raise RuntimeError("coach unavailable")
+
+
+class RecordingWorkspaceModel:
+    model_name = "recording-workspace"
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    def leaf_workspace(self, context, messages, *, event=None, opening=False):
+        self.calls.append({"context": context, "messages": list(messages),
+                           "event": event, "opening": opening})
+        reply = self.replies.pop(0)
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
 
 
 class StaticStepDraftModel:
@@ -219,6 +249,203 @@ def test_leaf_coach_opening_does_ideation_first_with_suggested_responses():
     assert parse_step_coach(json.dumps({
         "reply": "Pick one.", "question": "Which one?", "examples": ["Only one"]
     }), opening=True) is None
+
+
+def test_leaf_coach_opening_repairs_common_model_field_variations():
+    repaired = parse_step_coach(json.dumps({
+        "response": "Here are four useful starting points.",
+        "smallest_next_action": "Open a document too early.",
+        "follow_up_question": "Which direction fits?",
+        "suggested_responses": ["Reports", "Inbox sorting", "Data entry"],
+    }), opening=True)
+
+    assert repaired
+    assert repaired.reply.startswith("Here are four")
+    assert repaired.next_action == ""
+    assert repaired.question == "Which direction fits?"
+    assert repaired.examples == ["Reports", "Inbox sorting", "Data entry"]
+
+
+def test_leaf_coach_malformed_model_reply_uses_useful_bounded_fallback():
+    model = object.__new__(ClaudeGoalAgentModel)
+    model._call = lambda *_args, **_kwargs: "A readable answer, but not valid JSON"
+    context = {
+        "language": "en",
+        "leaf": {"title": "Brainstorm automation wins",
+                 "description": "Find common repetitive admin work to automate."},
+        "focused_step": {"text": "Choose an automation direction"},
+    }
+
+    reply = model.coach(context, [], opening=True)
+
+    assert reply.reply == "Let’s choose a direction for Brainstorm automation wins."
+    assert reply.question == "How do these options sound?"
+    assert len(reply.examples) == 4
+    assert reply.next_action == ""
+
+
+def test_leaf_coach_strips_legacy_timer_homework_without_discarding_the_answer():
+    model = object.__new__(ClaudeGoalAgentModel)
+    model._call = lambda *_args, **_kwargs: json.dumps({
+        "reply": "Good—repeated data entry is a real pain point. Now open a blank doc and spend 10 minutes writing down every example you can remember.",
+        "next_action": "Open a blank document and stop after 10 minutes.",
+        "question": "What data-entry work have you observed?",
+        "examples": ["Vendor emails", "PDF extraction"],
+        "step_completed": False,
+        "working_update": {"status": "working", "decision": "Data entry"},
+        "step_revision": None,
+    })
+    context = {
+        "language": "en",
+        "leaf": {"title": "Brainstorm automation wins",
+                 "description": "Find common repetitive admin work to automate."},
+        "focused_step": {"text": "Memory dump (10 min): open a blank doc."},
+    }
+    messages = [{"role": "user", "payload": {"text": "Repeated data entry"}}]
+
+    reply = model.coach(context, messages, opening=False)
+
+    assert reply.reply == "Good—repeated data entry is a real pain point."
+    assert reply.question == "What data-entry work have you observed?"
+    assert all("minute" not in value.lower() for value in [reply.reply, reply.next_action])
+    assert reply.next_action == ""
+    assert reply.examples == ["Vendor emails", "PDF extraction"]
+    assert reply.decision == "Data entry"
+
+
+def test_leaf_coach_detail_request_preserves_a_real_conversational_answer():
+    explanation = " ".join([
+        "Email-to-spreadsheet automation watches a mailbox and extracts consistent fields.",
+        "Form-to-CRM automation creates or updates contacts from submitted forms.",
+        "PDF-to-expense automation reads invoices and maps totals, dates, and vendors.",
+        "Cross-tool synchronization keeps selected fields aligned when either system changes.",
+        "The first is easiest when emails follow a template; the second is usually the most reliable;",
+        "the third needs document-quality checks; and the fourth needs a clear source of truth.",
+    ])
+    model = object.__new__(ClaudeGoalAgentModel)
+    model._call = lambda *_args, **_kwargs: json.dumps({
+        "reply": explanation, "next_action": "",
+        "question": "Which tradeoff matters most to you?",
+        "examples": ["Show the easiest one", "Compare setup difficulty"],
+        "step_completed": False, "working_update": {"status": "working"},
+        "step_revision": None,
+    })
+    context = {
+        "language": "en",
+        "leaf": {"title": "Brainstorm automation wins",
+                 "description": "Find common repetitive admin work to automate."},
+        "focused_step": {"text": "Choose an automation direction"},
+    }
+    messages = [
+        {"role": "assistant", "payload": {"examples": [
+            "Email attachments → spreadsheet", "Form responses → CRM records"]}},
+        {"role": "user", "payload": {"text": "Can you give me more info on each one?"}},
+    ]
+
+    reply = model.coach(context, messages, opening=False)
+
+    assert reply.reply == explanation
+    assert reply.question == "Which tradeoff matters most to you?"
+    assert not reply.reply.startswith("Great—automation")
+
+
+def test_leaf_coach_all_of_them_advances_instead_of_resetting_the_menu():
+    adaptive = " ".join([
+        "That breadth is useful: you do not need to pretend these are mutually exclusive.",
+        "They can become one operations-automation offer with data movement as the common promise.",
+        "You could lead with the easiest workflow to explain, then present reporting, inbox, and",
+        "scheduling work as adjacent examples. That keeps the offer clear without discarding capabilities.",
+        "The next decision is packaging rather than which skill you possess.",
+    ])
+    model = object.__new__(ClaudeGoalAgentModel)
+    model._call = lambda *_args, **_kwargs: json.dumps({
+        "reply": adaptive, "next_action": "",
+        "question": "Would you rather sell one broad offer or several focused listings?",
+        "examples": ["One broad offer", "Several focused listings", "One lead offer plus add-ons"],
+        "step_completed": False,
+        "working_update": {"status": "working", "decision": "Can offer all four categories"},
+        "step_revision": None,
+    })
+    context = {
+        "language": "en",
+        "leaf": {"title": "Brainstorm automation wins",
+                 "description": "Find common repetitive admin work to automate."},
+        "focused_step": {"text": "Choose an automation direction"},
+    }
+    messages = [{"role": "user", "payload": {
+        "text": "All of them, I could offer to do all of those."}}]
+
+    reply = model.coach(context, messages, opening=False)
+
+    assert reply.reply == adaptive
+    assert reply.examples[0] == "One broad offer"
+    assert reply.decision == "Can offer all four categories"
+    assert not reply.reply.startswith("Great—automation")
+
+
+def test_leaf_coach_all_of_them_has_an_adaptive_fallback_too():
+    model = object.__new__(ClaudeGoalAgentModel)
+    model._call = lambda *_args, **_kwargs: "not valid JSON"
+    context = {
+        "language": "en",
+        "leaf": {"title": "Brainstorm automation wins",
+                 "description": "Find common repetitive admin work to automate."},
+        "focused_step": {"text": "Choose an automation direction"},
+    }
+    messages = [{"role": "user", "payload": {
+        "text": "I can do all of them and could offer all of those."}}]
+
+    reply = model.coach(context, messages, opening=False)
+
+    assert reply.reply == "Great—you can offer all of them. Let’s decide how to package them."
+    assert "broad operations-automation service" in reply.examples[0]
+    assert "Repeated data entry" not in reply.examples
+    assert reply.decision == "The user said they can offer all of the presented categories."
+
+
+def test_leaf_coach_detail_fallback_explains_the_active_options_instead_of_resetting():
+    model = object.__new__(ClaudeGoalAgentModel)
+    model._call = lambda *_args, **_kwargs: "not valid JSON"
+    packaging = [
+        "Offer one broad operations-automation service",
+        "Lead with one specialty and offer the others as add-ons",
+        "Create a separate listing for each workflow type",
+        "Bundle them into a recurring operations package",
+    ]
+    context = {
+        "language": "en",
+        "leaf": {"title": "Brainstorm automation wins",
+                 "description": "Find common repetitive admin work to automate."},
+        "focused_step": {"text": "Choose an automation direction"},
+    }
+    messages = [
+        {"role": "assistant", "payload": {"examples": packaging}},
+        {"role": "user", "payload": {
+            "text": "Hmm, I'm not sure. Can you elaborate more on what each one looks like?"}},
+    ]
+
+    reply = model.coach(context, messages, opening=False)
+
+    assert reply.reply.startswith("Here’s what each option would look like:")
+    assert "One flexible listing promises" in reply.reply
+    assert "Market one easy-to-understand specialty" in reply.reply
+    assert "Publish a focused listing" in reply.reply
+    assert "Bundle several workflows" in reply.reply
+    assert reply.examples == packaging
+    assert "Repeated data entry" not in reply.reply
+
+
+def test_brand_new_leaf_opens_agent_before_explicit_steps_exist(world):
+    cfg, _, _, _, ids = world
+    model = StubGoalAgentModel()
+
+    opened = open_step_coach(cfg, ids["task_a"], 0, model=model)
+    opening = opened["messages"][-1]["payload"]
+
+    assert opened["steps"][0]["text"] == "Practice particles"
+    assert opening["text"] == "Let’s choose a direction for Practice particles."
+    assert opening["question"] == "How do these options sound?"
+    assert len(opening["examples"]) == 4
 
 
 def test_leaf_coach_step_revision_is_reviewable_and_changes_steps_only_after_approval(world):
@@ -424,6 +651,24 @@ def test_leaf_harvest_flows_upward_without_leaking_to_sibling(world):
                for h in soul_context["committed_harvests"])
     assert all(h["source_node_id"] != ids["task_a"]
                for h in fitness_context["committed_harvests"])
+
+
+def test_archive_preparation_reviews_context_then_commits_upward_handoff(world):
+    cfg, goals, agents, _, ids = world
+    goals.add_evidence(ids["task_a"], "manual_note", "proof", "A useful attached lesson")
+
+    prepared = prepare_goal_archive(cfg, ids["task_a"], model=StubGoalAgentModel())
+    api = GuiApi(cfg)
+    archived = api.goal_archive(ids["task_a"], prepared["harvest"]["id"])
+    parent_context = build_agent_context(goals, agents, ids["sub_a"])
+
+    assert archived["ok"] and archived["handoff"]["status"] == "committed"
+    assert goals.get(ids["task_a"])["status"] == "archived"
+    assert any(item["source_node_id"] == ids["task_a"]
+               for item in parent_context["committed_harvests"])
+    assert goals.conn.execute(
+        "SELECT COUNT(*) FROM goal_evidence_link WHERE goal_id=?", (ids["task_a"],)
+    ).fetchone()[0] == 1
 
 
 def test_only_soul_harvest_routes_crossover_downward(world):
@@ -1255,3 +1500,516 @@ def test_scheduler_sends_one_digest_for_blocked_and_proposals(tmp_path, monkeypa
     assert len(calls) == 1
     assert "1 newly blocked" in calls[0][1]
     assert "2 new proposal" in calls[0][1]
+
+
+def test_leaf_workspace_parser_keeps_plain_prose_and_drops_only_bad_extras():
+    plain = parse_leaf_workspace_reply(
+        "I understand. You can offer all four services, so let’s compare packaging.")
+    assert plain and plain.message.startswith("I understand")
+    assert plain.suggestions == [] and plain.proposal is None
+
+    malformed_optional = parse_leaf_workspace_reply({
+        "message": "Here is a substantive explanation that must survive.",
+        "suggestions": {"not": "a list"},
+        "proposal": {"type": "plan", "payload": "not an object"},
+        "working_patch": "not an object",
+    })
+    assert malformed_optional
+    assert malformed_optional.message == "Here is a substantive explanation that must survive."
+    assert malformed_optional.suggestions == []
+    assert malformed_optional.proposal is None
+    assert malformed_optional.selection_mode == "single"
+
+    multi = parse_leaf_workspace_reply({
+        "message": "Choose every category that applies.",
+        "selection_mode": "multiple",
+        "suggestions": [{"label": "Email"}, {"label": "Reports"}],
+    })
+    assert multi and multi.selection_mode == "multiple"
+    invalid_mode = parse_leaf_workspace_reply({
+        "message": "This remains usable.", "selection_mode": "anything"})
+    assert invalid_mode and invalid_mode.selection_mode == "single"
+
+    scratch = parse_leaf_workspace_reply({
+        "message": "I can preserve the conversational focus.",
+        "working_patch": {"current_focus": "packaging", "decisions": ["assumed"],
+                          "blockers": ["assumed"], "constraints": ["assumed"]},
+    })
+    assert scratch and scratch.working_patch == {"current_focus": "packaging"}
+
+    broken_tail = parse_leaf_workspace_reply(
+        'This answer is still useful.\n{"suggestions":[{"label":"truncated"}')
+    assert broken_tail and broken_tail.message == "This answer is still useful."
+    braces_are_prose = parse_leaf_workspace_reply(
+        "Use the {client_id} field as the matching key; that is the concrete answer.")
+    assert braces_are_prose and braces_are_prose.message.startswith("Use the {client_id}")
+
+    completion = parse_leaf_workspace_reply({
+        "message": "Four concrete automation candidates are ready for the next Leaf.",
+        "proposal": {
+            "type": "complete_leaf",
+            "payload": {},
+            "rationale": "Starting with examples made recall easier than beginning from a blank page.",
+        },
+    })
+    assert completion and completion.proposal
+    assert completion.proposal["payload"]["result"] == (
+        "Four concrete automation candidates are ready for the next Leaf.")
+    assert completion.proposal["payload"]["lesson"] == (
+        "Starting with examples made recall easier than beginning from a blank page.")
+
+
+def test_leaf_workspace_completion_prompt_requires_editable_result_and_lesson_drafts():
+    assert "always draft both payload.result and payload.lesson" in LEAF_WORKSPACE_SYSTEM
+
+
+def test_leaf_workspace_is_free_conversation_and_uses_prior_turns(world):
+    cfg, _, agents, _, ids = world
+    model = RecordingWorkspaceModel([
+        "Tell me how you currently understand this Leaf, and we can shape it together.",
+        "That makes sense. Doing all of them changes this from choosing a capability "
+        "to deciding how the capabilities should be packaged.",
+    ])
+    opened = open_leaf_workspace(cfg, ids["task_a"], model=model)
+    sent = send_leaf_workspace(cfg, ids["task_a"], "I can do all of them.", model=model)
+
+    assert opened["messages"][-1]["content"].startswith("Tell me")
+    assert sent["messages"][-1]["content"].startswith("That makes sense")
+    assert "Great—automation" not in sent["messages"][-1]["content"]
+    assert [item["content"] for item in model.calls[-1]["messages"]] == [
+        opened["messages"][0]["content"], "I can do all of them."]
+    assert "recent_chat" not in model.calls[-1]["context"]
+    assert "siblings" in model.calls[-1]["context"]["jurisdiction"]["excludes"]
+    assert agents.leaf_workspace_state(ids["task_a"])["phase"] == "shaping"
+
+
+def test_leaf_workspace_stub_opening_does_first_ideation_pass_without_timer_homework(world):
+    cfg, goals, _, _, ids = world
+    goals.update(ids["task_a"], description=(
+        "Memory dump (10 minutes): open a blank doc and list ideas."))
+
+    opened = open_leaf_workspace(cfg, ids["task_a"], model=StubGoalAgentModel())
+
+    opening = opened["messages"][-1]
+    suggestions = opening["payload"]["suggestions"]
+    assert "Practice particles" in opening["content"]
+    assert "combine, reject, or correct" in opening["content"]
+    assert len(suggestions) == 4
+    assert all(item["id"].startswith("suggestion-") for item in suggestions)
+    assert "10 minutes" not in opening["content"]
+    assert "blank doc" not in opening["content"]
+
+
+def test_leaf_workspace_suggestion_ids_and_selection_event_persist(world):
+    cfg, _, _, _, ids = world
+    model = RecordingWorkspaceModel([
+        LeafWorkspaceReply("Here are relevant options.", suggestions=[
+            {"label": "One broad service", "description": "Flexible front door"},
+            {"label": "Separate listings", "description": "Clearer positioning"},
+        ], selection_mode="multiple"),
+        "You selected both. We can compare the tradeoffs without forcing one choice.",
+    ])
+    opened = open_leaf_workspace(cfg, ids["task_a"], model=model)
+    suggestions = opened["messages"][-1]["payload"]["suggestions"]
+    assert opened["messages"][-1]["payload"]["selection_mode"] == "multiple"
+    ids_selected = [item["id"] for item in suggestions]
+    assert all(value.startswith("suggestion-") for value in ids_selected)
+
+    sent = send_leaf_workspace(
+        cfg, ids["task_a"], "Both fit.",
+        {"type": "select_suggestions", "suggestion_ids": ids_selected}, model=model)
+    user = sent["messages"][-2]
+    assert user["payload"]["event"]["suggestion_ids"] == ids_selected
+    assert sent["working"]["selected_suggestion_ids"] == ids_selected
+    assert model.calls[-1]["event"]["suggestion_ids"] == ids_selected
+
+
+def test_leaf_workspace_mutates_plan_only_after_explicit_approval(world):
+    cfg, goals, agents, _, ids = world
+    model = RecordingWorkspaceModel([
+        "Let’s first make sure the outcome is right.",
+        LeafWorkspaceReply(
+            "I can turn that into a two-part plan for your review.",
+            proposal={"type": "plan", "payload": {"items": [
+                {"text": "Compare the packaging choices."},
+                {"text": "Draft the approved offer."},
+            ]}, "rationale": "The user asked for a concrete plan."}),
+    ])
+    open_leaf_workspace(cfg, ids["task_a"], model=model)
+    agents.conn.execute(
+        "UPDATE goal_agent_state SET dirty=0 WHERE node_id IN (?,?,?)",
+        (ids["task_a"], ids["sub_a"], ids["over_a"]))
+    agents.conn.commit()
+
+    pending = send_leaf_workspace(
+        cfg, ids["task_a"], "Please propose a plan.", model=model)
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    assert pending["plan"] is None and pending["phase"] == "shaping"
+    assert agents.state(ids["task_a"])["dirty"] is False
+    assert goals.get(ids["task_a"])["status"] == "active"
+
+    approved = decide_leaf_workspace_proposal(
+        cfg, ids["task_a"], proposal["id"], "approve")
+    assert approved["phase"] == "doing"
+    assert [item["text"] for item in approved["plan"]["items"]] == [
+        "Compare the packaging choices.", "Draft the approved offer."]
+    assert all(item["id"].startswith("item-") for item in approved["plan"]["items"])
+    assert agents.state(ids["task_a"])["dirty"] is True
+    assert agents.state(ids["sub_a"])["dirty"] is True
+
+
+def test_leaf_workspace_rejected_proposal_changes_no_semantic_state(world):
+    cfg, goals, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Hello."]))
+    proposal = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "complete_leaf", {"result": "Finished"}, "Looks complete")
+    agents.conn.execute(
+        "UPDATE goal_agent_state SET dirty=0 WHERE node_id=?", (ids["task_a"],))
+    agents.conn.commit()
+
+    rejected = decide_leaf_workspace_proposal(
+        cfg, ids["task_a"], proposal["id"], "reject")
+    assert rejected["phase"] == "shaping"
+    assert goals.get(ids["task_a"])["status"] == "active"
+    assert agents.state(ids["task_a"])["dirty"] is False
+    assert agents.leaf_workspace_proposal(proposal["id"])["status"] == "rejected"
+
+
+def test_leaf_workspace_plan_revision_preserves_matching_stable_item_history(world):
+    cfg, _, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Hello."]))
+    initial = agents.add_leaf_workspace_proposal(ids["task_a"], "plan", {
+        "items": [{"id": "research", "text": "Compare the options."},
+                  {"id": "draft", "text": "Draft the chosen approach."}]}, "Initial plan")
+    first = decide_leaf_workspace_proposal(
+        cfg, ids["task_a"], initial["id"], "approve")["plan"]
+    complete = agents.add_leaf_workspace_proposal(ids["task_a"], "complete_item", {
+        "item_id": "research", "resolution": "Compared all four packaging choices."},
+        "The user confirmed this item.")
+    decide_leaf_workspace_proposal(cfg, ids["task_a"], complete["id"], "approve")
+    revision = agents.add_leaf_workspace_proposal(ids["task_a"], "revise_plan", {
+        "items": [{"id": "research", "text": "Compare and rank the options."},
+                  {"id": "publish", "text": "Publish the approved offer."}]},
+        "Replace the unstarted draft item.")
+
+    revised = decide_leaf_workspace_proposal(
+        cfg, ids["task_a"], revision["id"], "approve")["plan"]
+
+    assert first["version"] == 1 and revised["version"] == 2
+    assert revised["items"][0]["id"] == "research"
+    assert revised["items"][0]["status"] == "completed"
+    assert revised["items"][0]["resolution"] == "Compared all four packaging choices."
+    assert revised["items"][1]["id"] == "publish"
+    assert revised["items"][1]["status"] == "not_started"
+    versions = agents.conn.execute(
+        "SELECT version,status FROM goal_leaf_workspace_plan WHERE node_id=? ORDER BY version",
+        (ids["task_a"],)).fetchall()
+    assert [(row["version"], row["status"]) for row in versions] == [
+        (1, "superseded"), (2, "approved")]
+
+
+def test_leaf_workspace_proposal_cannot_apply_twice(world):
+    cfg, _, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Hello."]))
+    proposal = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "plan", {"items": ["One approved item."]}, "One plan")
+    decide_leaf_workspace_proposal(cfg, ids["task_a"], proposal["id"], "approve")
+
+    with pytest.raises(ValueError, match="open proposal"):
+        decide_leaf_workspace_proposal(cfg, ids["task_a"], proposal["id"], "approve")
+    assert agents.conn.execute(
+        "SELECT COUNT(*) FROM goal_leaf_workspace_plan WHERE node_id=?",
+        (ids["task_a"],)).fetchone()[0] == 1
+
+
+def test_leaf_workspace_completed_leaf_can_reopen_or_return_to_shaping(world):
+    cfg, goals, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Hello."]))
+    plan = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "plan", {"items": ["Make one result."]}, "Plan")
+    decide_leaf_workspace_proposal(cfg, ids["task_a"], plan["id"], "approve")
+    completion = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "complete_leaf",
+        {"result": "Result made.", "lesson": "The smaller version worked."}, "Complete")
+    completed = decide_leaf_workspace_proposal(
+        cfg, ids["task_a"], completion["id"], "approve")
+    assert completed["phase"] == "reflecting"
+    assert completed["completed"] is True
+    assert goals.get(ids["task_a"])["status"] == "completed"
+    rollup = agents.leaf_workspace_rollup(ids["task_a"])
+    assert rollup["completion_confirmed"] is True
+    assert rollup["agreement"]["result"] == "Result made."
+    assert rollup["agreement"]["lesson"] == "The smaller version worked."
+    outcomes = goals.outcomes(ids["task_a"])
+    assert len(outcomes) == 1
+    assert outcomes[0]["what_happened"] == "Result made."
+    assert outcomes[0]["changed_understanding"] == "The smaller version worked."
+    assert completed["completion_outcome_id"] == outcomes[0]["id"]
+    evidence = goals.conn.execute(
+        "SELECT source_kind FROM goal_evidence_link WHERE goal_id=?",
+        (ids["task_a"],)).fetchall()
+    assert any(link["source_kind"] == "experiment_outcome" for link in evidence)
+
+    reopened = reopen_leaf_workspace(cfg, ids["task_a"])
+    assert reopened["phase"] == "doing"
+    assert goals.get(ids["task_a"])["status"] == "active"
+    assert len(goals.outcomes(ids["task_a"])) == 1
+    assert reopened["agreement"]["completion_confirmed"] is False
+
+    reshape = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "reshape", {"reason": "The outcome changed."}, "Reshape")
+    reshaped = decide_leaf_workspace_proposal(
+        cfg, ids["task_a"], reshape["id"], "approve")
+    assert reshaped["phase"] == "shaping"
+    assert reshaped["agreement"]["confirmed"] is False
+    assert reshaped["working"]["current_focus"] == "The outcome changed."
+    assert goals.get(ids["task_a"])["status"] == "active"
+
+
+def test_completed_leaf_hands_approved_work_to_next_project_leaf_without_raw_chat(world):
+    cfg, goals, agents, _, ids = world
+    area = goals.create("subgoal", "Language work", parent_id=ids["over_a"])
+    goals._set_semantic_role(area, "area", rationale="Owns language-related work.")
+    project = goals.create("subgoal", "Publish a study guide", parent_id=area)
+    goals._set_semantic_role(project, "project", rationale="Produces one finished guide.")
+    source = goals.create(
+        "task", "Collect examples", parent_id=project, priority="high",
+        description="Produce three confirmed examples.")
+    destination = goals.create(
+        "task", "Evaluate examples", parent_id=project, priority="high",
+        description="Compare the confirmed examples and select one.")
+    unrelated = goals.create(
+        "task", "Design the cover", parent_id=project, priority="low",
+        description="Design a cover after the content is selected.")
+    agents.ensure_agents()
+    open_leaf_workspace(cfg, source, model=RecordingWorkspaceModel([
+        "Let’s collect the examples together."]))
+    agents.add_leaf_workspace_message(source, "user", "RAW PRIVATE SOURCE CONVERSATION")
+    pending = send_leaf_workspace(
+        cfg, source, "The three examples are ready.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "The confirmed examples are ready for evaluation.",
+            proposal={"type": "complete_leaf", "payload": {
+                "result": "Three confirmed examples are ready.",
+                "what_happened": "We collected examples A, B, and C.",
+                "lesson": "Concrete examples made comparison possible.",
+            }, "rationale": "The Leaf’s bounded output is complete."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+
+    assert proposal["payload"]["handoff_target"]["leaf_id"] == destination
+    assert proposal["payload"]["handoff"]["output_summary"]
+    edited = dict(proposal["payload"])
+    edited["handoff"] = {
+        "output_summary": "Three examples are ready to compare.",
+        "working_material": "A: particles\nB: honorifics\nC: verb endings",
+        "constraints": ["Choose only one for the first guide."],
+        "unresolved_questions": "Which example is most useful to a beginner?",
+        "suggested_start": "Score A, B, and C for clarity and usefulness.",
+    }
+    completed = decide_leaf_workspace_proposal(
+        cfg, source, proposal["id"], "approve", edited_payload=edited)
+
+    handoff = completed["completion_handoff"]
+    assert handoff["source_leaf_id"] == source
+    assert handoff["destination_leaf_id"] == destination
+    assert handoff["project_id"] == project
+    assert handoff["payload"]["working_material"].startswith("A: particles")
+    stored = agents.conn.execute(
+        "SELECT payload_json FROM goal_leaf_handoff WHERE id=?", (handoff["id"],)).fetchone()[0]
+    assert "RAW PRIVATE SOURCE CONVERSATION" not in stored
+
+    destination_context = build_leaf_workspace_context(goals, agents, destination)
+    encoded = json.dumps(destination_context, ensure_ascii=False)
+    assert "Three examples are ready to compare" in encoded
+    assert "RAW PRIVATE SOURCE CONVERSATION" not in encoded
+    assert build_leaf_workspace_context(goals, agents, unrelated)["incoming_handoffs"] == []
+
+    destination_model = RecordingWorkspaceModel([
+        "I received A, B, and C from Collect examples. Let’s score them now."])
+    opened = open_leaf_workspace(cfg, destination, model=destination_model)
+    assert opened["messages"][-1]["content"].startswith("I received A, B, and C")
+    assert destination_model.calls[-1]["event"]["type"] == "incoming_handoff"
+    assert destination_model.calls[-1]["context"]["incoming_handoffs"][0]["id"] == handoff["id"]
+    assert agents.leaf_handoff(handoff["id"])["status"] == "consumed"
+
+
+def test_leaf_workspace_summary_is_compact_and_never_exposes_raw_transcript(world):
+    _, _, agents, _, ids = world
+    agents.ensure_leaf_workspace({
+        "id": ids["task_a"], "type": "task", "title": "Practice particles",
+        "description": "", "status": "active"})
+    agents.add_leaf_workspace_message(
+        ids["task_a"], "user", "RAW PRIVATE TRANSCRIPT")
+    agents.update_leaf_workspace(ids["task_a"], working={
+        "current_focus": "", "selected_suggestion_ids": [],
+        "conversation_summary": "The user chose a one-paragraph practice."})
+    proposal = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "complete_leaf",
+        {"result": "Paragraph written", "lesson": "Short practice worked"},
+        "Ready for review")
+
+    summary = agents.leaf_workspace_summary(ids["task_a"])
+
+    assert summary["conversation_summary"] == (
+        "The user chose a one-paragraph practice.")
+    assert summary["pending_proposal"]["id"] == proposal["id"]
+    assert "messages" not in summary
+    assert "RAW PRIVATE TRANSCRIPT" not in json.dumps(summary)
+
+
+def test_leaf_workspace_lazy_migration_preserves_legacy_plan_state_and_transcript(world):
+    cfg, goals, agents, _, ids = world
+    description = "Practice particles.\n\nSteps:\n1. Open a practice page.\n2. Write one sentence."
+    goals.update(ids["task_a"], description=description)
+    agents.update_coach_state(
+        ids["task_a"], 0, "Open a practice page.", "completed",
+        {"resolution": "Opened the lesson and chose 은/는."})
+    agents.add_coach_message(
+        ids["task_a"], 0, "Open a practice page.", "user",
+        {"text": "This is my private legacy transcript."})
+    agents.add_coach_message(
+        ids["task_a"], 0, "Open a practice page.", "assistant",
+        {"reply": "A legacy assistant reply stored under the old key."})
+    agents.add_coach_message(
+        ids["task_a"], 0, "Open a practice page.", "assistant", {})
+
+    opened = open_leaf_workspace(
+        cfg, ids["task_a"], model=RecordingWorkspaceModel(["We can continue from your saved work."]))
+
+    assert opened["phase"] == "doing" and opened["plan"]["version"] == 1
+    assert opened["plan"]["items"][0]["status"] == "completed"
+    assert opened["plan"]["items"][0]["resolution"] == "Opened the lesson and chose 은/는."
+    assert opened["plan"]["items"][1]["status"] == "not_started"
+    assert opened["legacy_messages"][0]["content"] == "This is my private legacy transcript."
+    assert opened["legacy_messages"][0]["read_only"] is True
+    assert opened["legacy_messages"][1]["content"] == (
+        "A legacy assistant reply stored under the old key.")
+    assert len(opened["legacy_messages"]) == 2
+    assert agents.coach_messages(ids["task_a"])[0]["payload"]["text"] == (
+        "This is my private legacy transcript.")
+
+
+def test_parent_context_gets_confirmed_workspace_rollup_not_raw_chat(world):
+    cfg, goals, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Hello."]))
+    agents.add_leaf_workspace_message(
+        ids["task_a"], "user", "RAW PRIVATE LEAF TRANSCRIPT MUST STAY LOCAL")
+    proposal = agents.add_leaf_workspace_proposal(ids["task_a"], "agreement", {
+        "outcome": "Use particles correctly in one short paragraph.",
+        "approach": "Draft, review, and revise one paragraph.",
+        "definition_of_done": "The reviewed paragraph uses both target particles.",
+    }, "This reflects the explicit agreement.")
+    decide_leaf_workspace_proposal(cfg, ids["task_a"], proposal["id"], "approve")
+
+    encoded = json.dumps(build_agent_context(goals, agents, ids["sub_a"]))
+    assert "Use particles correctly in one short paragraph" in encoded
+    assert "RAW PRIVATE LEAF TRANSCRIPT MUST STAY LOCAL" not in encoded
+    assert "goal_leaf_workspace_message" not in encoded
+
+
+def test_leaf_workspace_context_has_a_hard_final_budget(world):
+    _, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="x" * 5000, notes="y" * 5000)
+    context = build_leaf_workspace_context(
+        goals, agents, ids["task_a"], max_chars=450)
+    assert len(json.dumps(context, ensure_ascii=False, sort_keys=True)) <= 450
+
+
+def test_leaf_workspace_model_failure_preserves_user_turn(world):
+    cfg, _, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Ready."]))
+    failing = RecordingWorkspaceModel([RuntimeError("workspace unavailable")])
+
+    with pytest.raises(RuntimeError, match="workspace unavailable"):
+        send_leaf_workspace(
+            cfg, ids["task_a"], "Please explain what you mean.", model=failing)
+
+    messages = agents.leaf_workspace_messages(ids["task_a"])
+    assert [message["role"] for message in messages] == ["assistant", "user"]
+    assert messages[-1]["content"] == "Please explain what you mean."
+
+
+def test_leaf_workspace_assistant_reply_persists_atomically(world, monkeypatch):
+    cfg, _, agents, _, ids = world
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["Ready."]))
+    original = GoalAgentStore.add_leaf_workspace_message
+
+    def fail_assistant(self, node_id, role, content, payload=None, *, commit=True):
+        if role == "assistant" and content == "Here is the proposed plan.":
+            raise RuntimeError("simulated assistant save failure")
+        return original(self, node_id, role, content, payload, commit=commit)
+
+    monkeypatch.setattr(GoalAgentStore, "add_leaf_workspace_message", fail_assistant)
+    reply = LeafWorkspaceReply(
+        "Here is the proposed plan.",
+        proposal={"type": "plan", "payload": {"items": ["One item"]},
+                  "rationale": "Explicit review"})
+    with pytest.raises(RuntimeError, match="simulated assistant save failure"):
+        send_leaf_workspace(
+            cfg, ids["task_a"], "Please draft the plan.",
+            model=RecordingWorkspaceModel([reply]))
+
+    assert agents.conn.execute(
+        "SELECT COUNT(*) FROM goal_leaf_workspace_proposal WHERE node_id=?",
+        (ids["task_a"],)).fetchone()[0] == 0
+    assert [message["role"] for message in agents.leaf_workspace_messages(
+        ids["task_a"])] == ["assistant", "user"]
+
+
+def test_clearing_v2_messages_keeps_approved_plan_and_legacy_history(world):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], description="Steps:\n1. Write one sentence.")
+    agents.add_coach_message(ids["task_a"], 0, "Write one sentence.", "user",
+                             {"text": "legacy remains"})
+    open_leaf_workspace(cfg, ids["task_a"], model=RecordingWorkspaceModel(["v2 opening"]))
+    agents.update_leaf_workspace(ids["task_a"], working={
+        "current_focus": "temporary focus", "selected_suggestion_ids": ["suggestion-1"],
+        "conversation_summary": "temporary summary"})
+    pending = agents.add_leaf_workspace_proposal(
+        ids["task_a"], "agreement", {"outcome": "Hidden draft"}, "Pending")
+
+    cleared = clear_leaf_workspace_messages(cfg, ids["task_a"])
+
+    assert cleared["messages"] == []
+    assert cleared["plan"] and cleared["plan"]["items"][0]["text"] == "Write one sentence."
+    assert cleared["legacy_messages"][0]["content"] == "legacy remains"
+    assert cleared["working"] == {
+        "current_focus": "", "selected_suggestion_ids": [], "conversation_summary": ""}
+    assert agents.leaf_workspace_proposal(pending["id"])["status"] == "rejected"
+
+
+def test_leaf_workspace_private_payloads_are_encrypted_at_rest(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPC_DB_KEY", "leaf-workspace-test-key")
+    monkeypatch.setenv("LIVINGPC_SALT_FILE", str(tmp_path / "salt"))
+    crypto._fernet.cache_clear()
+    cfg = cfg_for(str(tmp_path))
+    curiosities = CuriosityStore(cfg.memory_db_path)
+    goals = GoalStore(cfg.memory_db_path)
+    parent = goals.create("overgoal", "Private parent")
+    leaf_id = goals.create("task", "Private Leaf", parent_id=parent)
+    agents = GoalAgentStore(cfg.memory_db_path)
+    model = RecordingWorkspaceModel([LeafWorkspaceReply(
+        "Private workspace reply", suggestions=[{"label": "Private option"}],
+        proposal={"type": "plan", "payload": {"items": ["Private plan item"]},
+                  "rationale": "Private rationale"})])
+    opened = open_leaf_workspace(cfg, leaf_id, model=model)
+    proposal_id = opened["messages"][-1]["payload"]["proposal"]["id"]
+    decide_leaf_workspace_proposal(cfg, leaf_id, proposal_id, "approve")
+
+    state = agents.conn.execute(
+        "SELECT agreement_json,working_json FROM goal_leaf_workspace WHERE node_id=?",
+        (leaf_id,)).fetchone()
+    message = agents.conn.execute(
+        "SELECT content,payload_json FROM goal_leaf_workspace_message WHERE node_id=?",
+        (leaf_id,)).fetchone()
+    proposal = agents.conn.execute(
+        "SELECT payload_json,rationale FROM goal_leaf_workspace_proposal WHERE id=?",
+        (proposal_id,)).fetchone()
+    item = agents.conn.execute(
+        "SELECT text FROM goal_leaf_workspace_plan_item ORDER BY plan_id DESC LIMIT 1"
+    ).fetchone()
+    stored = [*state, *message, *proposal, *item]
+    assert all(crypto.is_encrypted(value) for value in stored), [
+        (type(value).__name__, crypto.is_encrypted(value), str(value)[:4]) for value in stored]
+    agents.close(); goals.close(); curiosities.close()
+    crypto._fernet.cache_clear()

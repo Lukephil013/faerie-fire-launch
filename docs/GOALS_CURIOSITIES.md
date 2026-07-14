@@ -11,7 +11,7 @@ best understood as **Investigations**: persistent questions that feed the tree.
 | Soul | The umbrella identity/intention for the whole system | “Who am I becoming?” |
 | Root | A major life domain under the Soul | Mental Health, Korean Fluency, Work/Career |
 | Branch | A more specific outcome or area inside a Root | Reduce work dread, find sustainable exercise |
-| Leaf | A concrete action/task | Apply to one role, try one hike, review one grammar point |
+| Leaf | One bounded outcome or action-and-learning cycle | Deliver, decide, experiment, practice, or reflect |
 | Investigation | A persistent unresolved question | “Why do I avoid this exercise style?” |
 | Proposal | A suggested change to the tree | Create a Branch, add a Leaf, start an Investigation |
 | Evidence | Material used for reasoning | Answers, memories, check-ins, metrics, manual notes |
@@ -114,9 +114,10 @@ Nothing changes during overlap review. After creating the proposal, the user
 can approve it inline or inspect it in Growth first. Only approval updates the
 same existing node in place, links the Investigation as
 evidence, and marks the suggestion as tried. Because the node identity does not
-change, its steps, completion, coaching transcript and summaries, evidence,
-outcomes, Investigation links, and children remain attached. Rejecting it
-leaves the node unchanged and keeps the separate-plan route available.
+change, its workspace agreement and plan, completion, encrypted transcript and
+confirmed summaries, evidence, outcomes, Investigation links, and children
+remain attached. Rejecting it leaves the node unchanged and keeps the
+separate-plan route available.
 
 Separate work passes through a second semantic placement review before the
 planning agent opens. Faerie receives a bounded catalog of active Root and
@@ -128,6 +129,25 @@ should remain relevant after the temporary project ends; the project is then
 created beneath that domain. The backend rejects unplaced planning requests and
 unapproved Soul-level plans, so the UI cannot silently turn an Investigation
 proposal into a project-shaped Root.
+
+## Simple creation with semantic placement
+
+The Soul offers seven optional starter Root archetypes—work, health,
+relationships, learning, creativity, home, and resources. They are suggestions,
+not a fixed taxonomy: the user explicitly chooses which to create, obvious
+existing equivalents are not duplicated, and **New Root** remains available for
+a durable domain that does not fit the catalog. Root is the only structural type
+the user creates by name.
+
+Below a Root, Area, Project, or Stage, the interface uses **Add something**.
+The user describes the desired change in ordinary language; Faerie checks the
+bounded Growth catalog for an existing equivalent, selects the most specific
+valid owner, and classifies the addition as an Area, Project, Stage, Leaf, or—in
+the exceptional durable-domain case—a new Root. Nothing is written during this
+review. The result becomes a pending `create_child` proposal and is added only
+after explicit approval. Approved Area/Project/Stage roles are persisted with
+the created node. This keeps creation flexible without asking users to learn the
+storage hierarchy or silently introducing duplicates.
 
 ## Identity-preserving restructuring
 
@@ -147,17 +167,46 @@ distinguishes **Area**, **Project**, and **Stage** (its rationale remains
 encrypted) while leaving the four stored
 node types (`umbrella`, `overgoal`, `subgoal`, `task`) intact. Older trees
 get a deterministic derived label immediately; an approved AI review persists
-the semantic roles it confirms.
+the semantic roles it confirms. These roles are descriptive rather than a
+required ladder: a Root may own an Area, Project, or Leaf directly, and a
+Project may go straight to Leaves when no Stage adds meaning.
+Within that flexible ladder, a **Stage** is still a container for a meaningful
+phase, while a **Leaf** is one terminal outcome or action-and-learning cycle.
+Stages can own Leaves; Leaves cannot own children and are completed through the
+Leaf Agent. Project → Stage and Stage → Leaf are the normal shapes. A nested
+Stage → Stage relationship is accepted only when the proposed child includes
+an explicit macro-stage/substage justification; otherwise intake and restructure
+validation reject it rather than creating two indistinguishable phase levels.
+The manual restructure form likewise presents **Root, Area, Project, Stage,
+and Leaf** rather than the internal Branch label. Its destination list follows
+the selected role, and an approved proposal persists both the move and the
+Area/Project/Stage role atomically.
+
+Every non-Soul node also has an explicit **Archive this node** action. Archive
+first asks bounded GoalAI to distill attached context into a reviewable
+knowledge handoff. The compact approved harvest flows upward through the
+ancestor path; raw records remain attached to the archived subtree, and
+cross-branch reuse still requires Soul routing approval. Archive is otherwise
+a reversible subtree operation: the selected node and its descendants leave
+the active map together, while their prior active/paused/completed states and
+all attached evidence, Leaf workspace history, outcomes, and Investigation
+links remain stored. The parent exposes the archived child under **Archived
+history**; opening it provides **Restore this node**, which restores the
+captured subtree states.
+The constellation reinforces the distinction: Areas are larger violet nodes,
+Projects are medium amber nodes, and Stages are smaller rose nodes in both the
+tree and solar skins. Leaves remain the smallest mint execution points.
 
 Approval changes all reviewed `node_type`, `parent_id`, sibling-position, and
 Branch-role records in one database transaction while preserving every node
 ID. Descendants, completion states,
-steps, Leaf Coach transcripts and summaries, outcomes, evidence, mastery,
-Investigation links, GoalAI history, and origin provenance therefore remain on
-the same records. The migration writes a durable restructure-history row,
-requeues the moved subtree plus both ancestor paths, and marks older open
-proposals from the affected context stale. Any validation or write failure
-rolls the complete migration back.
+workspace agreements and plans, encrypted transcripts and confirmed summaries,
+legacy step-coach history, outcomes, evidence, mastery, Investigation links,
+GoalAI history, and origin provenance therefore remain on the same records. The
+migration writes a durable restructure-history row, requeues the moved subtree
+plus both ancestor paths, and marks older open proposals from the affected
+context stale. Any validation or write failure rolls the complete migration
+back.
 
 ## Recommended execution order
 
@@ -168,51 +217,128 @@ same number appears on the constellation and in the focused action list so a
 Root, its staging Branch, and the concrete Leaves beneath it cannot be mistaken
 for duplicate simultaneous tasks.
 
+User-adjusted node coordinates plus each map surface's pan and zoom live in the
+encrypted durable UI-preference store. Browser local storage remains only a
+fast cache, so closing and reopening the full application does not reset the
+arrangement.
+
 ## Leaf responsibility boundaries
 
-Step drafting is Root-local and boundary-aware. GoalAI receives the selected
-Leaf plus a bounded list of ordered peer Leaves in the same Root solely to
-prevent duplicated work. It does not receive unrelated Roots, global memory,
-main-chat history, passive capture, or screen activity. Every draft declares:
+Each Leaf owns one bounded outcome or learning cycle. Its workspace declares a
+work mode so the same interaction is not forced onto every kind of Leaf:
 
-- the artifact or decision it receives from the preceding Leaf;
-- the one output this Leaf owns;
-- concrete steps that produce only that output; and
-- any responsibility overlap with nearby Leaves.
+- **Deliver or act** produces a concrete artifact or external change.
+- **Decide** compares alternatives and records an explicit choice.
+- **Experiment** runs a test and captures evidence plus a result.
+- **Practice** repeats a behavior and reviews what is improving.
+- **Reflect or record** turns experience into a confirmed observation or lesson.
+
+The Leaf Agent receives the selected Leaf, its ancestor intent, directly linked
+Investigation material, its approved agreement and plan, and its own encrypted
+conversation. During a responsibility check, GoalAI may also receive a bounded
+catalog of nearby Leaves solely to detect duplicated ownership. It does not
+receive sibling conversations, unrelated Roots, global memory, main-chat
+history, passive capture, or screen activity.
 
 Overlap recommendations distinguish shared subject matter from shared output.
 GoalAI may recommend keeping Leaves separate, narrowing one boundary, or
-creating an approval-only merge proposal. A merge never runs from the draft
-itself. When approved, it retains Investigation/evidence links, moves children,
-Leaf Coach messages and step resolutions, and experiment outcomes to the kept
-node before archiving the absorbed node.
+creating an approval-only merge proposal. A merge never runs from conversation
+alone. When approved, it retains Investigation and evidence links, workspace
+history, confirmed decisions and progress, legacy step resolutions, and
+experiment outcomes on the kept node before archiving the absorbed node.
 
-## Leaf Coach and upward execution context
+## Leaf Agent and upward execution context
 
-Each explicit Leaf step can open a persistent **Leaf Coach**. This is an
-execution helper, not the broad companion and not a structural GoalAI review.
-Its prompt is limited to the Leaf, the selected step, directly linked
-Investigation material, and the Soul/Root/Branch descriptions above it. It does
-not receive sibling branches, global memory, the main-chat transcript, passive
-capture, or screen activity.
+The focused Leaf exposes one primary action: **Open Leaf Agent**. This opens a
+persistent right-side adaptive workspace for the whole Leaf, rather than a chat
+bound to one preselected checklist step. A new Leaf may open before a plan
+exists. The workspace moves among three reversible phases:
 
-The coach is suggestion-first for generative work: it supplies a concrete slate
-of common candidates, templates, or example responses before asking the user to
-remember or invent options. Reflection is used to evaluate and redirect those
-AI-generated choices. Arbitrary timers are excluded unless the user supplied a
-real time constraint. When redirection makes the stored **How to do this** list
-obsolete, the coach can return an editable replacement step proposal. It changes
-nothing until the user explicitly applies it. When the user explicitly reports
-finishing the focused step, the coach asks permission to mark it complete. On
-confirmation, the stored status and visible checklist update together and the
-same Leaf conversation advances to the next unfinished step.
+1. **Shaping** — understand the desired outcome, offer relevant options, and
+   incorporate corrections without manufacturing a checklist.
+2. **Doing** — help execute the approved approach, answer normal follow-ups,
+   and propose plan changes when new information invalidates the old plan.
+3. **Reflecting** — capture what happened, evidence, blockers, decisions, and
+   lessons; then offer completion for explicit confirmation.
 
-The encrypted raw coaching transcript stays on the Leaf. Compact working
-updates—status, explicit blocker or constraint, selected approach, next action,
-and completed-step resolution—flow only upward through that Leaf's Branch,
-Root, and Soul. Parent GoalAI reviews consume those bounded rollups and are
-marked dirty when a meaningful update changes. Siblings never receive them
-directly; cross-branch reuse still goes through Soul harvest approval.
+The drawer keeps a compact **Current agreement** card containing the work mode,
+outcome, approach, definition of done or review signal, confirmed constraints,
+and approved plan version. It is the durable shared understanding behind
+references such as “those,” “both,” or “the second one.” The user can move back
+to shaping whenever the agreement no longer fits.
+
+Leaf Agent replies follow a reply-first contract. A normal conversational
+message is always the primary result and remains visible even if optional
+structured metadata is unusable. A response may additionally contain:
+
+- suggestion cards with stable IDs, allowing one, several, all, none, or a
+  free-form alternative;
+- an editable agreement or plan proposal;
+- a plan-revision proposal with stable step IDs; or
+- a completion or reflection proposal.
+
+Malformed optional cards are omitted without throwing away readable prose.
+Model failure produces an inline retry for that turn. There is deliberately no
+semantic keyword fallback that replaces the conversation with a generic topic
+menu such as “Great—automation.” If the agent cannot safely infer the user's
+meaning, it asks one grounded clarification based on the active agreement and
+recent turns. “I don't understand” explains the active choice; it does not
+restart the Leaf.
+
+Suggestions are AI-heavy and concrete when the user needs ideas, while
+reflection evaluates and redirects them. Arbitrary timers are excluded unless
+the user supplied a real time constraint. Steps appear only after a plan is
+approved. Conversation can continue freely before, during, and after a plan;
+it is never reduced to choosing a menu item.
+
+Opening, chatting, selecting suggestions, or drafting changes never mutates the
+Leaf. Agreement changes, revised plans, status transitions, and completion are
+separate proposal cards and require explicit approval. Approved plans use
+stable step IDs, so wording revisions do not detach progress or resolutions.
+
+Separate native GoalAI, planning, inference, and harvest windows remain
+available for broader bounded work. Their title bar is an explicit drag region,
+so those popouts can be repositioned without moving Leaf execution out of the
+main Growth workspace.
+
+The encrypted raw workspace transcript stays on the Leaf. Compact confirmed
+updates—phase, agreement, status, explicit blocker or constraint, selected
+approach, progress, result, and lesson—flow only upward through that Leaf's
+ancestor path. Parent GoalAI reviews consume those bounded rollups and are
+marked dirty when meaningful confirmed context changes. Siblings never receive
+raw turns or private working notes directly; cross-branch reuse still goes
+through Soul harvest approval.
+
+Migration preserves identity and history. Existing Leaf IDs, evidence,
+outcomes, Investigation links, completion, and encrypted conversations remain
+attached. Existing saved steps become a legacy plan version with stable IDs;
+their completion and resolutions are retained. Legacy step-coach tables remain
+available read-only during migration and are not deleted during the Leaf
+Workspace v2 cutover. Leaves with an existing active plan begin in Doing;
+Leaves without an approved plan begin in Shaping.
+
+Leaf completion has one canonical review. The Leaf Agent prefills the confirmed
+result and lesson from the conversation, with optional experiment details, and
+the user edits or approves that proposal. Approval atomically marks the Leaf
+complete, stores one `experiment_outcome`, links it as evidence, and preserves
+the workspace transcript and plan history. The completed Leaf leaves the active
+map and appears in **Completed Leaves** history as a compact result-and-lesson
+receipt. The interface then opens the nearest next active Leaf. If none remains,
+it returns to the parent and asks GoalAI to review that area for a next-Leaf
+proposal. Reopening is explicit and reversible: it restores the same Leaf ID to
+the active map without deleting its prior outcome, receipt, evidence, or chat.
+
+Completion also prepares a project-local **Leaf handoff** when another active
+Leaf exists in the Project's recommended execution order. A stronger, separately
+configurable GoalAI route drafts the produced output, actual working material,
+constraints, unresolved question, and suggested starting point. These fields are
+editable and become durable only when the user approves completion. The encrypted
+handoff is stored atomically with the outcome and is visible only to its explicit
+destination Leaf and the existing ancestor rollups. The source transcript never
+crosses. When the destination Leaf opens, its agent acknowledges the approved
+handoff and continues from the transferred material instead of asking the user to
+paste or reconstruct it. With no eligible destination, completion returns to the
+Project review flow rather than inventing or silently creating work.
 
 ## How GoalAI-proposed investigations work
 

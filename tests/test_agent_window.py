@@ -93,6 +93,14 @@ def test_native_agent_window_can_minimize_and_close_even_while_working():
     assert "['close','minimize','expand']" in html
     assert "user-select:text" in html and "text-context-menu" in html
     assert "clipboard_write" in html and "clipboard_read" in html
+    assert 'class="drag-handle pywebview-drag-region"' in html
+    assert "Drag to move this agent" in html
+    assert "thinkingHtml" in html and "thinking-dots" in html
+    assert "Faerie is crafting a response" in html
+    assert "e.key==='Enter'&&!e.shiftKey&&!e.isComposing" in html
+    assert "AtkinsonHyperlegible-Regular.ttf" in html
+    assert "AtkinsonHyperlegible-Bold.ttf" in html
+    assert "conversationHtml" in html and "<strong>$1</strong>" in html
 
     source = Path("agent_window.py").read_text(encoding="utf-8")
     assert "text_select=True" in source

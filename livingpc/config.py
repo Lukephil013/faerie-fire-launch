@@ -179,6 +179,9 @@ class Config:
     goal_ai_batch_size: int = 12
     goal_ai_leaf_model: str = "claude-haiku-4-5"
     goal_ai_parent_model: str = "claude-sonnet-4-6"
+    # Completion handoffs are infrequent, high-leverage synthesis calls. Empty
+    # deliberately inherits the stronger parent route rather than Leaf chat.
+    goal_ai_handoff_model: str = ""
     goal_ai_context_max_chars: int = 14000
     goal_ai_max_open_proposals: int = 3
     goal_ai_notifications: bool = True
