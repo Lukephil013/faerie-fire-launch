@@ -24,6 +24,7 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from dataclasses import asdict
@@ -141,13 +142,60 @@ class GuiApi:
             store.close()
 
     def app_set_language(self, lang) -> dict:
-        """Persist the UI/model language ("en" or "ko"); picked at onboarding
-        and changeable later. The JS layer applies it live; Python strings and
-        the window title pick it up fully on next launch."""
+        """Persist the UI/model language ("en" or "ko").
+
+        Settings changes use app_restart_language so an existing page is never
+        left half-translated. This smaller bridge remains for onboarding.
+        """
         try:
             return {"ok": True, "language": set_app_language(str(lang or ""))}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def app_restart_language(self, lang, initial_view=None) -> dict:
+        """Persist a language and relaunch the desktop app in that language.
+
+        The replacement process is started before the current window closes.
+        If launching fails, restore the prior preference so the next manual
+        start does not unexpectedly use a language the user never confirmed.
+        """
+        target = str(lang or "").strip().lower()
+        if target not in {"en", "ko"}:
+            return {"ok": False, "message": "Language must be 'en' or 'ko'."}
+        previous = app_language()
+        view = _normalize_initial_view(initial_view or self.initial_view)
+        script = os.path.abspath(__file__)
+        try:
+            set_app_language(target)
+            kwargs = {
+                "cwd": os.path.dirname(script),
+                "close_fds": True,
+            }
+            if os.name == "nt":
+                kwargs["creationflags"] = (
+                    getattr(subprocess, "DETACHED_PROCESS", 0)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                )
+            subprocess.Popen(
+                [sys.executable, script, "--view", view],
+                **kwargs,
+            )
+        except Exception as error:
+            try:
+                set_app_language(previous)
+            except Exception:
+                pass
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+        def close_current_window():
+            try:
+                if self._window is not None:
+                    self._window.destroy()
+            except Exception:
+                log_diag("language_restart", "Could not close prior window:\n" + traceback.format_exc())
+
+        threading.Timer(0.45, close_current_window).start()
+        return {"ok": True, "language": target, "restarting": True}
 
     # --- onboarding (launch profile first run) -----------------------------
     def onboarding_status(self) -> dict:
@@ -213,8 +261,44 @@ class GuiApi:
     def command_send(self, text, attachments=None) -> dict:
         return self._command_api().send(text, attachments or [])
 
-    def command_new_chat(self) -> dict:
-        return self._command_api().new_chat()
+    def command_approve_proposal(self, index) -> dict:
+        return self._command_api().approve_proposal(index)
+
+    def command_dismiss_proposal(self, index) -> dict:
+        return self._command_api().dismiss_proposal(index)
+
+    def command_commands(self) -> dict:
+        return self._command_api().commands()
+
+    def command_browser_state(self) -> dict:
+        return self._command_api().browser_state()
+
+    def command_browser_approve_domain(self, task_id) -> dict:
+        return self._command_api().browser_approve_domain(task_id)
+
+    def command_browser_open(self, task_id) -> dict:
+        return self._command_api().browser_open(task_id)
+
+    def command_browser_scan(self, task_id) -> dict:
+        return self._command_api().browser_scan(task_id)
+
+    def command_browser_fill(self, task_id) -> dict:
+        return self._command_api().browser_fill(task_id)
+
+    def command_browser_cancel(self, task_id) -> dict:
+        return self._command_api().browser_cancel(task_id)
+
+    def command_browser_finish(self, task_id) -> dict:
+        return self._command_api().browser_finish(task_id)
+
+    def command_browser_revoke(self, origin) -> dict:
+        return self._command_api().browser_revoke(origin)
+
+    def command_new_chat(self, proposals_enabled=True) -> dict:
+        return self._command_api().new_chat(bool(proposals_enabled))
+
+    def command_set_chat_proposals_enabled(self, enabled) -> dict:
+        return self._command_api().set_chat_proposals_enabled(bool(enabled))
 
     def command_switch_chat(self, chat_id) -> dict:
         return self._command_api().switch_chat(chat_id)
@@ -268,6 +352,10 @@ class GuiApi:
         api = self._command_api()
         api._window = self._window
         return api.attach_file()
+
+    def command_attach_dropped_file(self, name, media_type, data_base64) -> dict:
+        return self._command_api().attach_dropped_file(
+            name, media_type, data_base64)
 
     def _validate_context_attachment_owner(self, owner_kind, owner_key) -> tuple[str, str]:
         kind, key = str(owner_kind or "").strip(), str(owner_key or "").strip()
@@ -1093,6 +1181,7 @@ class GuiApi:
                     "classification_proposals": store.classification_proposals(row["id"]),
                     "classification_history": store.classification_proposals(row["id"], status=None),
                     "classification_contexts": store.classification_contexts(row["id"]),
+                    "investigation_contexts": store.contexts(row["id"]),
                     "syntheses": store.synthesis_history(row["id"], limit=12),
                     "synthesis_due": store.synthesis_due(row["id"]),
                     "person_model_proposals": inf.person_proposals(row["id"]),
@@ -1212,6 +1301,25 @@ class GuiApi:
                 get_curiosity_model(self.cfg, usage_category="manual"),
                 thread_id=thread["id"])
             return {"ok": True, "thread": thread, "created": created}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            inf.close()
+            mem.close()
+            store.close()
+
+    def curiosity_thread_suggest(self, curiosity_id) -> dict:
+        from livingpc.curiosity import (CuriosityStore, get_curiosity_model,
+                                        suggest_exploration_threads)
+        from livingpc.inference import InferenceStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        mem = MemoryStore(self.cfg.memory_db_path)
+        inf = InferenceStore(self.cfg.memory_db_path)
+        try:
+            directions = suggest_exploration_threads(
+                mem, inf, store, int(curiosity_id),
+                get_curiosity_model(self.cfg, usage_category="manual"))
+            return {"ok": True, "directions": directions}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
@@ -1631,14 +1739,14 @@ class GuiApi:
 
     def curiosity_answer(self, item_id, text, rating=None, answer_confidence=None,
                          question_fit=None) -> dict:
-        from livingpc.curiosity import CuriosityStore, answer_item, get_curiosity_model
-        from livingpc.inference import InferenceStore
+        from livingpc.curiosity import CuriosityStore, answer_item
         mem = MemoryStore(self.cfg.memory_db_path)
-        inf = InferenceStore(self.cfg.memory_db_path)
         store = CuriosityStore(self.cfg.memory_db_path)
         try:
-            model = get_curiosity_model(self.cfg)
-            result = answer_item(mem, store, int(item_id), str(text or ""), model,
+            # Answer submission is intentionally local and deterministic. The
+            # model interprets the accumulated batch during generation or an
+            # explicit synthesis, so each Save & continue click stays fast.
+            result = answer_item(mem, store, int(item_id), str(text or ""), None,
                                  rating=None if rating is None else float(rating))
             store.record_interaction_feedback(
                 int(item_id), answer_confidence=answer_confidence, question_fit=question_fit)
@@ -1659,13 +1767,11 @@ class GuiApi:
                             result["curiosity_id"], datetime.now().astimezone().date().isoformat())
                 finally:
                     metrics.close()
-            self._sync_curiosity_notion_quietly(mem, inf, store, result["curiosity_id"], model)
             return {"ok": True, **result}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:
             mem.close()
-            inf.close()
             store.close()
 
     def curiosity_dismiss(self, item_id) -> dict:
@@ -2061,6 +2167,17 @@ class GuiApi:
                 self.cfg, node_id, proposal_key, chosen,
                 edited_payload=(dict(edited_payload)
                                 if edited_payload is not None else None))
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
+    def goal_leaf_workspace_prepare_handoff(self, goal_id) -> dict:
+        from livingpc.goal_ai import prepare_missing_leaf_handoff
+        try:
+            node_id = int(goal_id)
+            if node_id <= 0:
+                raise ValueError("goal_id must be a positive integer")
+            workspace = prepare_missing_leaf_handoff(self.cfg, node_id)
             return {"ok": True, "workspace": workspace}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
@@ -2563,6 +2680,45 @@ class GuiApi:
             subprocess.Popen(["xdg-open", path])
 
     def clipboard_read(self) -> dict:
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                user32.OpenClipboard.argtypes = [wintypes.HWND]
+                user32.OpenClipboard.restype = wintypes.BOOL
+                user32.GetClipboardData.argtypes = [wintypes.UINT]
+                user32.GetClipboardData.restype = wintypes.HANDLE
+                kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalLock.restype = wintypes.LPVOID
+                kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalUnlock.restype = wintypes.BOOL
+                opened = False
+                for _ in range(20):
+                    if user32.OpenClipboard(None):
+                        opened = True
+                        break
+                    time.sleep(0.01)
+                if not opened:
+                    raise OSError("The Windows clipboard is busy.")
+                try:
+                    handle = user32.GetClipboardData(13)  # CF_UNICODETEXT
+                    if not handle:
+                        return {"ok": True, "text": ""}
+                    pointer = kernel32.GlobalLock(handle)
+                    if not pointer:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    try:
+                        value = ctypes.wstring_at(pointer)
+                    finally:
+                        kernel32.GlobalUnlock(handle)
+                    return {"ok": True, "text": value}
+                finally:
+                    user32.CloseClipboard()
+            except Exception as error:
+                return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         try:
             import tkinter as tk
             root = tk.Tk(); root.withdraw(); root.update()
@@ -2575,6 +2731,60 @@ class GuiApi:
             return {"ok": True, "text": ""}
 
     def clipboard_write(self, text) -> dict:
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                value = str(text or "")
+                payload = (value + "\0").encode("utf-16-le")
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                user32.OpenClipboard.argtypes = [wintypes.HWND]
+                user32.OpenClipboard.restype = wintypes.BOOL
+                user32.EmptyClipboard.restype = wintypes.BOOL
+                user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+                user32.SetClipboardData.restype = wintypes.HANDLE
+                kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+                kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+                kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalLock.restype = wintypes.LPVOID
+                kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalUnlock.restype = wintypes.BOOL
+                kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalFree.restype = wintypes.HGLOBAL
+                opened = False
+                for _ in range(20):
+                    if user32.OpenClipboard(None):
+                        opened = True
+                        break
+                    time.sleep(0.01)
+                if not opened:
+                    raise OSError("The Windows clipboard is busy.")
+                handle = None
+                try:
+                    handle = kernel32.GlobalAlloc(0x0002, len(payload))  # GMEM_MOVEABLE
+                    if not handle:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    pointer = kernel32.GlobalLock(handle)
+                    if not pointer:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    try:
+                        ctypes.memmove(pointer, payload, len(payload))
+                    finally:
+                        kernel32.GlobalUnlock(handle)
+                    if not user32.EmptyClipboard():
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if not user32.SetClipboardData(13, handle):  # CF_UNICODETEXT
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    handle = None  # The clipboard owns it after SetClipboardData.
+                    return {"ok": True}
+                finally:
+                    if handle:
+                        kernel32.GlobalFree(handle)
+                    user32.CloseClipboard()
+            except Exception as error:
+                return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         try:
             import tkinter as tk
             root = tk.Tk(); root.withdraw()

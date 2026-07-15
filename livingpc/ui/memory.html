@@ -204,6 +204,7 @@
   body.mascot-disabled #faerie-mascot,
   body:has(.planner-drawer.open) #faerie-mascot,
   body:has(.inquiry-drawer.open) #faerie-mascot,
+  body:has(.app-modal-backdrop.open) #faerie-mascot,
   body:has(.onboard-overlay.open) #faerie-mascot,
   body:has(.growth-map-overlay.open) #faerie-mascot { opacity:0; pointer-events:none; }
   @keyframes mascot-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
@@ -264,35 +265,45 @@
 
   #app { position:relative; z-index:2; display:grid; grid-template-columns:308px minmax(0,1fr);
     grid-template-rows:auto 1fr; height:100vh; }
-  header { grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:stretch;
-    gap:10px; padding:20px 16px 10px; background:rgba(23,28,25,.94);
+  header { position:relative; grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:stretch;
+    gap:0; padding:4px 9px 2px; background:rgba(23,28,25,.94);
     border-right:1px solid rgba(255,255,255,.07); }
-  header .brand { display:flex; align-items:center; gap:9px; }
-  header .brand img { width:28px; height:28px; object-fit:contain; flex:0 0 28px;
+  header .brand { position:absolute; z-index:3; top:15px; right:20px; display:flex;
+    align-items:center; gap:6px; pointer-events:none; }
+  header .brand img { width:22px; height:22px; object-fit:contain; flex:0 0 22px;
     filter:drop-shadow(0 0 8px rgba(83,231,192,.45)); }
-  header .logo { font-size:18px; font-weight:600; color:var(--green);
+  header .logo { font-size:14px; font-weight:600; color:var(--green);
     text-shadow:0 0 14px rgba(47,227,160,.42); letter-spacing:.3px; }
   header .sub { display:none; }
   header .backend { display:none; }
+  .rail-collapse { position:absolute; z-index:8; top:9px; left:10px; width:28px; height:28px;
+    display:grid; place-items:center; padding:0; border-radius:999px; color:var(--muted);
+    background:rgba(3,15,10,.72); border:1px solid rgba(112,214,158,.26); }
+  header > .self-panel.self-identity-card { margin-top:0; padding-top:20px; }
+  header > .self-panel.self-identity-card > .self-portrait-frame { margin:6px -2px 2px;
+    border-width:12px; border-image-width:12px; }
+  header > .self-panel.self-identity-card > .self-portrait-frame .self-portrait { height:205px; }
 
   nav { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:2px;
-    padding:8px 9px 0; align-items:stretch; flex-wrap:nowrap; overflow-y:auto; overflow-x:hidden;
+    padding:2px 9px 0; align-items:stretch; flex-wrap:nowrap; overflow-y:auto; overflow-x:hidden;
     background:rgba(23,28,25,.94); border-right:1px solid rgba(255,255,255,.07); }
-  nav .tab { display:flex; align-items:center; gap:10px; min-height:34px; box-sizing:border-box;
+  nav .tab,.rail-primary-nav .tab { display:flex; align-items:center; gap:11px; min-height:42px; box-sizing:border-box;
     font-size:13px; letter-spacing:0; padding:7px 10px; border-radius:7px;
     cursor:pointer; color:rgba(239,244,241,.9); background:transparent; border:0;
     transition:background .15s ease,color .15s ease; user-select:none; text-align:left; }
-  nav .tab .nav-icon { width:17px; height:17px; object-fit:contain; flex:0 0 17px; opacity:.82; }
-  nav .tab.active .nav-icon { opacity:1; filter:drop-shadow(0 0 5px rgba(47,227,160,.5)); }
+  nav .tab .nav-icon,.rail-primary-nav .tab .nav-icon { width:30px; height:30px; object-fit:contain; flex:0 0 30px; opacity:.9; }
+  nav .tab.active .nav-icon,.rail-primary-nav .tab.active .nav-icon { opacity:1; filter:drop-shadow(0 0 5px rgba(47,227,160,.5)); }
   .group-label::before { width:15px; flex:0 0 15px; text-align:center;
     color:rgba(226,237,231,.82); font-family:var(--app-font); font-size:14px; }
   nav .tab[data-view="inferences"]::before { content:'⌁'; width:15px; flex:0 0 15px; text-align:center; }
   nav .tab[data-view="clarify"]::before { content:'?'; width:15px; flex:0 0 15px; text-align:center; }
   nav .tab[data-view="memory"]::before { content:'▤'; width:15px; flex:0 0 15px; text-align:center; }
-  nav .tab:hover { background:rgba(255,255,255,.055); color:#fff; }
-  nav .tab.active { color:#fff; font-weight:600; background:rgba(255,255,255,.085);
+  nav .tab:hover,.rail-primary-nav .tab:hover { background:rgba(255,255,255,.055); color:#fff; }
+  nav .tab.active,.rail-primary-nav .tab.active { color:#fff; font-weight:600; background:rgba(255,255,255,.085);
     box-shadow:inset 2px 0 0 var(--green); }
-  #self-rail-dashboard { display:flex; flex-direction:column; gap:14px; margin:14px 0 6px; }
+  .rail-primary-nav { display:grid; gap:2px; margin:5px -2px -1px; padding-top:4px;
+    border-top:1px solid rgba(184,161,82,.2); }
+  #self-rail-dashboard { display:flex; flex-direction:column; gap:4px; margin:6px 0 4px; }
   .rail-footer { display:flex; align-items:center; gap:8px; margin-top:auto;
     padding:12px 2px 16px; }
   .rail-footer .header-refresh, .rail-footer .settings-cog { position:static; margin:0;
@@ -300,8 +311,6 @@
     display:grid; place-items:center; font-size:15px; line-height:1; flex:0 0 auto; }
   .rail-footer .header-refresh.spinning { animation:header-refresh-spin .6s linear; }
   @keyframes header-refresh-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-  .rail-tagline { flex:1; min-width:0; font-style:italic; color:var(--green); font-size:11.5px;
-    opacity:.85; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .nav-group { position:relative; }
   .nav-group summary { list-style:none; }
   .nav-group summary::-webkit-details-marker { display:none; }
@@ -320,8 +329,33 @@
   .nav-menu .tab { display:block; border-radius:10px; padding:8px 12px; white-space:nowrap; }
   .nav-menu .tab.active { color:#fff; }
 
+  body.rail-collapsed #app { grid-template-columns:76px minmax(0,1fr); }
+  body.rail-collapsed header,body.rail-collapsed nav { padding-left:7px; padding-right:7px; }
+  body.rail-collapsed header .brand .logo,body.rail-collapsed #self-level-widget,
+  body.rail-collapsed #self-profile-widgets,body.rail-collapsed #self-dashboard,
+  body.rail-collapsed nav .nav-group { display:none !important; }
+  body.rail-collapsed header .brand { top:12px; right:9px; }
+  body.rail-collapsed header .brand img { width:20px; height:20px; }
+  body.rail-collapsed .rail-collapse { top:44px; left:23px; transform:rotate(180deg); }
+  body.rail-collapsed header > .self-panel.self-identity-card { margin-top:74px; padding:4px;
+    border-width:7px; border-image-width:7px; }
+  body.rail-collapsed header > .self-panel.self-identity-card > .self-portrait-frame { margin:0;
+    border-width:5px; border-image-width:5px; }
+  body.rail-collapsed header > .self-panel.self-identity-card > .self-portrait-frame .self-portrait {
+    height:48px; border-radius:999px; }
+  body.rail-collapsed .self-portrait-edit,body.rail-collapsed .self-portrait-sparkle { display:none; }
+  body.rail-collapsed .rail-primary-nav { border-top:0; margin-top:4px; }
+  body.rail-collapsed .rail-primary-nav .tab { width:48px; min-height:46px; padding:6px 9px;
+    overflow:hidden; font-size:0; gap:0; justify-content:center; }
+  body.rail-collapsed .rail-primary-nav .tab .nav-icon { width:30px; height:30px; flex-basis:30px; }
+  body.rail-collapsed #self-rail-dashboard { display:none; }
+  body.rail-collapsed .rail-footer { justify-content:center; flex-direction:column; padding-bottom:10px; }
+
   .view { grid-column:2; grid-row:1 / span 2; min-height:0; overflow-y:auto;
     padding:22px 22px 22px 0; display:none; }
+  /* Let the Command Center's ornamental frame meet the window edge. Other
+     views keep their normal breathing room. */
+  #view-self { height:100vh; box-sizing:border-box; overflow:hidden; padding:0 4px 0 0; }
   .view.active { display:block; }
   .view > * { max-width:none; margin-left:0; margin-right:0; box-sizing:border-box; }
   .view > .hint { max-width:none; margin-left:0; margin-right:0; }
@@ -371,6 +405,23 @@
     border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 22px / 0 stretch;
     border-radius:0; padding:0; background:transparent; box-shadow:none; }
   .self-portrait-frame .self-portrait { margin:0; border:none; }
+  /* Share the portrait's ornament language across the Command Center rail.
+     Compact cards use a narrower slice so the frame does not crowd their text. */
+  header > .self-panel.self-identity-card,
+  #self-profile-widgets > .command-widget,
+  #self-dashboard > .command-widget {
+    border-width:14px;
+    border-style:solid;
+    border-color:transparent;
+    border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 14px / 0 stretch;
+    border-radius:0;
+    padding:8px 10px;
+    background:rgba(4,16,11,.68);
+    box-shadow:none;
+  }
+  #self-profile-widgets > .command-widget,
+  #self-dashboard > .command-widget { margin-bottom:4px; }
+  header > .self-panel.self-identity-card .self-empty { padding:16px 8px; }
   .self-identity-summary { padding:2px 0 0; }
   .self-identity-summary h3 { margin:0 0 8px; font-size:13px; color:var(--green);
     letter-spacing:1.6px; text-transform:uppercase; }
@@ -391,10 +442,8 @@
   .self-xp-bar i { display:block; height:100%; border-radius:999px;
     background:linear-gradient(90deg,#2fe3a0,#53e7c0); box-shadow:0 0 8px rgba(47,227,160,.4); }
   .self-xp-count { text-align:right; font-size:11px; color:var(--muted); margin-top:4px; }
-  .widget-icon { width:14px; height:14px; object-fit:contain; margin-right:6px; vertical-align:-2px; }
   .thread-row { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:12.5px; color:var(--fg); }
   .thread-row i { width:6px; height:6px; border-radius:999px; background:var(--green); flex:0 0 6px; }
-  .milestone-level { font-size:18px; font-weight:700; color:var(--green); margin-top:4px; }
   .self-portrait { height:220px; margin:0; border-radius:4px; overflow:hidden;
     border:1px solid rgba(112,214,158,.28); background-image:
       linear-gradient(180deg,rgba(217,255,221,.18),rgba(2,10,6,.12)),
@@ -425,16 +474,19 @@
   .self-portrait-sparkle { position:absolute; z-index:8; inset:auto 18px 14px auto;
     color:rgba(237,245,240,.72); font-size:38px; text-shadow:0 0 18px rgba(83,231,192,.65);
     pointer-events:none; }
-  .self-customizer { position:absolute; z-index:12; top:52px; right:10px; width:min(245px,calc(100% - 20px));
-    border:1px solid rgba(112,214,158,.34); border-radius:13px; padding:11px;
+  .self-customizer { position:absolute; z-index:12; top:44px; right:8px; width:min(245px,calc(100% - 16px));
+    max-height:calc(100% - 52px); overflow-y:auto; box-sizing:border-box;
+    border:1px solid rgba(112,214,158,.34); border-radius:13px; padding:8px 9px;
     background:rgba(3,13,8,.9); box-shadow:0 12px 32px rgba(0,0,0,.5);
     -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); display:none; }
   .self-customizer.open { display:block; animation:rise .18s ease; }
-  .self-customizer label { display:block; color:var(--muted); font-size:11px; margin:8px 0 3px; }
+  .self-customizer label { display:block; color:var(--muted); font-size:10.5px; margin:2px 0 3px; }
   .self-customizer select { width:100%; box-sizing:border-box; background:var(--card2);
-    border:1px solid var(--line); color:var(--fg); border-radius:9px; padding:7px 9px;
+    border:1px solid var(--line); color:var(--fg); border-radius:9px; padding:5px 8px;
     font:inherit; font-size:12px; }
-  .self-customizer .hint { margin:8px 0 0; font-size:11px; line-height:1.35; }
+  .self-customizer .actions { margin-top:7px !important; gap:6px; }
+  .self-customizer .actions button { padding:6px 7px; font-size:10.5px; white-space:nowrap; }
+  .self-customizer .hint { margin:6px 0 0; font-size:10px; line-height:1.25; }
   .portrait-rays,.portrait-motes,.portrait-wind,.portrait-droplets,.portrait-aurora {
     position:absolute; inset:0; pointer-events:none; opacity:0; z-index:2; }
   .portrait-fx-canvas { position:absolute; inset:0; z-index:7; width:100%; height:100%;
@@ -520,11 +572,11 @@
   .self-pursuit-title { font-weight:700; margin-bottom:7px; }
   .self-pursuit-meta { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
   .command-tools { display:none; }
-  .command-chat-col { display:flex; flex-direction:column; gap:16px;
-    overflow:visible; padding-right:0; box-sizing:border-box; padding-bottom:36px; }
+  .command-chat-col { display:flex; flex-direction:column; gap:0; height:100%; min-height:0;
+    overflow:hidden; padding-right:0; box-sizing:border-box; padding-bottom:0; }
   .command-chat-panel,.command-side { background:linear-gradient(135deg,rgba(8,24,16,.68),rgba(4,13,10,.54));
     border:1px solid var(--line); border-radius:18px; box-shadow:0 16px 44px rgba(0,0,0,.32); }
-  .command-chat-panel { flex:0 0 auto; height:max(860px,calc(100vh - 44px)); min-height:760px;
+  .command-chat-panel { flex:1 1 auto; height:100%; min-height:0;
     display:grid; grid-template-columns:200px minmax(0,1fr); overflow:hidden;
     border-width:22px; border-style:solid; border-color:transparent;
     border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 22px / 0 stretch;
@@ -538,11 +590,13 @@
   .cc-chat-list-toggle:hover { color:var(--green); background:none; }
   .cc-new-chat-btn { flex:0 0 auto; width:26px; height:26px; padding:0; border-radius:999px;
     display:grid; place-items:center; font-size:16px; line-height:1; }
-  .cc-ctx-menu { position:fixed; z-index:60; min-width:150px; padding:6px; border-radius:12px;
+  .cc-ctx-menu,.cc-new-chat-menu { position:fixed; z-index:60; min-width:150px; padding:6px; border-radius:12px;
     border:1px solid var(--line); background:rgba(4,15,10,.97); box-shadow:0 14px 38px rgba(0,0,0,.45); }
+  .cc-new-chat-menu { min-width:250px; }
   .cc-ctx-item { display:block; width:100%; text-align:left; padding:8px 11px; border-radius:8px;
     background:none; border:none; box-shadow:none; color:#d9e9df; font-size:13px; }
   .cc-ctx-item:hover { background:rgba(255,255,255,.08); }
+  .cc-ctx-item small { display:block; margin-top:3px; color:var(--muted); font-size:10.5px; line-height:1.35; }
   .cc-ctx-item.danger { color:var(--red); }
   .cc-ctx-item.danger:hover { background:rgba(255,107,138,.12); }
   .command-chat-panel.chat-list-collapsed { grid-template-columns:40px minmax(0,1fr); }
@@ -556,7 +610,17 @@
   .cc-chat-item { width:100%; text-align:left; margin:5px 0; padding:10px 12px; border-radius:11px;
     color:var(--muted); background:rgba(255,255,255,.035); border:1px solid transparent; }
   .cc-chat-item.active { color:#032118; background:linear-gradient(90deg,#2fe3a0,#53e7c0); font-weight:800; }
-  .cc-chat-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .cc-chat-main { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .cc-drop-overlay { position:absolute; inset:12px; z-index:40; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:7px; border:2px dashed rgba(83,231,192,.72);
+    border-radius:16px; color:var(--fg); background:rgba(3,20,13,.92); backdrop-filter:blur(8px);
+    box-shadow:inset 0 0 40px rgba(47,227,160,.08),0 18px 44px rgba(0,0,0,.38);
+    opacity:0; transform:scale(.985); pointer-events:none; transition:opacity .14s ease,transform .14s ease; }
+  .cc-chat-main.file-drop-active .cc-drop-overlay { opacity:1; transform:scale(1); }
+  .cc-drop-overlay-icon { width:42px; height:42px; display:grid; place-items:center; border-radius:999px;
+    color:#032118; background:linear-gradient(90deg,#2fe3a0,#53e7c0); font-size:25px; font-weight:800; }
+  .cc-drop-overlay b { font-size:16px; }
+  .cc-drop-overlay span:last-child { color:var(--muted); font-size:12px; }
   .cc-chat-head { padding:20px 24px; border-bottom:1px solid var(--line2);
     display:flex; align-items:flex-start; gap:12px; }
   .cc-chat-head-text { flex:1; min-width:0; }
@@ -566,35 +630,90 @@
     border-radius:10px; display:grid; place-items:center; font-size:16px; line-height:1;
     background:rgba(255,255,255,.05); border:1px solid var(--line2); color:var(--muted); }
   .cc-fullscreen-btn:hover { color:var(--green); border-color:rgba(112,214,158,.5); background:rgba(255,255,255,.1); }
-  body.chat-fullscreen header, body.chat-fullscreen nav,
-  body.chat-fullscreen .command-investigations-panel { display:none !important; }
+  .cc-proposal-mode-btn { flex:0 0 auto; align-self:flex-start; margin-top:3px; padding:6px 10px;
+    border-radius:999px; color:var(--muted); background:rgba(255,255,255,.04);
+    border:1px solid var(--line2); font-size:10.5px; white-space:nowrap; }
+  .cc-proposal-mode-btn.on { color:var(--green); border-color:rgba(112,214,158,.5); }
+  .cc-proposal-mode-btn:hover { background:rgba(255,255,255,.09); }
+  body.chat-fullscreen header, body.chat-fullscreen nav { display:none !important; }
   body.chat-fullscreen #app { grid-template-columns:0 minmax(0,1fr); }
   body.chat-fullscreen .view.active { padding:0; }
   body.chat-fullscreen .view > * { max-width:none; }
   body.chat-fullscreen .command-chat-col { max-height:100vh; padding-right:0; gap:0; padding-bottom:0; }
   body.chat-fullscreen .command-chat-panel { height:100vh; min-height:0; border-radius:0; border:none; }
-  .cc-log { flex:1; min-height:300px; overflow:auto; padding:22px 24px; display:flex; flex-direction:column; gap:16px;
+  .cc-log { flex:1; min-height:300px; overflow:auto; padding:22px 24px; display:flex; flex-direction:column; gap:12px;
     user-select:text; }
-  .cc-message { max-width:82%; padding:14px 17px; border:1px solid var(--line2); border-radius:16px;
-    background:rgba(255,255,255,.045); line-height:1.6; font-size:14px; white-space:pre-wrap; overflow-wrap:anywhere;
+  .cc-message { max-width:82%; padding:11px 14px; border:1px solid var(--line2); border-radius:15px;
+    background:rgba(255,255,255,.045); line-height:1.45; font-size:14px; white-space:normal; overflow-wrap:anywhere;
     user-select:text; cursor:text; }
-  .cc-message.user { align-self:flex-end; background:rgba(47,227,160,.12); border-color:rgba(83,231,192,.32); }
-  .cc-message.assistant { align-self:flex-start; background:none; border-color:transparent;
-    padding:2px 4px; max-width:88%; box-shadow:none; }
+  .cc-message p { margin:0; }
+  .cc-message p + p { margin-top:8px; }
+  .cc-message.user { align-self:flex-end; background:rgba(47,227,160,.12); border-color:rgba(83,231,192,.32);
+    border-bottom-right-radius:5px; }
+  .cc-message.assistant { align-self:flex-start; max-width:88%; color:var(--fg);
+    background:linear-gradient(135deg,rgba(86,82,164,.24),rgba(48,72,112,.22));
+    border-color:rgba(151,151,231,.38); border-bottom-left-radius:5px;
+    box-shadow:0 8px 24px rgba(0,0,0,.16); }
+  .cc-copy-block { margin:8px 0; overflow:hidden; border:1px solid rgba(83,231,192,.32);
+    border-radius:11px; background:rgba(2,12,9,.58); }
+  .cc-copy-block:first-child { margin-top:0; }
+  .cc-copy-block:last-child { margin-bottom:0; }
+  .cc-copy-block-head { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:6px 8px 6px 11px; border-bottom:1px solid rgba(83,231,192,.16);
+    color:var(--muted); font-size:10.5px; letter-spacing:.4px; }
+  .cc-copy-block button { padding:4px 8px; border-radius:7px; border-color:rgba(83,231,192,.3);
+    background:rgba(83,231,192,.08); color:var(--cyan); font-size:10.5px; }
+  .cc-copy-block button:hover { background:rgba(83,231,192,.17); }
+  .cc-copy-block pre { margin:0; padding:10px 12px; overflow:auto; white-space:pre-wrap;
+    overflow-wrap:anywhere; color:var(--fg); font:inherit; font-size:13px; line-height:1.48; }
+  .cc-copy-block code { font:inherit; }
+  .cc-inline-code { padding:1px 5px; border:1px solid rgba(83,231,192,.2); border-radius:5px;
+    background:rgba(2,12,9,.48); color:var(--cyan); font:inherit; }
   .cc-empty { margin:auto; max-width:520px; text-align:center; color:var(--muted); line-height:1.65; }
   .cc-compose { border-top:1px solid var(--line2); padding:18px 24px 20px; }
   .cc-attachments { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-  .cc-proposal { margin:0 24px 16px; padding:12px 14px; border:1px solid rgba(255,255,255,0.18);
+  .cc-proposal { margin:0 24px 16px; display:grid; gap:8px; font-size:13px; }
+  .cc-proposal-row { padding:12px 14px; border:1px solid rgba(255,255,255,0.18);
     border-radius:12px; background:rgba(255,255,255,0.04); display:flex; align-items:center;
-    justify-content:space-between; gap:12px; font-size:13px; }
+    justify-content:space-between; gap:12px; }
   .cc-proposal-text { flex:1; }
   .cc-proposal button { flex-shrink:0; }
+  .cc-browser-tasks { margin:0 24px 14px; display:grid; gap:10px; }
+  .cc-browser-task { border:1px solid rgba(83,231,192,.32); border-radius:14px; padding:13px 14px;
+    background:linear-gradient(135deg,rgba(30,91,82,.24),rgba(37,53,94,.22)); display:grid; gap:9px; }
+  .cc-browser-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+  .cc-browser-head strong { color:var(--cyan); }
+  .cc-browser-origin { color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+  .cc-browser-status { font-size:12px; line-height:1.45; }
+  .cc-browser-mappings { display:grid; gap:6px; }
+  .cc-browser-mapping { display:grid; grid-template-columns:minmax(100px,.7fr) minmax(120px,1fr);
+    gap:10px; padding:7px 9px; border-radius:9px; background:rgba(0,0,0,.18); font-size:12px; }
+  .cc-browser-mapping span:first-child { color:var(--muted); }
+  .cc-browser-mapping span:last-child { overflow-wrap:anywhere; }
+  .cc-browser-actions { display:flex; flex-wrap:wrap; gap:7px; }
+  .cc-browser-actions button { font-size:12px; padding:7px 10px; }
+  .settings-browser-domains { display:grid; gap:7px; }
+  .settings-browser-domain { display:flex; gap:8px; align-items:center; justify-content:space-between;
+    padding:8px 9px; border:1px solid var(--line); border-radius:9px; font-size:11px; }
+  .settings-browser-domain span { overflow-wrap:anywhere; }
   .cc-chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line2);
     border-radius:999px; padding:5px 9px; color:var(--muted); font-size:12px; background:rgba(255,255,255,.04); }
   .cc-chip button { border:none; background:none; padding:0; color:var(--red); }
   .cc-compose-input-wrap { position:relative; }
   .cc-compose-input-wrap textarea { width:100%; min-height:92px; box-sizing:border-box; resize:vertical;
-    padding:13px 48px; border-radius:13px; font-size:14px; }
+    padding:13px 48px 34px; border-radius:13px; font-size:14px; }
+  .cc-chat-status { display:none; align-self:flex-start; min-height:17px; margin:-5px 24px 10px;
+    color:var(--cyan); font-size:11px; pointer-events:none; }
+  .cc-chat-status:not(:empty) { display:block; }
+  .cc-command-menu { position:absolute; left:10px; right:10px; bottom:calc(100% + 8px); z-index:12;
+    max-height:260px; overflow:auto; padding:7px; border:1px solid var(--line); border-radius:12px;
+    background:rgba(3,16,10,.98); box-shadow:0 18px 44px rgba(0,0,0,.55); display:grid; gap:4px; }
+  .cc-command-menu[hidden] { display:none; }
+  .cc-command-option { width:100%; display:grid; grid-template-columns:94px 1fr; gap:10px;
+    text-align:left; align-items:start; padding:9px 10px; border:0; border-radius:8px; background:transparent; }
+  .cc-command-option:hover,.cc-command-option.active { background:rgba(83,231,192,.1); }
+  .cc-command-name { color:var(--cyan); font-weight:700; }
+  .cc-command-desc { color:var(--muted); font-size:11px; line-height:1.4; }
   .cc-icon-btn { position:absolute; bottom:10px; width:32px; height:32px; padding:0;
     border-radius:999px; display:grid; place-items:center; font-size:15px; line-height:1;
     box-shadow:none; z-index:2; }
@@ -608,11 +727,15 @@
   .command-side { padding:16px; }
   .command-widget { border:1px solid var(--line2); border-radius:14px; padding:12px;
     background:rgba(255,255,255,.035); margin-bottom:12px; }
-  .command-widget h3 { margin:0 0 8px; font-size:13px; color:var(--green); letter-spacing:1.6px; text-transform:uppercase; }
+  .command-widget h3 { margin:0 0 9px; font-size:12px; color:var(--green); letter-spacing:1.6px;
+    text-transform:uppercase; display:flex; align-items:center; gap:8px; white-space:nowrap; }
+  #self-profile-widgets > .command-widget h3::before,
+  #self-profile-widgets > .command-widget h3::after { content:''; flex:1; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(184,161,82,.48)); }
+  #self-profile-widgets > .command-widget h3::after { transform:scaleX(-1); }
   .command-section-divider { display:flex; align-items:center; gap:10px; margin:2px 4px 12px;
     color:var(--green); font-size:12px; letter-spacing:1.8px; text-transform:uppercase; font-weight:700; }
   .command-section-divider::after { content:''; flex:1; height:1px; background:var(--line2); }
-  .command-investigations-panel { flex:0 0 auto; padding:2px 2px 4px; }
   .self-investigation-card { cursor:pointer; }
   .self-pursuit { transition:transform .15s ease, box-shadow .15s ease; }
   .self-investigation-card:hover { transform:translateY(-2px); box-shadow:0 12px 26px rgba(0,0,0,.4); }
@@ -901,6 +1024,166 @@
   .cur-card-star { color:var(--amber); font-size:13px; }
   .cur-card-label { font-size:14px; font-weight:700; }
   .cur-card-tile-meta { margin-top:6px; font-size:11.5px; color:var(--muted); }
+  /* Investigations are presented as a stable workspace rather than a long
+     administrative page.  The existing detailed controls remain available
+     inside the secondary details drawer below the shelf. */
+  #view-curiosity { height:100vh; box-sizing:border-box; overflow-x:hidden; overflow-y:auto; padding:0 4px 4px 0; }
+  .curiosity-shell { min-height:100%; display:flex; flex-direction:column; overflow:visible;
+    border:1px solid rgba(193,157,65,.46); border-radius:0 0 16px 16px;
+    background:linear-gradient(145deg,rgba(2,14,9,.76),rgba(3,18,12,.54));
+    box-shadow:inset 0 0 0 1px rgba(83,231,192,.035); }
+  .curiosity-overview { height:100%; min-height:0; overflow:auto; scrollbar-gutter:stable;
+    padding:22px 24px 18px; }
+  .curiosity-overview[hidden],.curiosity-session[hidden] { display:none !important; }
+  .cur-workspace-head { display:flex; align-items:flex-start; justify-content:space-between;
+    gap:18px; margin-bottom:14px; }
+  .cur-workspace-copy { min-width:0; max-width:920px; }
+  .cur-eyebrow { color:var(--green); font-size:10px; letter-spacing:2px; text-transform:uppercase;
+    font-weight:750; margin-bottom:8px; }
+  .cur-workspace-title { margin:0; color:#f1f5f1; font-size:clamp(28px,3vw,44px);
+    line-height:1.06; font-weight:680; letter-spacing:-.02em; }
+  .cur-workspace-directive { margin:12px 0 0; color:var(--muted); font-size:14px;
+    line-height:1.55; max-width:850px; }
+  .cur-workspace-actions { display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end; }
+  .cur-status-row { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin:14px 0 18px; }
+  .cur-status-pill { display:inline-flex; align-items:center; gap:6px; min-height:28px; padding:4px 11px;
+    border:1px solid var(--line2); border-radius:999px; color:var(--muted); font-size:11.5px;
+    background:rgba(2,13,8,.48); }
+  .cur-status-pill.good { color:var(--green); border-color:rgba(47,227,160,.38);
+    background:rgba(47,227,160,.07); }
+  .cur-overview-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(230px,300px);
+    gap:14px; align-items:stretch; }
+  .cur-next-card,.cur-glance-card { border:1px solid rgba(193,157,65,.42); border-radius:16px;
+    background:linear-gradient(135deg,rgba(7,31,20,.82),rgba(2,14,9,.62)); padding:18px; }
+  .cur-next-card { display:grid; grid-template-columns:58px minmax(0,1fr); gap:16px; align-items:center;
+    min-height:150px; position:relative; overflow:hidden; }
+  .cur-next-card::after { content:''; position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(circle at 82% 35%,rgba(47,227,160,.12),transparent 35%); }
+  .cur-next-icon { width:54px; height:54px; border:1px solid rgba(83,231,192,.5); border-radius:999px;
+    display:grid; place-items:center; color:var(--green); font-size:25px; z-index:1;
+    background:radial-gradient(circle,rgba(47,227,160,.22),rgba(6,28,18,.74));
+    box-shadow:0 0 24px rgba(47,227,160,.16); }
+  .cur-next-body { min-width:0; z-index:1; }
+  .cur-next-body h3 { margin:5px 0 7px; font-size:21px; line-height:1.25; }
+  .cur-next-body p { margin:0 0 14px; color:var(--muted); line-height:1.5; font-size:13px; }
+  .cur-next-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .cur-glance-card { display:flex; flex-direction:column; }
+  .cur-glance-list { display:grid; gap:8px; margin-top:8px; }
+  .cur-glance-row { display:flex; justify-content:space-between; gap:14px; color:var(--muted);
+    font-size:12px; }
+  .cur-glance-row b { color:var(--fg); font-weight:650; text-align:right; }
+  .cur-shelf { margin-top:18px; padding-top:14px; border-top:1px solid rgba(193,157,65,.34); }
+  .cur-shelf-head { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin-bottom:10px; }
+  .cur-shelf-title { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cur-shelf-title h3 { margin:0; color:var(--green); font-size:12px; letter-spacing:1.7px;
+    text-transform:uppercase; }
+  .cur-shelf-title span { color:var(--muted); font-size:11.5px; }
+  .cur-shelf-tools { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:12px; }
+  .cur-shelf-tools .cur-board-search { min-width:210px; }
+  .cur-shelf-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .cur-shelf-card { border:1px solid var(--line); border-radius:14px; padding:13px;
+    background:linear-gradient(145deg,rgba(5,24,15,.72),rgba(2,12,8,.55)); min-width:0;
+    cursor:pointer; transition:border-color .16s ease,background .16s ease,box-shadow .16s ease,transform .16s ease; }
+  .cur-shelf-card:hover { border-color:rgba(83,231,192,.48);
+    background:linear-gradient(145deg,rgba(9,39,25,.84),rgba(3,20,13,.7));
+    box-shadow:0 0 18px rgba(47,227,160,.07); transform:translateY(-1px); }
+  .cur-shelf-card:focus-visible { outline:2px solid var(--green); outline-offset:2px; }
+  .cur-shelf-card.open { border-color:rgba(47,227,160,.72);
+    box-shadow:0 0 0 1px rgba(47,227,160,.24) inset,0 0 20px rgba(47,227,160,.09); }
+  .cur-shelf-card-top { display:flex; gap:9px; align-items:flex-start; }
+  .cur-shelf-mark { flex:0 0 30px; height:30px; display:grid; place-items:center; border-radius:999px;
+    color:var(--green); background:rgba(47,227,160,.1); border:1px solid rgba(47,227,160,.28); }
+  .cur-shelf-card h4 { margin:1px 0 5px; font-size:14px; line-height:1.3; }
+  .cur-shelf-meta { color:var(--muted); font-size:11px; line-height:1.4; min-height:30px; }
+  .cur-shelf-card .actions { margin-top:11px; display:flex; gap:6px; }
+  .cur-shelf-card .actions button { padding:6px 10px; font-size:11.5px; }
+  .cur-queue.on { color:var(--green); border-color:rgba(47,227,160,.46); }
+  .cur-new-form { display:grid; grid-template-columns:minmax(170px,.55fr) minmax(260px,1.45fr) auto;
+    gap:8px; margin:10px 0; padding:12px; border:1px solid rgba(83,231,192,.28);
+    border-radius:13px; background:rgba(83,231,192,.045); }
+  .cur-new-form[hidden] { display:none; }
+  .cur-new-form input,.cur-new-form textarea { width:100%; box-sizing:border-box; }
+  .cur-new-form textarea { min-height:42px; resize:vertical; }
+  .cur-overview-tools { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:11px; }
+  .cur-overview-tool { display:flex; align-items:center; justify-content:space-between; gap:15px;
+    padding:12px 14px; border:1px solid var(--line); border-radius:13px;
+    background:linear-gradient(145deg,rgba(5,24,15,.72),rgba(2,12,8,.55)); flex-wrap:wrap; }
+  .cur-overview-tool-copy { min-width:0; flex:1; }
+  .cur-overview-tool h4 { margin:0 0 4px; font-size:13px; }
+  .cur-overview-tool p { margin:0; color:var(--muted); font-size:11.5px; line-height:1.4; }
+  .cur-overview-tool-title { display:flex; align-items:center; gap:7px; }
+  .cur-overview-tool-title h4 { margin:0; }
+  .cur-inline-help { width:23px; height:23px; padding:0; display:grid; place-items:center;
+    border-radius:999px; font-size:11px; color:var(--green); }
+  .cur-help-example { grid-column:1 / -1; flex:0 0 100%; margin-top:-3px; padding:9px 11px; border-radius:10px;
+    border:1px solid rgba(83,231,192,.24); background:rgba(83,231,192,.055);
+    color:var(--muted); font-size:11.5px; line-height:1.45; }
+  .cur-help-example[hidden] { display:none; }
+  .cur-management-backdrop { position:fixed; inset:0; z-index:73; background:rgba(0,8,5,.62);
+    backdrop-filter:blur(2px); }
+  .cur-management { position:fixed; z-index:74; top:12px; right:12px; bottom:12px;
+    width:min(760px,calc(100vw - 32px)); border:1px solid rgba(193,157,65,.48); border-radius:16px;
+    background:linear-gradient(150deg,rgba(5,25,16,.985),rgba(1,12,8,.985)); overflow:auto;
+    box-shadow:0 18px 70px rgba(0,0,0,.55); }
+  .cur-management[hidden],.cur-management-backdrop[hidden] { display:none; }
+  .cur-management-head { position:sticky; top:0; z-index:2; display:flex; align-items:center;
+    justify-content:space-between; gap:12px; padding:12px 14px; border-bottom:1px solid var(--line);
+    background:rgba(3,18,11,.97); }
+  .cur-management-head h3 { margin:0; font-size:15px; }
+  .cur-management-head span { color:var(--muted); font-size:11.5px; }
+  .cur-management-close { width:36px; height:36px; padding:0; border-radius:999px; font-size:20px; }
+  .cur-management-body { padding:12px; }
+  .cur-management #cur-switcher { display:none; }
+  .curiosity-session { height:100%; min-height:0; display:flex; flex-direction:column; overflow:hidden;
+    padding:18px 24px 16px; box-sizing:border-box; }
+  .cur-session-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+  .cur-session-head h2 { margin:3px 0 0; font-size:clamp(24px,2.5vw,38px); line-height:1.1; }
+  .cur-session-progress { display:grid; grid-template-columns:repeat(var(--cur-step-count,4),minmax(0,1fr));
+    margin:17px 0 11px; border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+  .cur-session-step { padding:10px 12px; color:var(--muted); font-size:11.5px; border-right:1px solid var(--line); }
+  .cur-session-step:last-child { border-right:0; }
+  .cur-session-step.active { color:var(--green); background:linear-gradient(90deg,rgba(47,227,160,.18),rgba(47,227,160,.06)); }
+  .cur-session-step.done { color:rgba(112,214,158,.75); }
+  .cur-session-context { display:flex; justify-content:space-between; align-items:center; gap:14px;
+    padding:9px 12px; border:1px solid var(--line2); border-radius:11px; color:var(--muted);
+    font-size:11.5px; }
+  .cur-understanding-progress { display:grid; grid-template-columns:minmax(180px,1fr) auto; gap:8px 18px;
+    align-items:center; margin-top:9px; padding:10px 12px; border:1px solid rgba(193,157,65,.28);
+    border-radius:11px; background:rgba(6,22,14,.72); }
+  .cur-understanding-progress-copy { display:flex; justify-content:space-between; gap:12px;
+    color:var(--muted); font-size:11.5px; }
+  .cur-understanding-progress-copy b { color:var(--text); }
+  .cur-understanding-track { height:6px; border-radius:99px; overflow:hidden; background:rgba(255,255,255,.07); }
+  .cur-understanding-track i { display:block; height:100%; border-radius:inherit;
+    background:linear-gradient(90deg,var(--green),#87e8c0); box-shadow:0 0 12px rgba(47,227,160,.35); }
+  .cur-proposal-checkpoint { grid-row:1 / span 2; grid-column:2; max-width:330px; color:var(--gold-soft);
+    font-size:11.5px; text-align:right; }
+  .cur-session-question-wrap { flex:1; min-height:0; overflow:auto; margin-top:12px;
+    border:1px solid rgba(47,227,160,.45); border-radius:16px; padding:20px 24px;
+    background:linear-gradient(135deg,rgba(5,28,17,.84),rgba(2,14,9,.7)); }
+  .cur-session-question { margin:7px 0 10px; max-width:1050px; color:#f1f5f1;
+    font-size:clamp(18px,1.65vw,26px); line-height:1.32; font-weight:580; }
+  .cur-session-question-wrap textarea { width:100%; box-sizing:border-box; min-height:145px;
+    margin-top:9px; resize:vertical; font-size:15px; line-height:1.55; padding:16px; }
+  .cur-session-starters { display:flex; gap:7px; flex-wrap:wrap; margin-top:10px; }
+  .cur-session-starters button { border-radius:999px; padding:6px 11px; font-size:11.5px; }
+  .cur-session-footer { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-top:11px; padding:10px 12px; border:1px solid var(--line); border-radius:12px;
+    background:rgba(3,16,10,.72); }
+  .cur-session-save { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:11.5px; }
+  .cur-session-footer .accent { min-width:190px; }
+  @media(max-width:900px){
+    #view-curiosity { height:auto; min-height:100vh; overflow:auto; padding:4px 18px 18px; }
+    .curiosity-shell { min-height:760px; }
+    .cur-shelf-grid,.cur-overview-tools { grid-template-columns:1fr; }
+    .curiosity-overview,.curiosity-session { padding:16px; }
+    .cur-overview-grid { grid-template-columns:1fr; }
+    .cur-new-form { grid-template-columns:1fr; }
+    .cur-session-progress { grid-template-columns:1fr 1fr; }
+    .cur-understanding-progress { grid-template-columns:1fr; }
+    .cur-proposal-checkpoint { grid-row:auto; grid-column:auto; max-width:none; text-align:left; }
+  }
   .resolved-row .rr-tag.tried { color:var(--green); border-color:rgba(47,227,160,.45); }
   .resolved-row .rr-tag.nh-light { color:var(--amber); border-color:rgba(255,209,102,.45); }
   .resolved-row .rr-tag.nh-heavy { color:var(--red); border-color:rgba(255,107,138,.45); }
@@ -944,6 +1227,7 @@
   .metric-bar-head { display:flex; justify-content:space-between; gap:8px; font-size:11px; color:var(--muted); }
 
   /* goals */
+  #view-goals { height:100vh; box-sizing:border-box; overflow:hidden; padding:0 4px 4px; }
   #view-goals > .toolbar,#view-goals > .hint,#view-goals > .goal-ai-overview,
   #view-goals > .goal-layout,#view-goals > .growth-map-main,#view-goals > .goal-list-view {
     width:100%; max-width:none; margin-left:0; margin-right:0; }
@@ -1042,12 +1326,23 @@
   .growth-map-summary-card b { display:block; color:var(--cyan); font-size:15px; margin-bottom:5px; }
   .growth-map-summary-card span { color:var(--muted); line-height:1.5; }
   .growth-map-main .growth-map-summary { margin-top:2px; }
-  .growth-map-workspace { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(320px,.7fr);
-    gap:14px; align-items:start; min-height:calc(100vh - 126px); }
-  .growth-map-stage { min-width:0; }
-  .growth-map-main .growth-map-tree { min-height:max(720px,calc(100vh - 126px)); }
-  .growth-map-main .growth-constellation-svg { height:max(720px,calc(100vh - 126px)); min-height:720px; }
-  .goal-focus-panel { position:sticky; top:8px; max-height:calc(100vh - 52px); overflow:auto; }
+  .growth-map-main { height:100%; min-height:0; overflow:hidden; }
+  .growth-map-workspace { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(360px,.7fr);
+    gap:4px; align-items:stretch; height:100%; min-height:0; }
+  .growth-map-stage { position:relative; min-width:0; min-height:0; height:100%; display:flex; flex-direction:column; }
+  .growth-map-main .growth-map-tree { flex:1 1 auto; height:auto; min-height:0;
+    border-width:14px; border-style:solid; border-color:transparent;
+    border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 14px / 0 stretch;
+    border-radius:0; }
+  .growth-map-main .growth-constellation-svg { height:100%; min-height:0; }
+  .growth-map-main .constellation-legend { position:absolute; z-index:8; top:17px; left:17px; right:17px;
+    flex:0 0 auto; gap:4px; margin:0; padding:5px 7px; font-size:9.5px;
+    border:1px solid rgba(112,214,158,.16); border-radius:10px;
+    background:linear-gradient(90deg,rgba(2,14,9,.86),rgba(2,14,9,.44)); pointer-events:none; }
+  .growth-map-main .constellation-legend span { padding:2px 7px; }
+  .goal-focus-panel { position:relative; top:0; height:100%; max-height:none; overflow:auto;
+    box-sizing:border-box; padding:10px; }
+  #view-goals > .goal-list-view { height:100%; min-height:0; overflow:auto; }
   .goal-focus-panel .cur-head { align-items:flex-start; }
   .goal-focus-title { font-size:18px; line-height:1.25; font-weight:800; color:var(--fg); }
   .goal-focus-path { color:var(--muted); font-size:11px; line-height:1.45; margin:4px 0 8px; }
@@ -1246,11 +1541,6 @@
   .goal-full-note summary { cursor:pointer; color:var(--cyan); font-size:12px; letter-spacing:.6px;
     text-transform:uppercase; }
   .goal-full-note div { color:var(--muted); line-height:1.55; margin-top:8px; white-space:pre-wrap; }
-  .goal-ai-strip { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:10px 0 12px;
-    border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:rgba(5,22,14,.42); }
-  .goal-ai-strip .strip-copy { color:var(--muted); line-height:1.4; flex:1; min-width:240px; }
-  .goal-ai-strip b { color:var(--cyan); }
-  .goal-ai-strip button { padding:7px 11px; }
   .settings-choice { display:grid; gap:5px; width:100%; color:var(--muted); font-size:11px; }
   .settings-choice select { width:100%; border:1px solid var(--line); border-radius:10px;
     background:rgba(2,12,7,.72); color:var(--fg); padding:9px 10px; font:inherit; }
@@ -1258,12 +1548,35 @@
     border:1px solid var(--line); border-radius:10px; color:var(--fg); font-size:12px;
     background:rgba(2,12,7,.5); cursor:pointer; }
   .settings-choice.mascot-choice input { width:18px; height:18px; accent-color:var(--green); }
+  .settings-stack { display:grid; gap:12px; }
+  .settings-group { display:grid; gap:9px; padding:13px; border:1px solid var(--line);
+    border-radius:14px; background:rgba(255,255,255,.025); }
+  .settings-group h3 { margin:0; color:var(--cyan); font-size:12px; letter-spacing:1.2px;
+    text-transform:uppercase; }
+  .settings-group .actions { margin:0; }
+  .settings-usage-card { padding:10px 12px; border:1px solid var(--line); border-radius:10px;
+    background:rgba(2,12,7,.5); color:var(--fg); }
+  .settings-usage-card strong { display:block; margin-bottom:3px; }
+  .settings-helper { margin:0; color:var(--muted); font-size:11px; line-height:1.45; }
+  .settings-advanced summary { cursor:pointer; color:var(--fg); font-weight:700; }
+  .settings-advanced[open] summary { margin-bottom:9px; }
+  .app-modal-backdrop { position:fixed; inset:0; z-index:80; display:none; place-items:center;
+    padding:20px; background:rgba(0,0,0,.68); backdrop-filter:blur(4px); }
+  .app-modal-backdrop.open { display:grid; }
+  .app-modal-panel { width:min(430px,92vw); padding:22px; border:1px solid rgba(83,231,192,.38);
+    border-radius:18px; background:#07130d; box-shadow:0 24px 80px rgba(0,0,0,.68); }
+  .app-modal-panel h2 { margin:0 0 7px; }
+  .app-modal-panel input { width:100%; box-sizing:border-box; margin:12px 0 16px; padding:11px 12px;
+    border:1px solid var(--line); border-radius:10px; background:var(--card2); color:var(--fg); font:inherit; }
   .growth-map-tree { position:relative; min-height:620px; border:1px solid var(--line);
     border-radius:18px; overflow:hidden; background:
       radial-gradient(circle at 50% 48%, rgba(47,227,160,.12), transparent 32%),
       radial-gradient(circle at 22% 18%, rgba(83,231,192,.09), transparent 28%),
       rgba(1,11,7,.62); cursor:grab; touch-action:none; }
   .growth-map-tree.dragging { cursor:grabbing; }
+  .growth-map-tree.panning-all .constellation-node .glow { opacity:.72; }
+  .growth-map-tree.panning-all .constellation-node circle.core { stroke:var(--green); stroke-width:2; }
+  .growth-map-tree.panning-all .constellation-edge { stroke:rgba(83,231,192,.72); }
   .growth-map-tree::before { content:''; position:absolute; inset:0; pointer-events:none;
     background-image:radial-gradient(circle, rgba(213,255,238,.38) 0 1px, transparent 1.5px);
     background-size:78px 68px; opacity:.22; }
@@ -1474,6 +1787,10 @@
     padding:7px 10px; border:1px solid rgba(126,226,255,.3); border-radius:10px;
     color:var(--cyan); background:linear-gradient(90deg,rgba(126,226,255,.11),rgba(83,231,192,.055));
     box-shadow:0 0 16px rgba(83,231,192,.08); font-size:11.5px; font-weight:650; }
+  button > .chat-thinking { min-height:0; padding:0; border:0; border-radius:0;
+    color:inherit; background:none; box-shadow:none; font-size:inherit; font-weight:inherit; }
+  button:disabled:has(> .chat-thinking) { opacity:.82; }
+  button > .chat-thinking .thinking-dots { color:inherit; }
   .thinking-dots { display:inline-flex; align-items:center; gap:3px; min-width:24px; }
   .thinking-dots i { display:block; width:5px; height:5px; border-radius:50%;
     background:currentColor; animation:thinking-dot 1.05s ease-in-out infinite; }
@@ -1522,7 +1839,8 @@
   <span style="left:38%; width:2px; height:2px;  --drift:6px;   animation-duration:15s; animation-delay:-12s;"></span>
   <span style="left:70%; width:2px; height:2px;  --drift:-7px;  animation-duration:26s; animation-delay:-5s;"></span>
 </div>
-<button id="faerie-mascot" type="button" data-state="idle" data-skin="classic" aria-label="Open Faerie chat" title="Open Faerie chat">
+<button id="faerie-mascot" type="button" data-state="idle" data-skin="classic" aria-label="Open Faerie chat"
+  data-help-en="Open Faerie Chat" data-help-ko="페어리 채팅 열기">
  <span class="mascot-facing">
   <svg class="mascot-classic" viewBox="0 0 80 80" aria-hidden="true" focusable="false">
     <circle class="mascot-aura" cx="40" cy="42" r="31"></circle>
@@ -1641,26 +1959,10 @@
 <div id="app">
   <header>
     <div class="brand"><img src="assets/icons/brand-emblem.png" alt=""><span class="logo">Faerie Fire</span></div>
+    <button type="button" id="rail-collapse" class="rail-collapse" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
     <div class="self-panel self-identity-card">
       <div id="self-level-widget" class="self-empty">Loading…</div>
-    </div>
-    <span class="backend" id="backend" hidden></span>
-  </header>
-  <nav>
-    <div class="tab active" data-view="self" data-group="self"><img class="nav-icon" src="assets/icons/nav-command-center.png" alt="">Command Center</div>
-    <div class="tab" data-view="goals" data-group="growth"><img class="nav-icon" src="assets/icons/nav-growth.png" alt="">Growth</div>
-    <div class="tab" data-view="curiosity" data-group="growth"><img class="nav-icon" src="assets/icons/nav-investigations.png" alt="">Investigations</div>
-    <details class="nav-group" data-group="knowledge">
-      <summary class="group-label">Knowledge</summary>
-      <div class="nav-menu">
-        <div class="tab" data-view="inferences" data-group="knowledge">Inferences</div>
-        <div class="tab" data-view="clarify" data-group="knowledge">Clarify</div>
-        <div class="tab" data-view="memory" data-group="knowledge">Memory</div>
-      </div>
-    </details>
-
-    <div id="self-rail-dashboard">
-      <div class="self-panel self-identity-card self-portrait-frame">
+      <div class="self-portrait-frame">
         <div class="self-portrait anim-still" id="self-portrait">
           <img id="self-portrait-img" class="self-portrait-img" alt="" draggable="false">
           <div class="portrait-rays"></div>
@@ -1690,6 +1992,25 @@
           </div>
         </div>
       </div>
+      <div class="rail-primary-nav" aria-label="Primary navigation">
+        <div class="tab active" data-view="self" data-group="self"><img class="nav-icon" src="assets/icons/nav-command-center.png" alt="">Command Center</div>
+        <div class="tab" data-view="goals" data-group="growth"><img class="nav-icon" src="assets/icons/nav-growth.png" alt="">Growth</div>
+        <div class="tab" data-view="curiosity" data-group="growth"><img class="nav-icon" src="assets/icons/nav-investigations.png" alt="">Investigations</div>
+      </div>
+    </div>
+    <span class="backend" id="backend" hidden></span>
+  </header>
+  <nav>
+    <details class="nav-group" data-group="knowledge">
+      <summary class="group-label">Knowledge</summary>
+      <div class="nav-menu">
+        <div class="tab" data-view="inferences" data-group="knowledge">Inferences</div>
+        <div class="tab" data-view="clarify" data-group="knowledge">Clarify</div>
+        <div class="tab" data-view="memory" data-group="knowledge">Memory</div>
+      </div>
+    </details>
+
+    <div id="self-rail-dashboard">
       <div id="self-profile-widgets" class="self-empty">Loading your daily command widgets…</div>
       <aside id="self-dashboard" class="command-side self-empty">Loading your daily command widgets…</aside>
     </div>
@@ -1697,49 +2018,109 @@
     <div class="rail-footer">
       <button class="header-refresh" id="header-refresh-self" title="Refresh dashboard">⟳</button>
       <button class="settings-cog" id="settings-cog" title="Settings and tools">⚙</button>
-      <span class="rail-tagline">Stay curious, seeker.</span>
     </div>
   </nav>
 
   <aside class="planner-drawer toolbox-drawer" id="settings-drawer">
-    <div class="cur-head"><span class="cur-label">Settings & tools</span>
+    <div class="cur-head"><span class="cur-label">Settings & Tools</span>
       <button id="settings-close" style="margin-left:auto">Close</button></div>
     <p class="hint">Less-used screens live here so the main navigation can stay calm.</p>
-    <div class="actions">
-      <button id="settings-edit-soul">Edit Soul</button>
-      <button id="settings-open-calibration">Soul Calibration<span id="settings-cal-status" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
-      <button id="settings-change-key">Change API Key</button>
-      <button id="settings-language">Language · 언어<span id="settings-language-line" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
-      <label class="settings-choice" for="settings-growth-skin">Growth map style
+    <div class="settings-stack">
+      <section class="settings-group">
+        <h3>Soul & Account</h3>
+        <div class="actions">
+          <button id="settings-edit-soul" data-help-en="Change the name shown for your Soul without changing its memories or Growth tree." data-help-ko="기억이나 성장 지도를 바꾸지 않고 Soul에 표시되는 이름을 변경합니다.">Edit Soul Name</button>
+          <button id="settings-open-calibration" data-help-en="Review or continue the optional questions that give Faerie an earlier understanding of you." data-help-ko="페어리가 당신을 더 빨리 이해하도록 돕는 선택형 질문을 검토하거나 이어갑니다.">Soul Calibration<span id="settings-cal-status" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
+          <button id="settings-change-key" data-help-en="Replace the Anthropic API key used for AI responses." data-help-ko="AI 응답에 사용하는 Anthropic API 키를 교체합니다.">Change API Key</button>
+        </div>
+      </section>
+      <section class="settings-group">
+        <h3>Appearance & Language</h3>
+        <button id="settings-language" data-help-en="Choose another interface language. Nothing changes until you confirm a restart." data-help-ko="다른 인터페이스 언어를 선택합니다. 재시작을 확인하기 전에는 아무것도 바뀌지 않아요.">Language<span id="settings-language-line" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
+        <label class="settings-choice" for="settings-growth-skin">Growth Map Style
         <select id="settings-growth-skin">
-          <option value="tree">Living tree</option>
-          <option value="solar">Solar system</option>
+          <option value="tree">Living Tree</option>
+          <option value="solar">Solar System</option>
         </select>
-      </label>
-      <label class="settings-choice mascot-choice" for="settings-mascot-enabled"><span>Show Faerie mascot</span>
-        <input type="checkbox" id="settings-mascot-enabled" checked>
-      </label>
-      <label class="settings-choice" for="settings-mascot-skin">Faerie style
+        </label>
+        <label class="settings-choice mascot-choice" for="settings-mascot-enabled"><span>Show Faerie Mascot</span>
+          <input type="checkbox" id="settings-mascot-enabled" checked>
+        </label>
+        <label class="settings-choice" for="settings-mascot-skin">Faerie Style
         <select id="settings-mascot-skin">
           <option value="classic">Pixel Faerie</option>
-          <option value="dark">Dark flame faerie</option>
-          <option value="cat">Cupid flower cat</option>
-          <option value="knight">Knight star cat</option>
-          <option value="meditate">Meditating lotus cat</option>
+          <option value="cat">Cupid Flower Cat</option>
+          <option value="knight">Knight Star Cat</option>
+          <option value="meditate">Meditating Lotus Cat</option>
         </select>
-      </label>
-      <button id="settings-usage">API Usage · 사용량<span id="settings-usage-line" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
-      <button id="settings-daily-report">Today's Report</button>
-      <button id="settings-full-report">Full Report</button>
-      <button class="tab personal-only" data-view="timeline" data-group="tools">Open Timeline</button>
-      <button class="tab personal-only" data-view="import" data-group="tools">Open Import</button>
-      <button class="personal-only" id="settings-db-rescue">Database rescue</button>
+        </label>
+      </section>
+      <section class="settings-group">
+        <h3>Usage & Reports</h3>
+        <div id="settings-usage" class="settings-usage-card"><strong>API Usage</strong><span id="settings-usage-line" class="hint"></span><span id="settings-usage-breakdown" class="hint" style="display:block;font-size:11px;margin-top:5px"></span></div>
+        <label class="settings-choice" for="settings-report-kind">Activity Report
+          <select id="settings-report-kind">
+            <option value="daily">Today’s Report — Activity From Today</option>
+            <option value="full">Full Report — Complete Activity History</option>
+          </select>
+        </label>
+        <p class="settings-helper">Today’s Report summarizes only today. Full Report includes the complete stored activity history.</p>
+        <button id="settings-generate-report" data-help-en="Create and open the report selected above." data-help-ko="위에서 선택한 리포트를 만들고 엽니다.">Generate Report</button>
+      </section>
+      <section class="settings-group">
+        <h3>Browser Assistant</h3>
+        <p class="settings-helper">Faerie uses a separate visible browser and fills fields only after your approval. Passwords, payments, identity checks, Save, and Submit stay manual.</p>
+        <div id="settings-browser-domains" class="settings-browser-domains"><span class="hint">No approved websites yet.</span></div>
+      </section>
+      <details class="settings-group settings-advanced personal-only">
+        <summary>Advanced Tools</summary>
+        <div class="actions">
+          <button class="tab personal-only" data-view="timeline" data-group="tools" data-help-en="Open a chronological view of stored activity." data-help-ko="저장된 활동을 시간순으로 봅니다.">Open Timeline</button>
+          <button class="tab personal-only" data-view="import" data-group="tools" data-help-en="Review and import supported external files." data-help-ko="지원되는 외부 파일을 검토하고 가져옵니다.">Open Import</button>
+          <button class="personal-only" id="settings-db-rescue" data-help-en="Check and safely recover the local database when it cannot open normally." data-help-ko="로컬 데이터베이스가 정상적으로 열리지 않을 때 점검하고 안전하게 복구합니다.">Database Rescue</button>
+        </div>
+      </details>
     </div>
   </aside>
+
+  <div class="app-modal-backdrop" id="soul-name-modal" role="dialog" aria-modal="true" aria-labelledby="soul-name-title">
+    <section class="app-modal-panel">
+      <h2 id="soul-name-title">Edit Soul Name</h2>
+      <p class="hint">This changes the displayed name only. Your memories and Growth tree stay attached.</p>
+      <label class="settings-choice" for="soul-name-input">Soul Name
+        <input id="soul-name-input" type="text" maxlength="120" autocomplete="off">
+      </label>
+      <div class="actions" style="justify-content:flex-end">
+        <button id="soul-name-cancel">Cancel</button>
+        <button id="soul-name-save" class="accent">Save Name</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="app-modal-backdrop" id="language-restart-modal" role="dialog" aria-modal="true" aria-labelledby="language-restart-title">
+    <section class="app-modal-panel">
+      <h2 id="language-restart-title">Restart to change language?</h2>
+      <p id="language-restart-copy" class="hint"></p>
+      <div class="settings-usage-card">
+        <strong id="language-restart-target"></strong>
+        <span id="language-restart-save-note" class="hint" style="display:block;margin:4px 0 0"></span>
+      </div>
+      <div class="actions" style="justify-content:flex-end;margin-top:16px">
+        <button id="language-restart-cancel">Cancel</button>
+        <button id="language-restart-confirm" class="accent">I’ve saved — restart</button>
+      </div>
+    </section>
+  </div>
 
   <div class="cc-ctx-menu" id="cc-chat-ctx-menu" style="display:none">
     <button type="button" class="cc-ctx-item" data-action="rename">Rename</button>
     <button type="button" class="cc-ctx-item danger" data-action="delete">Delete</button>
+  </div>
+  <div class="cc-new-chat-menu" id="cc-new-chat-menu" style="display:none">
+    <button type="button" class="cc-ctx-item" data-proposals="true">Growth + Investigation-aware
+      <small>Proactively offers approval-only proposals.</small></button>
+    <button type="button" class="cc-ctx-item" data-proposals="false">Proposal-free
+      <small>Conversation without Growth or Investigation cards.</small></button>
   </div>
 
   <aside class="planner-drawer soul-calibration-drawer" id="soul-calibration-drawer">
@@ -1792,29 +2173,33 @@
           <button id="cc-delete-chat" class="skip" style="width:100%;margin-top:10px">Delete current</button>
         </aside>
         <main class="cc-chat-main">
+          <div id="cc-drop-overlay" class="cc-drop-overlay" aria-hidden="true">
+            <span class="cc-drop-overlay-icon" aria-hidden="true">↓</span>
+            <b>Drop files to attach</b>
+            <span>Images, PDF, Word, Excel, text, Markdown, CSV, and JSON</span>
+          </div>
           <div class="cc-chat-head">
             <div class="cc-chat-head-text">
               <h2>✦ Command Center</h2>
               <p>Talk with Faerie here. This is the single chat surface; it can use memory, investigations, Growth context, attachments, and filing commands.</p>
             </div>
+            <button id="cc-proposal-mode" class="cc-proposal-mode-btn on" type="button">✦ Proposals on</button>
             <button id="cc-fullscreen-toggle" class="cc-fullscreen-btn" type="button" title="Expand chat">⛶</button>
           </div>
           <div id="cc-log" class="cc-log"><div class="cc-empty">Loading the thread…</div></div>
+          <div id="cc-status" class="cc-chat-status hint" aria-live="polite"></div>
           <div id="cc-proposal" class="cc-proposal" style="display:none"></div>
+          <div id="cc-browser-tasks" class="cc-browser-tasks" style="display:none"></div>
           <div class="cc-compose">
             <div id="cc-attachments" class="cc-attachments"></div>
             <div class="cc-compose-input-wrap">
               <button id="cc-attach" class="cc-icon-btn cc-attach-btn" type="button" title="Attach file">+</button>
-              <textarea id="cc-input" placeholder="Ask Faerie, paste a thought, or use /file to save a brain dump…"></textarea>
+              <textarea id="cc-input" placeholder="Message Faerie… Type / for commands, or use + to attach context."></textarea>
               <button id="cc-send" class="cc-icon-btn cc-send-btn" type="button" title="Send">➤</button>
+              <div id="cc-command-menu" class="cc-command-menu" hidden></div>
             </div>
-            <span id="cc-status" class="hint" style="margin:6px 0 0;display:block"></span>
           </div>
         </main>
-      </section>
-      <section class="command-investigations-panel" aria-label="Investigations">
-        <div class="command-section-divider"><span>Investigations</span></div>
-        <div id="self-investigations-cards" class="self-empty">Loading investigations…</div>
       </section>
     </div>
   </div>
@@ -1881,22 +2266,36 @@
   </div>
 
   <div class="view" id="view-curiosity">
-    <div id="cur-candidates"></div>
-    <div id="cur-related"></div>
-    <div id="cur-list"></div>
-    <div id="cur-switcher"></div>
+    <div class="curiosity-shell">
+      <section id="cur-overview" class="curiosity-overview">
+        <div id="cur-workspace"></div>
+        <div id="cur-shelf" class="cur-shelf"></div>
+        <div id="cur-management-backdrop" class="cur-management-backdrop" hidden></div>
+        <aside id="cur-management" class="cur-management" aria-label="Investigation details" hidden>
+          <div class="cur-management-head"><div><h3 id="cur-management-title">Investigation details</h3><span id="cur-management-subtitle">History, evidence, placement, and advanced controls</span></div><button type="button" id="cur-management-close" class="cur-management-close" aria-label="Close investigation details">×</button></div>
+          <div class="cur-management-body">
+            <div id="cur-candidates"></div>
+            <div id="cur-related"></div>
+            <div id="cur-list"></div>
+            <div id="cur-switcher"></div>
+          </div>
+        </aside>
+      </section>
+      <section id="cur-session" class="curiosity-session" hidden>
+        <div id="cur-session-content" style="display:contents"></div>
+      </section>
+    </div>
   </div>
 
   <div class="view" id="view-goals">
     <span id="goal-status" class="hint" style="display:none"></span>
     <div class="growth-map-main" id="goal-map-main">
-      <div id="goal-ai-strip" class="goal-ai-strip"></div>
       <div class="growth-map-workspace">
         <div class="growth-map-stage">
-          <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
           <div class="constellation-legend">
             <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
           </div>
+          <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
         </div>
         <aside class="goal-pane goal-focus-panel" id="goal-focus-panel">
           <div class="empty">Select a star to see what matters now.</div>
@@ -1978,6 +2377,7 @@
       </details>
       <div class="leaf-coach-error" id="leaf-coach-error" hidden></div>
       <div class="leaf-workspace-loading" id="leaf-workspace-loading" hidden></div>
+      <div id="leaf-workspace-recovery"></div>
       <div id="leaf-workspace-incoming"></div>
       <div id="leaf-workspace-agreement"></div>
       <div id="leaf-workspace-plan"></div>
@@ -2105,21 +2505,37 @@ const KO_UI_TEXT = Object.freeze({
   'Inferences':'추론',
   'Clarify':'확인',
   'Memory':'기억',
+  'Settings & Tools':'설정과 도구',
   'Settings & tools':'설정과 도구',
   'Settings and tools':'설정과 도구',
   'Close':'닫기',
-  'Edit Soul':'Soul 편집',
+  'Edit Soul Name':'Soul 이름 편집',
+  'Soul & Account':'Soul 및 계정',
+  'Appearance & Language':'화면 및 언어',
+  'Language':'언어',
+  'Usage & Reports':'사용량 및 리포트',
+  'Advanced Tools':'고급 도구',
   'Soul Calibration':'Soul 조율',
-  'Growth map style':'성장 지도 스타일',
-  'Living tree':'생명 나무',
-  'Solar system':'태양계',
-  'Show Faerie mascot':'페어리 마스코트 표시',
-  'Faerie style':'페어리 스타일',
+  'Growth Map Style':'성장 지도 스타일',
+  'Living Tree':'생명 나무',
+  'Solar System':'태양계',
+  'Show Faerie Mascot':'페어리 마스코트 표시',
+  'Faerie Style':'페어리 스타일',
   'Pixel Faerie':'픽셀 페어리',
-  'Dark flame faerie':'어둠의 불꽃 페어리',
-  'Cupid flower cat':'큐피드 꽃 고양이',
-  'Knight star cat':'별의 기사 고양이',
-  'Meditating lotus cat':'명상하는 연꽃 고양이',
+  'Cupid Flower Cat':'큐피드 꽃 고양이',
+  'Knight Star Cat':'별의 기사 고양이',
+  'Meditating Lotus Cat':'명상하는 연꽃 고양이',
+  'API Usage':'API 사용량',
+  'Activity Report':'활동 리포트',
+  'Today’s Report — Activity From Today':'오늘의 리포트 — 오늘 활동',
+  'Full Report — Complete Activity History':'전체 리포트 — 모든 활동 기록',
+  'Today’s Report summarizes only today. Full Report includes the complete stored activity history.':'오늘의 리포트는 오늘만 요약합니다. 전체 리포트에는 저장된 모든 활동 기록이 포함됩니다.',
+  'Generate Report':'리포트 만들기',
+  'Database Rescue':'데이터베이스 복구',
+  'This changes the displayed name only. Your memories and Growth tree stay attached.':'표시되는 이름만 바뀝니다. 기억과 성장 지도는 그대로 유지됩니다.',
+  'Soul Name':'Soul 이름',
+  'Cancel':'취소',
+  'Save Name':'이름 저장',
   'Open Faerie chat':'페어리 채팅 열기',
   'Close Leaf Coach':'Leaf 코치 닫기',
   'Open Timeline':'타임라인 열기',
@@ -2167,7 +2583,6 @@ const KO_UI_TEXT = Object.freeze({
   'Apply to selected':'선택 항목에 적용',
   'Recently resolved':'최근 해결됨',
   'Possible next Investigations':'다음 탐구 후보',
-  'Look for worthwhile Investigations':'가치 있는 탐구 찾아보기',
   'Suggested Investigation':'제안된 탐구',
   'Never suggest this topic':'이 주제는 다시 제안하지 않기',
   'Not relevant':'관련 없음',
@@ -2316,7 +2731,7 @@ const KO_UI_TEXT = Object.freeze({
 
   // --- added: full sweep ---
   'Command Center chat':'커맨드 센터 채팅',
-  'Ask Faerie, paste a thought, or use /file to save a brain dump…':'페어리에게 물어보거나, 생각을 붙여넣거나, /file로 브레인덤프를 저장하세요…',
+  'Message Faerie… Type / for commands, or use + to attach context.':'페어리에게 메시지를 보내세요… /를 입력해 명령을 보거나 +로 맥락을 첨부하세요.',
   'What should Faerie try to understand about you?':'페어리가 당신에 대해 무엇을 이해하면 좋을까요?',
   'Kindergarten\t2000–2001\n1st grade\t2001–2002\n...':'유치원\t2000–2001\n1학년\t2001–2002\n...',
   'Same answer for all selected…':'선택한 모든 항목에 같은 답변…',
@@ -3099,7 +3514,7 @@ let faerieMascotEnabled=(function(){
 let faerieMascotSkin=(function(){
   try{
     const saved=localStorage.getItem('ffFaerieMascotSkin');
-    return ['classic','dark','cat','knight','meditate'].includes(saved)?saved:'classic';
+    return ['classic','cat','knight','meditate'].includes(saved)?saved:'classic';
   }
   catch(e){ return 'classic'; }
 })();
@@ -3142,7 +3557,7 @@ function setFaerieMascotEnabled(enabled){
   refreshFaerieMascotSetting();
 }
 function setFaerieMascotSkin(skin){
-  faerieMascotSkin=['classic','dark','cat','knight','meditate'].includes(skin)?skin:'classic';
+  faerieMascotSkin=['classic','cat','knight','meditate'].includes(skin)?skin:'classic';
   try{ localStorage.setItem('ffFaerieMascotSkin',faerieMascotSkin); }catch(e){}
   persistDurableUiPreference('mascot_skin',faerieMascotSkin);
   refreshFaerieMascotSetting();
@@ -3233,6 +3648,9 @@ function buttonHelpText(control){
   const id=String(control.id||''), cls=String(control.className||''),
     label=String(control.getAttribute('aria-label')||control.textContent||'').replace(/\s+/g,' ').trim();
   const ko=APP_LANG==='ko';
+  if(control.dataset.helpEn||control.dataset.helpKo){
+    return ko?(control.dataset.helpKo||control.dataset.helpEn):(control.dataset.helpEn||control.dataset.helpKo);
+  }
   if(control.dataset.help) return control.dataset.help;
   if(id.includes('restructure')||cls.includes('restructure')) return ko
     ?'첨부된 기록을 삭제하지 않고 이 항목의 역할이나 위치를 바꾸는 제안을 페어리에게 요청합니다.'
@@ -3268,7 +3686,7 @@ function buttonHelpText(control){
   if(/send|continue|보내|계속/.test(label.toLowerCase())) return ko?'현재 메시지를 보내고 다음 응답을 요청합니다.':'Send the current message and request the next response.';
   if(/close|back|취소|뒤로/.test(label.toLowerCase())) return ko?'현재 패널을 변경 없이 닫습니다.':'Close the current panel without making another change.';
   if(/refresh|새로고침/.test(label.toLowerCase())||id.includes('refresh')) return ko?'현재 화면의 정보를 다시 불러옵니다.':'Reload the latest information for this screen.';
-  if(control.matches('nav .tab')){
+  if(control.matches('nav .tab,.rail-primary-nav .tab')){
     const views={self:'Command Center',goals:'Growth',curiosity:'Investigations',
       inferences:'Inferences',clarify:'Clarify',memory:'Memory'};
     const name=views[control.dataset.view]||label;
@@ -3301,14 +3719,14 @@ function showButtonHelp(control,x,y){
   },140);
 }
 document.addEventListener('pointerover',event=>{
-  const control=event.target.closest&&event.target.closest('button,nav .tab,.group-label');
+  const control=event.target.closest&&event.target.closest('button,nav .tab,.rail-primary-nav .tab,.group-label');
   if(control&&control!==buttonHelpTarget) showButtonHelp(control,event.clientX,event.clientY);
 });
 document.addEventListener('pointerout',event=>{
   if(buttonHelpTarget&&(!event.relatedTarget||!buttonHelpTarget.contains(event.relatedTarget))) hideButtonHelp();
 });
 document.addEventListener('focusin',event=>{
-  const control=event.target.closest&&event.target.closest('button,nav .tab,.group-label');
+  const control=event.target.closest&&event.target.closest('button,nav .tab,.rail-primary-nav .tab,.group-label');
   if(control) showButtonHelp(control,NaN,NaN);
 });
 document.addEventListener('focusout',event=>{
@@ -3602,18 +4020,39 @@ function activateView(name){
   }
   $('view-'+name).classList.add('active');
   const railDash=$('self-rail-dashboard');
-  if(railDash) railDash.style.display=(name==='self')?'':'none';
+  if(railDash) railDash.style.display='';
+  const needsRailLoad=name!=='self'&&['goals','curiosity'].includes(name)&&$('self-level-widget')&&
+    $('self-level-widget').textContent.includes('Loading');
   if(name==='self') loadCommandCenter();
   if(name==='memory') loadMemory();
   if(name==='timeline') loadTimeline();
   if(name==='import') loadStaged();
   if(name==='clarify') loadClarify();
-  if(name==='curiosity') loadCuriosity();
+  if(name==='curiosity'){
+    const investigationLoad=loadCuriosity();
+    if(needsRailLoad) Promise.resolve(investigationLoad).then(()=>{loadSelf();loadSelfPortrait();});
+  }else if(needsRailLoad){
+    loadSelf();loadSelfPortrait();
+  }
   if(name==='goals') loadGoals();
   autoDatabaseRescue('tab switch');
 }
 
-document.querySelectorAll('nav .tab').forEach(tab=>{
+(function bindSharedRail(){
+  const button=$('rail-collapse'); if(!button) return;
+  let collapsed=false;
+  try{collapsed=localStorage.getItem('ffRailCollapsed')==='1';}catch(e){}
+  const apply=()=>{
+    document.body.classList.toggle('rail-collapsed',collapsed);
+    button.setAttribute('aria-expanded',String(!collapsed));
+    button.setAttribute('aria-label',collapsed?curT('Expand sidebar','사이드바 펼치기'):curT('Collapse sidebar','사이드바 접기'));
+    button.title=collapsed?curT('Expand sidebar','사이드바 펼치기'):curT('Collapse sidebar','사이드바 접기');
+  };
+  button.onclick=()=>{collapsed=!collapsed;try{localStorage.setItem('ffRailCollapsed',collapsed?'1':'0');}catch(e){}apply();};
+  apply();
+})();
+
+document.querySelectorAll('nav .tab,.rail-primary-nav .tab').forEach(tab=>{
   tab.onclick=()=>activateView(tab.dataset.view);
 });
 document.querySelectorAll('#settings-drawer .tab[data-view]').forEach(tab=>{
@@ -3635,6 +4074,7 @@ if($('settings-cog')) $('settings-cog').onclick=()=>{
   refreshSettingsUsageLine();
   refreshGrowthMapSkinSetting();
   refreshFaerieMascotSetting();
+  refreshBrowserPermissions();
 };
 function refreshGrowthMapSkinSetting(){
   const select=$('settings-growth-skin');
@@ -3659,34 +4099,113 @@ refreshFaerieMascotSetting();
 function refreshSettingsLanguageLabel(){
   const span=$('settings-language-line'); if(!span) return;
   span.textContent=(APP_LANG==='ko')
-    ?'현재: 한국어 — 클릭하면 English로 전환'
-    :'Current: English — click to switch to 한국어';
+    ?'현재: 한국어 — 언어 변경'
+    :'Current: English — change language';
 }
 function refreshSettingsUsageLine(){
-  const span=$('settings-usage-line'); if(!span) return;
-  if(!api()||!pywebview.api.app_usage_summary){ span.textContent=''; return; }
+  const span=$('settings-usage-line'), breakdown=$('settings-usage-breakdown'); if(!span) return;
+  if(!api()||!pywebview.api.app_usage_summary){ span.textContent=''; if(breakdown) breakdown.textContent=''; return; }
   pywebview.api.app_usage_summary().then(r=>{
-    if(!r||r.ok===false){ span.textContent=''; return; }
+    if(!r||r.ok===false){ span.textContent=''; if(breakdown) breakdown.textContent=''; return; }
     const usd=(typeof r.estimated_usd==='number')?r.estimated_usd:0;
-    span.textContent='Today: '+(r.calls||0)+' calls · ~$'+usd.toFixed(2);
-  }).catch(()=>{ span.textContent=''; });
-}
-if($('settings-usage')) $('settings-usage').onclick=refreshSettingsUsageLine;
-if($('settings-language')) $('settings-language').onclick=()=>{
-  if(!api()||!pywebview.api.app_set_language){ toast('This build cannot switch language.',true); return; }
-  const target=(APP_LANG==='ko')?'en':'ko';
-  bridgeTimeout(pywebview.api.app_set_language(target),'Language',8000).then(r=>{
-    if(!r||r.ok===false){ toast((r&&r.message)||'Could not switch language.',true); return; }
-    if(target==='ko'){
-      enableKoreanUI();
-      toast('한국어로 전환했어요. 페어리의 대답까지 완전히 적용하려면 앱을 다시 시작하세요.');
-    }else{
-      APP_LANG='en';
-      toast('Saved — restart Faerie Fire to switch the interface back to English.');
+    span.textContent=(APP_LANG==='ko'?'오늘: ':'Today: ')+(r.calls||0)+
+      (APP_LANG==='ko'?'회 AI 호출 · 약 $':' AI calls · ~$')+usd.toFixed(2)+' USD';
+    if(breakdown){
+      const labels=APP_LANG==='ko'
+        ?{companion:'메인 채팅',manual:'GoalAI / Leaf',today_focus:'오늘의 초점',goal_ai:'자동 GoalAI'}
+        :{companion:'Main Chat',manual:'GoalAI / Leaf',today_focus:'Today Focus',goal_ai:'Automatic GoalAI'};
+      breakdown.textContent=(r.categories||[]).map(item=>
+        (labels[item.category]||item.category)+': $'+Number(item.estimated_usd||0).toFixed(2)).join(' · ');
     }
-    refreshSettingsLanguageLabel();
-  }).catch(e=>toast('Could not switch language: '+e,true));
-};
+  }).catch(()=>{ span.textContent=''; if(breakdown) breakdown.textContent=''; });
+}
+function renderBrowserPermissions(permissions){
+  const box=$('settings-browser-domains'); if(!box) return;
+  const rows=Array.isArray(permissions)?permissions:[];
+  if(!rows.length){ box.innerHTML='<span class="hint">'+
+    (APP_LANG==='ko'?'승인된 웹사이트가 아직 없어요.':'No approved websites yet.')+'</span>'; return; }
+  box.innerHTML=rows.map(item=>'<div class="settings-browser-domain"><span>'+esc(item.origin||'')+'</span>'+
+    '<button class="skip" data-browser-revoke="'+esc(item.origin||'')+'">'+
+    (APP_LANG==='ko'?'권한 취소':'Revoke')+'</button></div>').join('');
+  box.querySelectorAll('[data-browser-revoke]').forEach(button=>{
+    button.onclick=()=>revokeBrowserOrigin(button.dataset.browserRevoke);
+  });
+}
+function refreshBrowserPermissions(){
+  if(!api()||!pywebview.api.command_browser_state) return;
+  pywebview.api.command_browser_state().then(result=>{
+    if(result&&result.ok!==false) renderBrowserPermissions(result.permissions||[]);
+  }).catch(()=>{});
+}
+function revokeBrowserOrigin(origin){
+  if(!api()||!pywebview.api.command_browser_revoke) return;
+  pywebview.api.command_browser_revoke(origin).then(result=>{
+    if(!result||result.ok===false){ toast((result&&result.message)||'Could not revoke that website.',true); return; }
+    renderBrowserPermissions(result.permissions||[]);
+    updateBrowserTaskState(result.tasks||[]);
+  }).catch(error=>toast('Could not revoke that website: '+error,true));
+}
+let pendingLanguageTarget=null;
+function closeLanguageRestartModal(){
+  const modal=$('language-restart-modal');
+  if(modal) modal.classList.remove('open');
+  pendingLanguageTarget=null;
+  const confirmButton=$('language-restart-confirm');
+  if(confirmButton) confirmButton.disabled=false;
+}
+function openLanguageRestartModal(){
+  pendingLanguageTarget=(APP_LANG==='ko')?'en':'ko';
+  const ko=APP_LANG==='ko',targetName=pendingLanguageTarget==='ko'?'한국어':'English';
+  $('language-restart-title').textContent=ko?'언어를 변경하려면 다시 시작할까요?':'Restart to change language?';
+  $('language-restart-copy').textContent=ko
+    ?'확인하면 페어리 파이어가 닫힌 뒤 선택한 언어로 자동으로 다시 열려요. 확인하기 전에는 현재 화면의 언어가 바뀌지 않아요.'
+    :'After you confirm, Faerie Fire will close and automatically reopen in the selected language. Nothing on the current screen changes before confirmation.';
+  $('language-restart-target').textContent=(ko?'선택한 언어: ':'Selected language: ')+targetName;
+  $('language-restart-save-note').textContent=ko
+    ?'제출하지 않은 글이 있다면 먼저 저장하세요. 탐구 답변 초안은 자동으로 저장됩니다.'
+    :'Save any text you have not submitted yet. Investigation answer drafts are saved automatically.';
+  $('language-restart-cancel').textContent=ko?'취소':'Cancel';
+  $('language-restart-confirm').textContent=ko?'저장했어요 — 다시 시작':'I’ve saved — restart';
+  $('language-restart-modal').classList.add('open');
+  setTimeout(()=>$('language-restart-confirm').focus(),30);
+}
+function confirmLanguageRestart(){
+  if(!pendingLanguageTarget) return;
+  if(!api()||!pywebview.api.app_restart_language){
+    toast(APP_LANG==='ko'?'이 빌드에서는 자동 재시작을 사용할 수 없어요.':'This build cannot restart automatically.',true);
+    return;
+  }
+  const button=$('language-restart-confirm');
+  const original=button.textContent;
+  button.disabled=true;
+  button.innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'다시 시작하는 중':'Restarting');
+  const active=document.querySelector('.view.active');
+  const currentView=active?active.id.replace(/^view-/,''):'self';
+  bridgeTimeout(pywebview.api.app_restart_language(pendingLanguageTarget,currentView),'Language restart',15000).then(r=>{
+    if(!r||r.ok===false){
+      button.disabled=false;button.textContent=original;
+      toast((r&&r.message)||(APP_LANG==='ko'?'언어를 변경할 수 없어요.':'Could not change language.'),true);
+      return;
+    }
+    $('language-restart-copy').textContent=APP_LANG==='ko'
+      ?'새 창을 여는 중이에요. 잠시만 기다려 주세요.'
+      :'Opening the new window. This one will close in a moment.';
+  }).catch(e=>{
+    button.disabled=false;button.textContent=original;
+    toast((APP_LANG==='ko'?'다시 시작할 수 없어요: ':'Could not restart: ')+e,true);
+  });
+}
+if($('settings-language')) $('settings-language').onclick=openLanguageRestartModal;
+if($('language-restart-cancel')) $('language-restart-cancel').onclick=closeLanguageRestartModal;
+if($('language-restart-confirm')) $('language-restart-confirm').onclick=confirmLanguageRestart;
+if($('language-restart-modal')) $('language-restart-modal').addEventListener('click',event=>{
+  if(event.target===$('language-restart-modal')) closeLanguageRestartModal();
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&$('language-restart-modal')&&$('language-restart-modal').classList.contains('open')){
+    event.preventDefault();closeLanguageRestartModal();
+  }
+});
 function refreshSettingsCalibrationLabel(state){
   const span=$('settings-cal-status'); if(!span) return;
   if(state){
@@ -3936,25 +4455,43 @@ function openEditSoul(){
   if(!api()) return;
   bridgeTimeout(pywebview.api.goal_state(),'Soul state',15000).then(r=>{
     if(!r||r.ok===false||!r.tree){ toast((r&&r.message)||'Could not load the Soul.',true); return; }
-    const node=r.tree;
-    const title=prompt('Soul name:',node.title||'');
-    if(title===null) return;
-    const trimmedTitle=title.trim();
-    const purpose=prompt('Soul purpose (why this Soul exists):',node.description||'');
-    if(purpose===null) return;
-    const trimmedPurpose=purpose.trim();
-    const changes={};
-    if(trimmedTitle && trimmedTitle!==node.title) changes.title=trimmedTitle;
-    if(trimmedPurpose!==(node.description||'')) changes.description=trimmedPurpose;
-    if(!Object.keys(changes).length){ toast('Nothing changed.'); return; }
-    pywebview.api.goal_update(node.id,changes).then(res=>{
-      if(!res||res.ok===false){ toast((res&&res.message)||'Could not save the Soul.',true); return; }
-      toast('Soul updated.');
-      applyGoalTreeUpdate(res);
-      if(typeof loadSelf==='function') loadSelf();
-    }).catch(e=>toast('Could not save the Soul: '+e,true));
+    soulNameNode=r.tree;
+    const input=$('soul-name-input');
+    if(input) input.value=soulNameNode.title||'';
+    $('soul-name-modal').classList.add('open');
+    setTimeout(()=>{ if(input){ input.focus(); input.select(); } },30);
   }).catch(e=>toast('Could not load the Soul: '+e,true));
 }
+let soulNameNode=null;
+function closeSoulNameModal(){
+  $('soul-name-modal').classList.remove('open');
+  soulNameNode=null;
+}
+function saveSoulName(){
+  if(!soulNameNode||!api()) return;
+  const input=$('soul-name-input');
+  const title=String(input&&input.value||'').trim();
+  if(!title){ toast(APP_LANG==='ko'?'Soul 이름을 입력해 주세요.':'Please enter a Soul name.',true); return; }
+  if(title===soulNameNode.title){ closeSoulNameModal(); return; }
+  const save=$('soul-name-save'); if(save) save.disabled=true;
+  pywebview.api.goal_update(soulNameNode.id,{title}).then(res=>{
+    if(save) save.disabled=false;
+    if(!res||res.ok===false){ toast((res&&res.message)||'Could not save the Soul.',true); return; }
+    closeSoulNameModal();
+    toast(APP_LANG==='ko'?'Soul 이름을 저장했어요.':'Soul name saved.');
+    applyGoalTreeUpdate(res);
+    if(typeof loadSelf==='function') loadSelf();
+  }).catch(e=>{ if(save) save.disabled=false; toast('Could not save the Soul: '+e,true); });
+}
+if($('soul-name-cancel')) $('soul-name-cancel').onclick=closeSoulNameModal;
+if($('soul-name-save')) $('soul-name-save').onclick=saveSoulName;
+if($('soul-name-input')) $('soul-name-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){ e.preventDefault(); saveSoulName(); }
+  if(e.key==='Escape'){ e.preventDefault(); closeSoulNameModal(); }
+});
+if($('soul-name-modal')) $('soul-name-modal').addEventListener('click',e=>{
+  if(e.target===$('soul-name-modal')) closeSoulNameModal();
+});
 if($('settings-edit-soul')) $('settings-edit-soul').onclick=()=>{
   $('settings-drawer').classList.remove('open');
   openEditSoul();
@@ -3988,13 +4525,9 @@ function runActivityReport(kind){
     });
   }).catch(e=>toast('Could not build the report: '+e,true));
 }
-if($('settings-daily-report')) $('settings-daily-report').onclick=()=>{
+if($('settings-generate-report')) $('settings-generate-report').onclick=()=>{
   $('settings-drawer').classList.remove('open');
-  runActivityReport('daily');
-};
-if($('settings-full-report')) $('settings-full-report').onclick=()=>{
-  $('settings-drawer').classList.remove('open');
-  runActivityReport('full');
+  runActivityReport(($('settings-report-kind')&&$('settings-report-kind').value)||'daily');
 };
 document.addEventListener('click',e=>{
   if(!e.target.closest('nav')) document.querySelectorAll('nav .nav-group').forEach(g=>g.open=false);
@@ -4031,12 +4564,97 @@ function commandMessageText(message){
     return content.map(block=>block&&block.text?block.text:(block&&block.type?`[${block.type}]`:''))
       .filter(Boolean).join('\n');
   }
-  return String(content==null?'':content);
+  const text=String(content==null?'':content);
+  const marker='\n\n<ATTACHED_DOCUMENT_CONTEXT>';
+  const markerIndex=text.indexOf(marker);
+  return markerIndex>=0?text.slice(0,markerIndex):text;
+}
+function commandConversationHtml(value){
+  const normalized=String(value==null?'':value).replace(/\r\n?/g,'\n').trim();
+  if(!normalized) return '';
+  const copyBlock=value=>'<div class="cc-copy-block"><div class="cc-copy-block-head"><span>'+
+    (APP_LANG==='ko'?'복사할 텍스트':'Copy-ready text')+
+    '</span><button type="button" data-cc-copy-block>'+(APP_LANG==='ko'?'복사':'Copy')+
+    '</button></div><pre><code>'+esc(String(value||'').trim())+'</code></pre></div>';
+  const prose=value=>String(value||'').split(/\n[ \t]*\n+/).map(paragraph=>{
+    const lines=paragraph.split('\n');
+    const inlineOnly=paragraph.trim().match(/^`([^`\n]+)`$/);
+    if(inlineOnly) return copyBlock(inlineOnly[1]);
+    const richParagraph=value=>{
+      const rich=conversationHtml(value)
+        .replace(/`([^`\n]+)`/g,'<code class="cc-inline-code">$1</code>');
+      return value.trim()?'<p>'+rich.replace(/\n/g,'<br>')+'</p>':'';
+    };
+    const copyLine=line=>line.trim().match(/^`([^`]+)`$/);
+    if(!lines.some(line=>/^\s*>/.test(line)||copyLine(line))) return richParagraph(paragraph);
+    let rendered='',plainLines=[],quoteLines=[];
+    const flushPlain=()=>{
+      if(plainLines.length){rendered+=richParagraph(plainLines.join('\n'));plainLines=[];}
+    };
+    const flushQuote=()=>{
+      if(!quoteLines.length) return;
+      const plain=quoteLines.join('\n').replace(/^\s+|\s+$/g,'');
+      if(plain) rendered+=copyBlock(plain);
+      quoteLines=[];
+    };
+    lines.forEach(line=>{
+      if(/^\s*>/.test(line)){
+        flushPlain(); quoteLines.push(line.replace(/^\s*>\s?/,''));
+      }else{
+        flushQuote();
+        const standalone=copyLine(line);
+        if(standalone){flushPlain();rendered+=copyBlock(standalone[1]);}
+        else plainLines.push(line);
+      }
+    });
+    flushPlain(); flushQuote();
+    return rendered;
+  }).join('');
+  const parts=normalized.split(/```(?:[A-Za-z0-9_+-]+)?[ \t]*\n([\s\S]*?)```/g);
+  return parts.map((part,index)=>index%2?copyBlock(part):prose(part)).join('');
+}
+function bindCommandCopyBlocks(log){
+  if(!log) return;
+  log.querySelectorAll('[data-cc-copy-block]').forEach(button=>{
+    button.onclick=()=>{
+      const block=button.closest('.cc-copy-block');
+      const value=block&&block.querySelector('code')?block.querySelector('code').textContent:'';
+      const done=()=>{
+        button.textContent=APP_LANG==='ko'?'복사됨':'Copied';
+        setTimeout(()=>{button.textContent=APP_LANG==='ko'?'복사':'Copy';},1200);
+      };
+      const legacyCopy=()=>{
+        const input=document.createElement('textarea');
+        input.value=value; input.setAttribute('readonly','');
+        input.style.position='fixed'; input.style.opacity='0'; input.style.pointerEvents='none';
+        document.body.appendChild(input); input.select();
+        let copied=false;
+        try{copied=document.execCommand('copy');}catch(error){}
+        input.remove();
+        if(copied) done();
+        return copied;
+      };
+      const failed=()=>{
+        if(legacyCopy()) return;
+        if(navigator.clipboard&&navigator.clipboard.writeText){
+          navigator.clipboard.writeText(value).then(done)
+            .catch(()=>toast(APP_LANG==='ko'?'텍스트를 복사할 수 없어요.':'Could not copy text.',true));
+        }else toast(APP_LANG==='ko'?'텍스트를 복사할 수 없어요.':'Could not copy text.',true);
+      };
+      if(api()&&pywebview.api.clipboard_write){
+        pywebview.api.clipboard_write(value).then(result=>{
+          if(result&&result.ok!==false) done(); else failed();
+        }).catch(failed);
+      }else failed();
+    };
+  });
 }
 function renderCommandAttachments(){
   const box=$('cc-attachments'); if(!box) return;
   box.innerHTML=commandAttachments.map((a,i)=>'<span class="cc-chip">'+
-    esc(a.name||a.kind||'attachment')+' <button data-cc-remove="'+i+'" title="Remove">×</button></span>').join('');
+    esc(a.name||a.kind||'attachment')+
+    (a.kind==='text'?'<small>'+(APP_LANG==='ko'?' · ✓ 텍스트 준비됨':' · ✓ text ready')+'</small>':'')+
+    ' <button data-cc-remove="'+i+'" title="Remove">×</button></span>').join('');
   box.querySelectorAll('[data-cc-remove]').forEach(btn=>{
     btn.onclick=()=>{
       commandAttachments.splice(parseInt(btn.dataset.ccRemove,10),1);
@@ -4049,6 +4667,7 @@ function renderCommandChat(state){
   const chats=(commandChatState&&commandChatState.chats)||[];
   const active=(commandChatState&&commandChatState.active_chat_id)||'';
   const messages=(commandChatState&&commandChatState.messages)||[];
+  const proposalsEnabled=commandChatState.proposals_enabled!==false;
   const list=$('cc-chat-list');
   if(list){
     list.innerHTML=chats.length?chats.map(chat=>
@@ -4063,59 +4682,163 @@ function renderCommandChat(state){
       };
     });
   }
+  const modeButton=$('cc-proposal-mode');
+  if(modeButton){
+    modeButton.classList.toggle('on',proposalsEnabled);
+    modeButton.textContent=proposalsEnabled?
+      (APP_LANG==='ko'?'✦ 제안 켜짐 · 성장 + 탐구':'✦ Proposals on · Growth + Investigations'):
+      (APP_LANG==='ko'?'제안 꺼짐':'Proposals off');
+    modeButton.title=proposalsEnabled?'Disable Growth and Investigation proposals for this chat':
+      'Enable Growth and Investigation proposals for this chat';
+  }
   const log=$('cc-log');
   if(log){
     log.innerHTML=messages.length?messages.map(m=>
       '<div class="cc-message '+(m.role==='user'?'user':'assistant')+'">'+
-      conversationHtml(commandMessageText(m))+'</div>').join(''):
+      commandConversationHtml(commandMessageText(m))+'</div>').join(''):
       '<div class="cc-empty">Start here. Ask a question, paste a thought, attach a file, or use <b>/file</b> to turn a brain dump into a project note.</div>';
+    bindCommandCopyBlocks(log);
     log.scrollTop=log.scrollHeight;
   }
   renderPendingProposal();
+  renderBrowserTasks((commandChatState&&commandChatState.browser_tasks)||[]);
 }
 function renderPendingProposal(){
   const box=$('cc-proposal'); if(!box) return;
-  const proposal=commandChatState&&commandChatState.pending_proposal;
-  if(!proposal){ box.style.display='none'; box.innerHTML=''; return; }
-  const label=proposal.label||'this';
-  box.style.display='flex';
-  box.innerHTML='<span class="cc-proposal-text">Waiting on your decision for “'+esc(label)+'”.</span>'+
-    '<button class="accent" id="cc-proposal-approve">Approve</button>';
-  const btn=$('cc-proposal-approve');
-  if(btn) btn.onclick=approvePendingProposal;
+  let proposals=(commandChatState&&commandChatState.pending_proposals)||[];
+  if(!proposals.length&&commandChatState&&commandChatState.pending_proposal){
+    proposals=[commandChatState.pending_proposal];
+  }
+  if(!proposals.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='grid';
+  box.innerHTML=proposals.map((proposal,index)=>{
+    const label=proposal.label||'this';
+    const waiting=APP_LANG==='ko'?'결정을 기다리는 중:':'Waiting on your decision for';
+    const approve=APP_LANG==='ko'?'승인':'Approve';
+    const dismiss=APP_LANG==='ko'?'닫기':'Dismiss';
+    return '<div class="cc-proposal-row"><span class="cc-proposal-text">'+waiting+' “'+esc(label)+'”.</span>'+
+      '<span class="actions"><button class="skip" data-cc-proposal-dismiss="'+index+'">'+dismiss+'</button>'+
+      '<button class="accent" data-cc-proposal-approve="'+index+'">'+approve+'</button></span></div>';
+  }).join('');
+  box.querySelectorAll('[data-cc-proposal-approve]').forEach(btn=>{
+    btn.onclick=()=>approvePendingProposal(parseInt(btn.dataset.ccProposalApprove,10));
+  });
+  box.querySelectorAll('[data-cc-proposal-dismiss]').forEach(btn=>{
+    btn.onclick=()=>dismissPendingProposal(parseInt(btn.dataset.ccProposalDismiss,10));
+  });
 }
-function approvePendingProposal(){
-  if(!api()||!pywebview.api.command_send) return;
-  const btn=$('cc-proposal-approve'); if(btn) btn.disabled=true;
-  // The button sends a real chat message under the hood (same fast-path
-  // Companion._proposal_approval_reply matches for a typed "yes"), so the
-  // word sent here is also what gets stored and shown as the user's own
-  // message — send/display it in the app's current language.
-  const approvalWord=APP_LANG==='ko'?'네':'approve';
-  renderCommandChat({ok:true,
-    active_chat_id:commandChatState&&commandChatState.active_chat_id,
-    chats:commandChatState&&commandChatState.chats,
-    pending_proposal:commandChatState&&commandChatState.pending_proposal,
-    messages:(commandChatState&&commandChatState.messages||[]).concat([
-      {role:'user',content:approvalWord}
-    ])});
-  $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…');
+function dismissPendingProposal(index){
+  if(!api()||!pywebview.api.command_dismiss_proposal){
+    toast('Restart Faerie Fire to dismiss proposals.',true); return;
+  }
+  const btn=document.querySelector('[data-cc-proposal-dismiss="'+index+'"]');
+  if(btn){btn.disabled=true;btn.textContent=APP_LANG==='ko'?'닫는 중…':'Dismissing…';}
+  pywebview.api.command_dismiss_proposal(index).then(r=>{
+    if(!r||r.ok===false){toast((r&&r.message)||'Could not dismiss that proposal.',true);return;}
+    renderCommandChat(r);
+  }).catch(error=>toast('Could not dismiss that proposal: '+error,true));
+}
+function approvePendingProposal(index){
+  if(!api()||!pywebview.api.command_approve_proposal){
+    toast('Restart Faerie Fire to load multi-proposal approvals.',true); return;
+  }
+  const btn=document.querySelector('[data-cc-proposal-approve="'+index+'"]');
+  if(btn){ btn.disabled=true; btn.textContent=APP_LANG==='ko'?'승인 중…':'Approving…'; }
+  $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'제안을 적용하는 중…':'Applying proposal…');
   setFaerieMascotState('thinking');
-  pywebview.api.command_send(approvalWord, []).then(r=>{
+  pywebview.api.command_approve_proposal(index).then(r=>{
     $('cc-status').textContent='';
     if(!r||r.ok===false){ setFaerieMascotState('error',1100); toast((r&&r.message)||'Command Center failed.',true); return; }
     setFaerieMascotState('reply',1200);
-    renderCommandChat({ok:true,active_chat_id:r.active_chat_id,chats:r.chats,
-      pending_proposal:r.pending_proposal,
-      messages:(commandChatState&&commandChatState.messages||[]).concat([
-        {role:'assistant',content:r.text||''}
-      ])});
-    loadCommandChat();
-    // Every turn can silently save a calibration fact or change the tree —
-    // keep the sidebar (Soul Calibration checklist, goals) live instead of
-    // only refreshing on page load / manual "Refresh dashboard".
+    renderCommandChat(r);
     loadSelf();
   }).catch(e=>{ $('cc-status').textContent=''; setFaerieMascotState('error',1100); toast('Command Center failed: '+e,true); });
+}
+function browserTaskStatus(task){
+  const ko=APP_LANG==='ko',status=task.status||'';
+  const labels=ko?{
+    awaiting_domain_approval:'이 웹사이트의 권한을 기다리고 있어요.',ready_to_open:'전용 브라우저를 열 준비가 됐어요.',
+    opening:'브라우저를 여는 중…',browser_ready:'브라우저에서 로그인하거나 양식을 연 뒤 필드를 스캔하세요.',
+    scanning:'보이는 양식 필드를 확인하고 있어요…',review_ready:'아래 변경 내용을 검토한 뒤 입력을 승인하세요.',
+    filling:'승인된 필드를 입력하고 있어요…',filled:'입력했어요. 브라우저에서 검토한 뒤 저장은 직접 해주세요.',
+    error:'이 작업에 도움이 필요해요.'}:{
+    awaiting_domain_approval:'This website is waiting for your permission.',ready_to_open:'The dedicated browser is ready to open.',
+    opening:'Opening the browser…',browser_ready:'Sign in or open the form in the browser, then scan its fields.',
+    scanning:'Reading the visible form controls…',review_ready:'Review these changes, then approve filling.',
+    filling:'Filling the approved fields…',filled:'Filled. Review the browser and save manually.',
+    error:'This task needs attention.'};
+  return labels[status]||status;
+}
+function browserTaskButtons(task){
+  const ko=APP_LANG==='ko',status=task.status||'',id=esc(task.id||''); let buttons=[];
+  if(status==='awaiting_domain_approval') buttons.push(['approve',ko?'웹사이트 허용 및 열기':'Allow website & open','accent']);
+  if(status==='ready_to_open') buttons.push(['open',ko?'브라우저 열기':'Open browser','accent']);
+  if(status==='browser_ready') buttons.push(['scan',ko?'양식 필드 스캔':'Scan form fields','accent']);
+  if(status==='review_ready'){
+    buttons.push(['fill',ko?'이 필드 입력':'Fill these fields','accent']);
+    buttons.push(['scan',ko?'다시 스캔':'Rescan','']);
+  }
+  if(status==='filled'){
+    buttons.push(['finish',ko?'검토 완료':'Done reviewing','accent']);
+    buttons.push(['scan',ko?'다시 스캔':'Rescan','']);
+  }
+  if(status==='error'){
+    buttons.push(['open',ko?'브라우저 다시 열기':'Reopen browser','']);
+    buttons.push(['scan',ko?'다시 스캔':'Scan again','accent']);
+  }
+  buttons.push(['cancel',ko?'취소':'Cancel','skip']);
+  return buttons.map(item=>'<button class="'+item[2]+'" data-browser-action="'+item[0]+'" data-browser-task="'+id+'">'+item[1]+'</button>').join('');
+}
+function renderBrowserTasks(tasks){
+  const box=$('cc-browser-tasks'); if(!box) return;
+  const rows=Array.isArray(tasks)?tasks:[];
+  if(!rows.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='grid';
+  box.innerHTML=rows.map(task=>{
+    const mappings=Array.isArray(task.mappings)?task.mappings:[];
+    const preview=mappings.length?'<div class="cc-browser-mappings">'+mappings.map(item=>
+      '<div class="cc-browser-mapping"><span>'+esc(item.label||'Field')+'</span><span>'+esc(String(item.value==null?'':item.value))+'</span></div>').join('')+'</div>':'';
+    const origin=task.pending_origin||task.origin||'';
+    return '<section class="cc-browser-task"><div class="cc-browser-head"><div><strong>✦ '+
+      esc(task.label||'Browser form')+'</strong><div class="cc-browser-origin">'+esc(origin)+'</div></div>'+
+      '<span class="cc-chip">'+esc(task.status||'')+'</span></div><div class="cc-browser-status">'+
+      esc(browserTaskStatus(task))+(task.error?'<br><span class="hint">'+esc(task.error)+'</span>':'')+'</div>'+preview+
+      '<div class="cc-browser-actions">'+browserTaskButtons(task)+'</div></section>';
+  }).join('');
+  box.querySelectorAll('[data-browser-action]').forEach(button=>{
+    button.onclick=()=>runBrowserTaskAction(button.dataset.browserAction,button.dataset.browserTask,button);
+  });
+}
+function updateBrowserTaskState(tasks){
+  commandChatState=commandChatState||{};
+  commandChatState.browser_tasks=Array.isArray(tasks)?tasks:[];
+  renderBrowserTasks(commandChatState.browser_tasks);
+}
+function runBrowserTaskAction(action,taskId,button){
+  if(!api()) return;
+  const calls={
+    approve:()=>pywebview.api.command_browser_approve_domain(taskId),
+    open:()=>pywebview.api.command_browser_open(taskId),
+    scan:()=>pywebview.api.command_browser_scan(taskId),
+    fill:()=>pywebview.api.command_browser_fill(taskId),
+    cancel:()=>pywebview.api.command_browser_cancel(taskId),
+    finish:()=>pywebview.api.command_browser_finish(taskId)
+  };
+  if(!calls[action]) return;
+  button.disabled=true;
+  const original=button.textContent;
+  button.innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'처리 중':'Working');
+  calls[action]().then(result=>{
+    if(!result||result.ok===false){button.disabled=false;button.textContent=original;toast((result&&result.message)||'Browser action failed.',true);return;}
+    updateBrowserTaskState(result.tasks||[]);
+    renderBrowserPermissions(result.permissions||[]);
+  }).catch(error=>{button.disabled=false;button.textContent=original;toast('Browser action failed: '+error,true);});
+}
+function loadBrowserTasks(){
+  if(!api()||!pywebview.api.command_browser_state) return;
+  pywebview.api.command_browser_state().then(result=>{
+    if(result&&result.ok!==false){updateBrowserTaskState(result.tasks||[]);renderBrowserPermissions(result.permissions||[]);}
+  }).catch(()=>{});
 }
 function loadCommandChat(){
   if(!api()||!pywebview.api.command_chat_state){
@@ -4156,13 +4879,16 @@ function sendCommandMessage(){
   const attachmentsForSend=commandAttachments;
   if(!text && !attachmentsForSend.length){ input.focus(); return; }
   // Show the user's message immediately — don't wait on the model round-trip.
-  input.value=''; autoGrow(input);
+  input.value=''; autoGrow(input); hideCommandMenu();
   commandAttachments=[];
   renderCommandAttachments();
   renderCommandChat({ok:true,
     active_chat_id:commandChatState&&commandChatState.active_chat_id,
+    proposals_enabled:commandChatState&&commandChatState.proposals_enabled,
     chats:commandChatState&&commandChatState.chats,
     pending_proposal:commandChatState&&commandChatState.pending_proposal,
+    pending_proposals:commandChatState&&commandChatState.pending_proposals,
+    browser_tasks:commandChatState&&commandChatState.browser_tasks,
     messages:(commandChatState&&commandChatState.messages||[]).concat([
       {role:'user',content:text}
     ])});
@@ -4175,7 +4901,10 @@ function sendCommandMessage(){
     if(!r||r.ok===false){ setFaerieMascotState('error',1100); toast((r&&r.message)||'Command Center failed.',true); return; }
     setFaerieMascotState('reply',1200);
     renderCommandChat({ok:true,active_chat_id:r.active_chat_id,chats:r.chats,
+      proposals_enabled:r.proposals_enabled,
       pending_proposal:r.pending_proposal,
+      pending_proposals:r.pending_proposals,
+      browser_tasks:r.browser_tasks,
       messages:(commandChatState&&commandChatState.messages||[]).concat([
         {role:'assistant',content:r.text||''}
       ])});
@@ -4199,11 +4928,128 @@ function attachCommandFile(){
     renderCommandAttachments();
   }).catch(e=>toast('Could not attach file: '+e,true));
 }
+const COMMAND_DROP_MAX_FILES=8;
+const COMMAND_DROP_MAX_BYTES=20_000_000;
+let commandDropInProgress=false;
+function commandDragHasFiles(event){
+  return Array.from(event&&event.dataTransfer&&event.dataTransfer.types||[]).includes('Files');
+}
+function commandDroppedFileData(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const value=String(reader.result||''),comma=value.indexOf(',');
+      resolve(comma>=0?value.slice(comma+1):value);
+    };
+    reader.onerror=()=>reject(reader.error||new Error('Could not read that file.'));
+    reader.readAsDataURL(file);
+  });
+}
+setInterval(()=>{
+  if(document.querySelector('#cc-browser-tasks .cc-browser-task')) loadBrowserTasks();
+},3000);
+async function attachDroppedCommandFiles(fileList){
+  if(commandDropInProgress) { toast('Please wait for the current files to finish attaching.',true); return; }
+  if(!api()||!pywebview.api.command_attach_dropped_file){
+    toast('Restart Faerie Fire to enable drag-and-drop attachments.',true); return;
+  }
+  const all=Array.from(fileList||[]),files=all.slice(0,COMMAND_DROP_MAX_FILES);
+  if(!files.length) return;
+  if(all.length>files.length) toast('Only the first '+COMMAND_DROP_MAX_FILES+' files will be attached.',true);
+  commandDropInProgress=true;
+  const send=$('cc-send'),wasDisabled=!!(send&&send.disabled),status=$('cc-status');
+  if(send) send.disabled=true;
+  if(status){status.dataset.dropStatus='1';status.innerHTML=thinkingDotsHtml(
+    (APP_LANG==='ko'?'파일 첨부 중 ':'Attaching files ')+files.length);}
+  let attached=0;
+  try{
+    for(const file of files){
+      const name=file.name||'dropped-file';
+      if(Number(file.size||0)>COMMAND_DROP_MAX_BYTES){
+        toast(name+' is too large to drop here (max 20MB).',true);continue;
+      }
+      try{
+        const data=await commandDroppedFileData(file);
+        const result=await bridgeTimeout(
+          pywebview.api.command_attach_dropped_file(name,file.type||'',data),
+          'Dropped attachment',30000);
+        if(!result||result.ok===false){toast((result&&result.message)||('Could not attach '+name+'.'),true);continue;}
+        commandAttachments.push(result.attachment);attached++;renderCommandAttachments();
+      }catch(error){toast('Could not attach '+name+': '+error,true);}
+    }
+  }finally{
+    commandDropInProgress=false;
+    if(send) send.disabled=wasDisabled;
+    if(status&&status.dataset.dropStatus==='1'){status.textContent='';delete status.dataset.dropStatus;}
+  }
+  if(attached){
+    toast(attached+' file'+(attached===1?'':'s')+' attached.');
+    const input=$('cc-input');if(input) input.focus();
+  }
+}
+const BASE_COMMAND_CENTER_COMMANDS=Object.freeze([
+  {value:'/browser ',en:'Open a permitted web form and prepare fields from supplied information.',ko:'허용된 웹 양식을 열고 제공한 정보로 필드를 준비합니다.'},
+  {value:'/file ',en:'Save this thought into the appropriate project note.',ko:'이 생각을 알맞은 프로젝트 노트에 저장합니다.'},
+  {value:'/undo ',en:'Undo a filing action by its entry ID.',ko:'항목 ID로 파일링 작업을 되돌립니다.'},
+  {value:'/projects',en:'List the project notes Faerie can file into.',ko:'페어리가 파일링할 수 있는 프로젝트 노트를 봅니다.'},
+  {value:'/skills',en:'List installed custom commands and tools.',ko:'설치된 사용자 명령과 도구를 봅니다.'},
+  {value:'/skills reload',en:'Reload custom skills after you edit them.',ko:'편집한 사용자 스킬을 다시 불러옵니다.'},
+  {value:'/teach ',en:'Draft a reusable command, workflow, or reference.',ko:'재사용할 명령, 작업 흐름, 참고 자료를 초안합니다.'},
+  {value:'/teach approve',en:'Install the skill draft currently awaiting approval.',ko:'현재 승인 대기 중인 스킬 초안을 설치합니다.'},
+  {value:'/teach cancel',en:'Discard the skill draft currently awaiting approval.',ko:'현재 승인 대기 중인 스킬 초안을 버립니다.'},
+  {value:'/recalibrate',en:'Reset Soul Calibration so you can answer it again.',ko:'Soul 조율을 초기화해 다시 답할 수 있게 합니다.'}
+]);
+let commandCenterCommands=BASE_COMMAND_CENTER_COMMANDS.slice();
+function loadCommandCenterCommands(){
+  if(!api()||!pywebview.api.command_commands) return;
+  pywebview.api.command_commands().then(result=>{
+    if(!result||result.ok===false||!Array.isArray(result.commands)) return;
+    const custom=result.commands.map(item=>({value:String(item.value||''),
+      en:String(item.description||'Custom Faerie command.'),
+      ko:String(item.description||'사용자 페어리 명령입니다.')}));
+    const byValue=new Map();
+    BASE_COMMAND_CENTER_COMMANDS.concat(custom).forEach(item=>{
+      const key=item.value.trim().toLowerCase(); if(key&&!byValue.has(key)) byValue.set(key,item);
+    });
+    commandCenterCommands=[...byValue.values()];
+    const input=$('cc-input'); if(input) renderCommandMenu(input.value);
+  }).catch(()=>{});
+}
+function hideCommandMenu(){
+  const menu=$('cc-command-menu'); if(menu){ menu.hidden=true; menu.innerHTML=''; }
+}
+function renderCommandMenu(value){
+  const menu=$('cc-command-menu'); if(!menu) return;
+  const raw=String(value||'');
+  if(!raw.startsWith('/')||raw.includes('\n')){ hideCommandMenu(); return; }
+  const query=raw.toLowerCase();
+  const matches=commandCenterCommands.filter(command=>command.value.toLowerCase().startsWith(query));
+  if(!matches.length){ hideCommandMenu(); return; }
+  menu.innerHTML=matches.map((command,index)=>
+    '<button type="button" class="cc-command-option'+(index===0?' active':'')+'" data-cc-command="'+esc(command.value)+'">'+
+    '<span class="cc-command-name">'+esc(command.value.trim())+'</span><span class="cc-command-desc">'+
+    esc(APP_LANG==='ko'?command.ko:command.en)+'</span></button>').join('');
+  menu.hidden=false;
+  menu.querySelectorAll('[data-cc-command]').forEach(button=>{
+    button.onclick=()=>{
+      const input=$('cc-input'); if(!input) return;
+      input.value=button.dataset.ccCommand||'';
+      autoGrow(input); hideCommandMenu(); input.focus();
+      input.setSelectionRange(input.value.length,input.value.length);
+    };
+  });
+}
 function bindCommandCenter(){
+  loadCommandCenterCommands();
   const input=$('cc-input');
   if(input && !input.dataset.bound){
     input.dataset.bound='1';
     bindShiftEnterSubmit(input, sendCommandMessage);
+    input.addEventListener('input',()=>renderCommandMenu(input.value));
+    input.addEventListener('keydown',e=>{
+      if(e.key==='Escape'&&!$('cc-command-menu').hidden){ e.preventDefault(); hideCommandMenu(); }
+    });
+    input.addEventListener('blur',()=>setTimeout(hideCommandMenu,160));
     input.addEventListener('paste',e=>{
       const items=[...(e.clipboardData&&e.clipboardData.items||[])];
       items.forEach(item=>{
@@ -4221,6 +5067,38 @@ function bindCommandCenter(){
           }
         }
       });
+    });
+  }
+  const chatPanel=document.querySelector('.command-chat-panel');
+  const chatMain=document.querySelector('.cc-chat-main');
+  if(chatPanel&&chatMain&&!chatPanel.dataset.dropBound){
+    chatPanel.dataset.dropBound='1';
+    let dragDepth=0;
+    const resetDropState=()=>{dragDepth=0;chatMain.classList.remove('file-drop-active');};
+    chatPanel.addEventListener('dragenter',event=>{
+      if(!commandDragHasFiles(event)) return;
+      event.preventDefault();dragDepth++;chatMain.classList.add('file-drop-active');
+    });
+    chatPanel.addEventListener('dragover',event=>{
+      if(!commandDragHasFiles(event)) return;
+      event.preventDefault();event.dataTransfer.dropEffect='copy';
+    });
+    chatPanel.addEventListener('dragleave',event=>{
+      if(!commandDragHasFiles(event)) return;
+      dragDepth=Math.max(0,dragDepth-1);if(!dragDepth) resetDropState();
+    });
+    chatPanel.addEventListener('drop',event=>{
+      if(!commandDragHasFiles(event)) return;
+      event.preventDefault();const files=event.dataTransfer.files;resetDropState();
+      attachDroppedCommandFiles(files);
+    });
+    window.addEventListener('dragend',resetDropState);
+  }
+  if(document.body&&!document.body.dataset.commandDropGuard){
+    document.body.dataset.commandDropGuard='1';
+    document.addEventListener('dragover',event=>{if(commandDragHasFiles(event)) event.preventDefault();});
+    document.addEventListener('drop',event=>{
+      if(commandDragHasFiles(event)&&!(chatPanel&&chatPanel.contains(event.target))) event.preventDefault();
     });
   }
   const portrait=$('self-portrait');
@@ -4619,8 +5497,7 @@ function selfLevelWidgetHtml(data){
 }
 
 function selfProfileWidgetsHtml(data){
-  const goals=data.goals||{}, tree=goals.tree||null, curiosities=(data.curiosity&&data.curiosity.curiosities)||[];
-  const states=selfStateAverages(curiosities);
+  const goals=data.goals||{}, tree=goals.tree||null;
   const tasks=selfSortedTasks(selfTasks(tree));
   const activeTasks=tasks.filter(t=>t.status!=='completed');
   const doneTasks=tasks.filter(t=>t.status==='completed');
@@ -4634,27 +5511,16 @@ function selfProfileWidgetsHtml(data){
     questions?questions+' question(s) waiting for you':'',
     blocked?blocked+' blocked node(s) need care':''
   ].filter(Boolean).concat(picks.slice(0,3).map(p=>p.title||('Leaf #'+p.id)));
-  const globalXp=Number(data.curiosity&&data.curiosity.global_xp)||0;
-  const level2=Math.max(1,Math.floor(globalXp/100)+1);
-  const nextXp2=100-(globalXp%100||0);
   const todayRows=quests.map(t=>'<label class="self-task '+(t.status==='completed'?'done':'')+'">'+
     '<input type="checkbox" class="self-task-toggle" data-id="'+t.id+'" '+(t.status==='completed'?'checked':'')+'>'+
     '<span>'+esc(t.title)+'</span></label>');
-  return '<div class="command-widget"><h3><img class="widget-icon" src="assets/icons/nav-growth.png" alt="">Current State</h3>'+
-      (states.length?states.slice(0,6).map(x=>selfMetricBar(x.label,x.value)).join(''):
-        '<div class="self-empty">No daily state check-ins from Growth/Investigations yet — answer a few reflection questions that track how you\'re feeling to populate this.</div>')+
-    '</div>'+
-    '<div class="command-widget"><h3>Active Threads</h3>'+
-      (threadItems.length?threadItems.map(x=>'<div class="thread-row"><i></i><span>'+esc(x)+'</span></div>').join(''):
-        '<div class="self-empty">Nothing pressing right now.</div>')+
-    '</div>'+
-    '<div class="command-widget"><h3><img class="widget-icon" src="assets/icons/milestone-star.png" alt="">Next Milestone</h3>'+
-      '<div class="milestone-level">Level '+level2+'</div>'+
-      '<div class="hint" style="margin:2px 0 0">Attain '+nextXp2+' XP to unlock new Growth &amp; Investigations.</div>'+
-    '</div>'+
-    '<div class="command-widget"><h3>@Today</h3>'+
+  return '<div class="command-widget command-widget-today"><h3>@Today</h3>'+
       (todayRows.length?selfCollapsibleList(todayRows,4):
         '<div class="self-empty">No active Leaves yet. Add a Leaf in Growth to populate today’s quest list.</div>')+
+    '</div>'+
+    '<div class="command-widget command-widget-threads"><h3>Active Threads</h3>'+
+      (threadItems.length?threadItems.map(x=>'<div class="thread-row"><i></i><span>'+esc(x)+'</span></div>').join(''):
+        '<div class="self-empty">Nothing pressing right now.</div>')+
     '</div>';
 }
 
@@ -4819,7 +5685,36 @@ if($('header-refresh-self')) $('header-refresh-self').onclick=()=>{
 $('self-database-rescue').onclick=runDatabaseRescue;
 if($('cc-send')) $('cc-send').onclick=sendCommandMessage;
 if($('cc-attach')) $('cc-attach').onclick=attachCommandFile;
-if($('cc-new-chat')) $('cc-new-chat').onclick=()=>pywebview.api.command_new_chat().then(renderCommandChat).catch(e=>toast('Could not create chat: '+e,true));
+function hideCcNewChatMenu(){ const menu=$('cc-new-chat-menu'); if(menu) menu.style.display='none'; }
+function showCcNewChatMenu(button){
+  const menu=$('cc-new-chat-menu'); if(!menu||!button) return;
+  const rect=button.getBoundingClientRect(); menu.style.display='block';
+  menu.style.left=Math.min(rect.left,Math.max(4,window.innerWidth-menu.offsetWidth-8))+'px';
+  menu.style.top=Math.min(rect.bottom+6,Math.max(4,window.innerHeight-menu.offsetHeight-8))+'px';
+}
+if($('cc-new-chat')) $('cc-new-chat').onclick=e=>{
+  e.stopPropagation(); const menu=$('cc-new-chat-menu');
+  if(menu&&menu.style.display==='block') hideCcNewChatMenu(); else showCcNewChatMenu(e.currentTarget);
+};
+const ccNewChatMenu=$('cc-new-chat-menu');
+if(ccNewChatMenu){
+  ccNewChatMenu.addEventListener('click',e=>e.stopPropagation());
+  ccNewChatMenu.querySelectorAll('[data-proposals]').forEach(button=>{
+    button.onclick=()=>{
+      const enabled=button.dataset.proposals==='true'; hideCcNewChatMenu();
+      pywebview.api.command_new_chat(enabled).then(renderCommandChat)
+        .catch(e=>toast('Could not create chat: '+e,true));
+    };
+  });
+}
+if($('cc-proposal-mode')) $('cc-proposal-mode').onclick=()=>{
+  const enabled=!(commandChatState&&commandChatState.proposals_enabled!==false);
+  if(!pywebview.api.command_set_chat_proposals_enabled){
+    toast('Restart Faerie Fire to change proposal mode.',true); return;
+  }
+  pywebview.api.command_set_chat_proposals_enabled(enabled).then(renderCommandChat)
+    .catch(e=>toast('Could not change proposal mode: '+e,true));
+};
 if($('cc-delete-chat')) $('cc-delete-chat').onclick=()=>{
   const active=commandChatState&&commandChatState.active_chat_id;
   if(!active) return;
@@ -4843,8 +5738,8 @@ function showCcCtxMenu(x,y,chatId){
   menu.style.left=Math.min(x,maxX)+'px';
   menu.style.top=Math.min(y,maxY)+'px';
 }
-document.addEventListener('click',()=>hideCcCtxMenu());
-document.addEventListener('scroll',()=>hideCcCtxMenu(),true);
+document.addEventListener('click',()=>{hideCcCtxMenu();hideCcNewChatMenu();});
+document.addEventListener('scroll',()=>{hideCcCtxMenu();hideCcNewChatMenu();},true);
 const ccCtxMenu=$('cc-chat-ctx-menu');
 if(ccCtxMenu){
   ccCtxMenu.addEventListener('click',e=>e.stopPropagation());
@@ -6172,7 +7067,8 @@ function leafWorkspaceProposalTypeLabel(type){
   const labels={agreement:['Proposed agreement','합의 제안'],plan:['Proposed plan','계획 제안'],
     revise_plan:['Plan revision','계획 수정 제안'],complete_item:['Complete plan item','계획 항목 완료 제안'],
     complete_leaf:['Complete this Leaf','Leaf 완료 제안'],reshape:['Return to shaping','방향 다시 잡기'],
-    reopen:['Reopen this Leaf','이 Leaf 다시 열기']};
+    reopen:['Reopen this Leaf','이 Leaf 다시 열기'],
+    handoff_recovery:['Prepare missing handoff','누락된 인계 준비']};
   const value=labels[String(type||'')]||['Proposed change','변경 제안'];
   return APP_LANG==='ko'?value[1]:value[0];
 }
@@ -6223,7 +7119,7 @@ function leafWorkspaceProposalEditorHtml(proposal,messageContent){
     (APP_LANG==='ko'?'확인된 결과 또는 해결 내용':'Confirmed result or resolution')+
     '<textarea data-proposal-field="resolution">'+esc(payload.resolution||'')+
     '</textarea></label></div>';
-  if(type==='complete_leaf'){
+  if(type==='complete_leaf'||type==='handoff_recovery'){
     const resultSuggestion=payload.result||payload.summary||payload.resolution||proposal.rationale||'';
     const lessonSuggestion=payload.lesson||payload.learning||payload.takeaway||messageContent||proposal.rationale||'';
     const helpful=payload.helpfulness==null?'':String(payload.helpfulness);
@@ -6237,6 +7133,8 @@ function leafWorkspaceProposalEditorHtml(proposal,messageContent){
       '<label>'+(APP_LANG==='ko'?'남아 있는 질문':'Unresolved question')+'<textarea data-proposal-handoff-field="unresolved_questions">'+esc(handoff.unresolved_questions||'')+'</textarea></label>'+
       '<label>'+(APP_LANG==='ko'?'다음 Leaf가 시작할 지점':'Suggested starting point')+'<textarea data-proposal-handoff-field="suggested_start">'+esc(handoff.suggested_start||'')+'</textarea></label></div>':
       '<div class="leaf-workspace-handoff-editor"><p class="hint">'+(APP_LANG==='ko'?'이 Project에 다음 활성 Leaf가 없어요. 완료 후 Project를 검토해 다음 단계를 제안해요.':'There is no next active Leaf in this Project. After completion, Faerie will review the Project for the next step.')+'</p></div>';
+    if(type==='handoff_recovery') return '<div class="leaf-workspace-proposal-editor"><p class="hint">'+
+      (APP_LANG==='ko'?'완료된 결과에서 만든 복구 초안입니다. 다음 Leaf에는 승인된 요약만 전달되고 원문 대화는 전달되지 않아요.':'This recovery draft was built from the completed result. Only the approved summary—not the raw conversation—will reach the next Leaf.')+'</p>'+handoffEditor+'</div>';
     return '<div class="leaf-workspace-proposal-editor"><p class="hint">'+
       (APP_LANG==='ko'?'페어리가 대화에서 초안을 만들었어요. 승인하기 전에 자유롭게 수정하세요.':'Faerie drafted these from the conversation. Adjust them freely before approval.')+'</p>'+
       '<label>'+(APP_LANG==='ko'?'제안된 확인 결과':'Suggested confirmed result')+'<textarea data-proposal-field="result">'+
@@ -6263,13 +7161,14 @@ function leafWorkspaceProposalHtml(proposal,messageContent){
   const type=String(proposal.type||''), editor=leafWorkspaceProposalEditorHtml(proposal,messageContent);
   const approve=(type==='plan'||type==='revise_plan')
     ?(APP_LANG==='ko'?'계획 적용':'Apply plan'):(type==='complete_leaf'&&proposal.payload&&proposal.payload.handoff_target
-      ?(APP_LANG==='ko'?'완료하고 인계':'Complete & hand off'):(APP_LANG==='ko'?'승인':'Approve'));
+      ?(APP_LANG==='ko'?'완료하고 인계':'Complete & hand off'):(type==='handoff_recovery'
+        ?(APP_LANG==='ko'?'인계 승인':'Approve handoff'):(APP_LANG==='ko'?'승인':'Approve')));
   return '<section class="leaf-workspace-proposal" data-proposal-id="'+esc(proposal.id)+'"><div class="leaf-workspace-proposal-head"><b>'+
     esc(leafWorkspaceProposalTypeLabel(type))+'</b><span class="leaf-workspace-proposal-status">'+esc(leafWorkspaceProposalStatusLabel(status))+'</span></div>'+
     (proposal.rationale?'<p class="hint">'+esc(proposal.rationale)+'</p>':'')+
     '<div class="leaf-workspace-proposal-summary">'+esc(leafWorkspaceProposalSummary(proposal))+'</div>'+editor+
     (pending?'<div class="actions">'+(editor?'<button type="button" data-proposal-edit>'+
-      (type==='complete_leaf'?(APP_LANG==='ko'?'편집 닫기':'Hide edit'):(APP_LANG==='ko'?'편집':'Edit'))+'</button>':'')+
+      ((type==='complete_leaf'||type==='handoff_recovery')?(APP_LANG==='ko'?'편집 닫기':'Hide edit'):(APP_LANG==='ko'?'편집':'Edit'))+'</button>':'')+
       '<button type="button" data-proposal-decision="keep_discussing">'+(APP_LANG==='ko'?'계속 논의':'Keep discussing')+'</button>'+
       '<button type="button" class="accent" data-proposal-decision="approve">'+approve+'</button></div>':'')+'</section>';
 }
@@ -6339,6 +7238,20 @@ function leafWorkspaceIncomingHtml(handoffs){
   }).join('');
 }
 
+function leafWorkspaceRecoveryHtml(view){
+  const recovery=view&&view.handoff_recovery||{}, target=recovery.target||{};
+  const pending=(view&&view.messages||[]).some(message=>leafWorkspaceMessageProposals(message,message.payload||{})
+    .some(proposal=>proposal.type==='handoff_recovery'&&['pending','proposed','open'].includes(String(proposal.status||'pending').toLowerCase())));
+  if(!recovery.eligible||pending) return '';
+  const title=APP_LANG==='ko'?'이전 작업을 다음 Leaf로 이어 주기':'Continue this work into the next Leaf';
+  const copy=APP_LANG==='ko'
+    ?'이 Leaf는 인계 기능이 추가되기 전에 완료되었어요. 저장된 결과를 바탕으로 “'+esc(target.title||'다음 Leaf')+'”에 보낼 편집 가능한 요약을 준비할 수 있어요. 원문 대화는 전달되지 않아요.'
+    :'This Leaf was completed before handoffs were available. Faerie can prepare an editable summary for “'+esc(target.title||'the next Leaf')+'” from its saved result. The raw conversation will not transfer.';
+  return '<section class="leaf-workspace-card leaf-workspace-handoff"><div class="leaf-workspace-card-title">'+title+'</div><p>'+copy+'</p><div class="actions"><button type="button" class="accent" id="leaf-workspace-prepare-handoff" title="'+
+    (APP_LANG==='ko'?'승인 전에 검토할 수 있는 안전한 인계 초안을 만듭니다.':'Create a safe handoff draft that you can review before anything transfers.')+'">'+
+    (APP_LANG==='ko'?'누락된 인계 준비':'Prepare Missing Handoff')+'</button></div></section>';
+}
+
 function renderLeafCoach(){
   if(!leafCoachView) return;
   const view=leafCoachView;
@@ -6351,6 +7264,7 @@ function renderLeafCoach(){
   if(copy) copy.textContent=APP_LANG==='ko'
     ?'이 Leaf, 상위 경로, 연결된 탐구, 이 작업 공간의 대화와 이 Leaf로 명시적으로 승인된 인계만 볼 수 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요. 다른 Leaf의 원문 대화도 전달되지 않아요.'
     :'It can see this Leaf, its parent path, linked Investigations, this workspace conversation, and handoffs explicitly approved for this Leaf. It cannot see other Branches, global memory, the main chat, or screen activity, and it never receives another Leaf’s raw conversation.';
+  $('leaf-workspace-recovery').innerHTML=leafWorkspaceRecoveryHtml(view);
   $('leaf-workspace-incoming').innerHTML=leafWorkspaceIncomingHtml(view.incoming_handoffs);
   $('leaf-workspace-agreement').innerHTML=leafWorkspaceAgreementHtml(view.agreement);
   $('leaf-workspace-plan').innerHTML=leafWorkspacePlanHtml(view.plan);
@@ -6358,9 +7272,34 @@ function renderLeafCoach(){
   $('leaf-workspace-legacy').innerHTML=leafWorkspaceLegacyHtml(view.legacy_messages);
   $('leaf-coach-input').placeholder=leafWorkspacePlaceholder(view.completed?'completed':view.phase);
   leafWorkspaceBindActions();
+  const prepareHandoff=$('leaf-workspace-prepare-handoff');
+  if(prepareHandoff) prepareHandoff.onclick=prepareMissingLeafHandoff;
   leafWorkspaceSetEnabled(true);
   const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
   if(scroller) scroller.scrollTop=scroller.scrollHeight;
+}
+
+function prepareMissingLeafHandoff(){
+  if(!leafCoachView||!api()||!pywebview.api.goal_leaf_workspace_prepare_handoff) return;
+  const leafId=leafCoachView.leaf_id, nonce=leafWorkspaceRequestNonce;
+  const button=$('leaf-workspace-prepare-handoff');
+  if(button) button.disabled=true;
+  leafWorkspaceSetLoading(true,APP_LANG==='ko'?'저장된 결과에서 인계 초안을 만드는 중…':'Preparing a handoff from the saved result…');
+  const run=()=>pywebview.api.goal_leaf_workspace_prepare_handoff(leafId).then(result=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    const view=leafWorkspaceResult(result);
+    if(!view) throw new Error(APP_LANG==='ko'?'인계 초안이 없어요.':'The handoff draft is missing.');
+    leafCoachView=view;
+    leafWorkspaceSetLoading(false);
+    leafCoachSetError('');
+    renderLeafCoach();
+  }).catch(error=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    leafWorkspaceSetLoading(false);
+    if(button) button.disabled=false;
+    leafCoachSetError(String(error.message||error),run);
+  });
+  run();
 }
 
 function leafWorkspaceFindMessage(messageId){
@@ -6496,7 +7435,7 @@ function leafWorkspaceEditedPayload(card,proposal){
   return payload;
 }
 
-function refreshAfterLeafCompletion(leafId,parentId,handoffLeafId){
+function refreshAfterLeafCompletion(leafId,parentId,handoffLeafId,recoveredHandoff){
   if(!api()) return Promise.resolve();
   if($('goal-status')) $('goal-status').innerHTML='<span class="spin"></span> '+
     (APP_LANG==='ko'?'다음 Leaf를 찾는 중…':'Finding the next Leaf…');
@@ -6521,9 +7460,9 @@ function refreshAfterLeafCompletion(leafId,parentId,handoffLeafId){
     loadGoalAIOverview();
     if(next){
       loadGoalAgent(next.id);
-      toast(APP_LANG==='ko'
-        ?'Leaf를 완료했어요. 다음 활성 Leaf를 열었습니다.'
-        :'Leaf completed. The next active Leaf is open.');
+      toast(recoveredHandoff
+        ?(APP_LANG==='ko'?'인계를 승인했어요. 다음 Leaf가 이어서 작업할 준비가 되었습니다.':'Handoff approved. The next Leaf is ready to continue the work.')
+        :(APP_LANG==='ko'?'Leaf를 완료했어요. 다음 활성 Leaf를 열었습니다.':'Leaf completed. The next active Leaf is open.'));
       return;
     }
     loadGoalAgent(reviewScope.id);
@@ -6544,6 +7483,7 @@ function decideLeafWorkspaceProposal(proposalId,decision,card){
   if(!proposal) return;
   const leafId=leafCoachView.leaf_id, nonce=leafWorkspaceRequestNonce;
   const completing=decision==='approve'&&proposal.type==='complete_leaf';
+  const recovering=decision==='approve'&&proposal.type==='handoff_recovery';
   const parent=goalState&&goalState.tree?goalFindParent(goalState.tree,parseInt(leafId,10)):null;
   const editedPayload=leafWorkspaceEditedPayload(card,proposal);
   card.querySelectorAll('button,textarea,select,input').forEach(control=>control.disabled=true);
@@ -6556,14 +7496,16 @@ function decideLeafWorkspaceProposal(proposalId,decision,card){
     clearLeafWorkspaceProposalDraft(proposalId);
     leafWorkspaceSetLoading(false);
     leafCoachSetError('');
-    if(completing){
+    if(completing||recovering){
       const warning=view.learning_sync_warning;
       closeLeafCoach();
       if(warning) toast(APP_LANG==='ko'
         ?'Leaf는 완료되었고 결과도 안전하게 저장되었지만 일부 추가 학습 동기화는 완료되지 않았어요.'
         :'The Leaf and its outcome were saved, but part of the additional learning sync did not finish.',true);
       refreshAfterLeafCompletion(leafId,parent&&parent.id,
-        view.completion_handoff&&view.completion_handoff.destination_leaf_id);
+        (view.completion_handoff||view.recovery_handoff)&&
+          (view.completion_handoff||view.recovery_handoff).destination_leaf_id,
+        recovering);
       return;
     }
     renderLeafCoach();
@@ -7326,11 +8268,13 @@ function renderGoalFocusPanel(){
     :node.status==='archived'
     ?goalLifecycleActionHtml(node)
     :actionHtml+goalLifecycleActionHtml(node);
-  panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
+  const focusIdentity=node.type==='umbrella'?'':('<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
     '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
     '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+
-    esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>'+
-    (node.type==='task'?(workspaceHtml||(recap+relevance+goalLeafStepsHtml(node))):(recap+relevance+progressHtml))+
+    esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>');
+  panel.innerHTML=focusIdentity+
+    (node.type==='task'?(workspaceHtml||(recap+relevance+goalLeafStepsHtml(node))):
+      ((node.type==='umbrella'?'':recap+relevance)+progressHtml))+
     (mode==='rollup'?'<div class="cur-sub">Where each area stands</div>'+goalRollupHtml(node):'')+
     (mode==='brainstorm'
       ? '<div class="goal-next-action"><b>Brainstorm unlocked</b><span>'+(APP_LANG==='ko'?'활성 Leaf가 없어요. 아래 질문에 답한 다음 무언가 추가를 눌러 다음 실험을 설명하세요.':'No active Leaves here. Answer the rethink questions below, then use Add something to describe the next experiment.')+'</span></div>'
@@ -7892,7 +8836,7 @@ function bindConstellationPanZoom(box,treeId,map){
     if(e.target.closest&&e.target.closest('.constellation-node')) return;
     const rect=svg.getBoundingClientRect();
     drag={x:e.clientX,y:e.clientY,panX:state.panX,panY:state.panY,rect};
-    box.classList.add('dragging');
+    box.classList.add('dragging','panning-all');
     box.setPointerCapture&&box.setPointerCapture(e.pointerId);
   };
   box.onpointermove=e=>{
@@ -7931,7 +8875,7 @@ function bindConstellationPanZoom(box,treeId,map){
       nodeDrag=null;
     }
     drag=null;
-    box.classList.remove('dragging');
+    box.classList.remove('dragging','panning-all');
     try{ box.releasePointerCapture&&box.releasePointerCapture(e.pointerId); }catch(_){}
     if(mapWasPanned) saveGoalMapPositions(true);
   };
@@ -8824,11 +9768,42 @@ $('planner-abandon').onclick=()=>{
 let currentCuriosityState=null, activeCuriosityId=null;
 let pendingCuriosityLoopId=null;
 let pendingCuriosityClassifyId=null;
+let curiosityLoadPromise=null;
+let curiosityLoadSequence=0;
 const CUR_BOARD_LIMIT=12;
 let curBoardFilter='all';
 let curBoardQuery='';
 let curBoardExpanded=false;
+let curiosityMode='overview';
+let curiosityDetailsMode='understanding';
+let curiositySession=null;
+let curNewInvestigationOpen=false;
+const curExplorationSuggestions=new Map();
+const curQueuedIds=new Set((function(){
+  try{return JSON.parse(localStorage.getItem('ffCuriosityQueue')||'[]').map(Number);}
+  catch(e){return [];}
+})());
 const classifyingCuriosityIds=new Set();
+function curT(en,ko){ return APP_LANG==='ko'?ko:en; }
+function saveCuriosityQueue(){
+  try{localStorage.setItem('ffCuriosityQueue',JSON.stringify(Array.from(curQueuedIds)));}catch(e){}
+}
+function saveCuriositySession(){
+  try{
+    if(curiositySession) localStorage.setItem('ffCuriositySession',JSON.stringify(curiositySession));
+    else localStorage.removeItem('ffCuriositySession');
+  }catch(e){}
+}
+function loadSavedCuriositySession(){
+  if(curiositySession) return curiositySession;
+  try{
+    const saved=JSON.parse(localStorage.getItem('ffCuriositySession')||'null');
+    if(saved&&Number.isFinite(Number(saved.curiosityId))&&Array.isArray(saved.queue)){
+      curiositySession={...saved,curiosityId:Number(saved.curiosityId),queue:saved.queue.map(Number)};
+    }
+  }catch(e){}
+  return curiositySession;
+}
 // Collapsible panels re-render (and reset) on every reload/tab switch; keep
 // the user's open/closed choice per panel in localStorage.
 const detailsOpenPref=(function(){
@@ -8842,7 +9817,8 @@ function hydrateDurableUiPreferences(){
     const preferences=result.preferences||{};
     if(Object.prototype.hasOwnProperty.call(preferences,'mascot_skin')){
       const saved=preferences.mascot_skin;
-      if(['classic','dark','cat','knight','meditate'].includes(saved)) faerieMascotSkin=saved;
+      if(['classic','cat','knight','meditate'].includes(saved)) faerieMascotSkin=saved;
+      else { faerieMascotSkin='classic'; persistDurableUiPreference('mascot_skin','classic'); }
     }else{
       persistDurableUiPreference('mascot_skin',faerieMascotSkin);
     }
@@ -9142,6 +10118,7 @@ function showCuriosityLoop(curiosityId){
 function continueCuriosity(curiosityId, button, options={}){
   if(!api()) return;
   const auto=!!options.auto;
+  const enterSession=!!options.session;
   curLoopDismissed.delete(curiosityId);
   saveCurLoopDismissed();
   curLoopOutcomes.delete(curiosityId);
@@ -9150,7 +10127,8 @@ function continueCuriosity(curiosityId, button, options={}){
     .find(c=>c.id===curiosityId);
   const hadOpenItems=!!(selected && ((selected.open_questions||[]).length ||
     (selected.open_suggestions||[]).length));
-  if(button) button.disabled=true;
+  const originalButtonHtml=button?button.innerHTML:'';
+  if(button){button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Preparing questions','질문 준비 중'));}
   if(auto){
     pendingCuriosityLoopId=curiosityId;
     const selected=(currentCuriosityState&&currentCuriosityState.curiosities||[])
@@ -9159,11 +10137,22 @@ function continueCuriosity(curiosityId, button, options={}){
   }
   autoDatabaseRescue('before curiosity generate').then(()=>
     pywebview.api.curiosity_generate_more(curiosityId)).then(r=>{
-    if(button) button.disabled=false;
+    if(button){button.disabled=false;button.innerHTML=originalButtonHtml;}
     if(auto) pendingCuriosityLoopId=null;
     if(!r || r.ok===false){ toast((r&&r.message)||'Could not continue.', true); return; }
     if(r.created){
       toast(r.created+' new follow-up(s) ready.');
+      if(enterSession){
+        activeCuriosityId=Number(curiosityId);
+        curiositySession=null;saveCuriositySession();
+        return loadCuriosity().then(()=>{
+          const fresh=(currentCuriosityState&&currentCuriosityState.curiosities||[])
+            .find(c=>Number(c.id)===Number(curiosityId));
+          if(fresh&&(fresh.open_questions||[]).length){
+            curiosityMode='session';makeCuriositySession(fresh);renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+          }
+        });
+      }
       loadCuriosity();
       return;
     }
@@ -9177,7 +10166,7 @@ function continueCuriosity(curiosityId, button, options={}){
     toast('No new follow-ups yet — answer or dismiss the existing open items first.');
     loadCuriosity();
   }).catch(e=>{
-    if(button) button.disabled=false;
+    if(button){button.disabled=false;button.innerHTML=originalButtonHtml;}
     if(auto) pendingCuriosityLoopId=null;
     toast('Could not continue investigation: '+e, true);
   });
@@ -9285,8 +10274,7 @@ function bindCurQuestion(cur, item){
     const thumb=el.querySelector('.cur-thumb.active');
     if(!api()) return;
     const btn=el.querySelector('.cur-answer-save'); btn.disabled=true;
-    autoDatabaseRescue('before curiosity answer').then(()=>
-      pywebview.api.curiosity_answer(item.id, text, rating?parseFloat(rating.value):null,
+    withDbRetry(()=>pywebview.api.curiosity_answer(item.id, text, rating?parseFloat(rating.value):null,
         null, thumb?thumb.dataset.fit:null)).then(r=>{
       btn.disabled=false;
       if(r && r.ok===false){ toast(r.message||'Could not save answer.', true); return; }
@@ -9303,13 +10291,21 @@ function bindCurQuestion(cur, item){
 function curSuggestionHtml(item){
   const conf = item.confidence!=null ? ' <span class="cur-conf" title="Faerie\'s own estimate that this suggestion fits what you\'ve confirmed so far">'+
     pct(item.confidence)+' confidence this suggestion fits you</span>' : '';
+  const relevanceLabels={still_relevant:curT('Still relevant','여전히 관련 있음'),
+    needs_revision:curT('Worth revising','수정할 가치 있음'),
+    possibly_stale:curT('May no longer fit','더 이상 맞지 않을 수 있음')};
+  const relevance=item.relevance_status?'<div class="cur-proposal-relevance '+esc(item.relevance_status)+'"><b>'+
+    esc(relevanceLabels[item.relevance_status]||item.relevance_status)+'</b>'+
+    (item.relevance_confidence!=null?' · '+Math.round(Number(item.relevance_confidence)*100)+'%':'')+
+    (item.relevance_rationale?'<p class="hint">'+esc(item.relevance_rationale)+'</p>':'')+
+    (item.relevance_revised_text?'<div class="cur-sub">'+curT('Suggested revision','수정 제안')+'</div><p>'+esc(item.relevance_revised_text)+'</p>':'')+'</div>':'';
   const outcome=item.metric_event_type==='practice'&&item.metric_dimension_slug ?
     '<label class="metric-field" style="margin:8px 0"><span>Measured outcome (optional)</span>'+
     '<select class="cur-outcome"><option value="">XP only</option>'+
     Array.from({length:21},(_,i)=>i/2).map(v=>'<option value="'+v+'">'+v.toFixed(1)+'</option>').join('')+
     '</select><span class="metric-rating">No mastery change</span></label>':'';
   return '<div class="cur-item" id="cur-item-'+item.id+'">' +
-    '<div class="cur-text">'+esc(item.text)+conf+'</div>' +
+    '<div class="cur-text">'+esc(item.text)+conf+'</div>' + relevance+
     outcome+
     '<div class="actions">' +
       '<button class="accent cur-implement">Review implementation…</button>' +
@@ -9544,6 +10540,21 @@ function curDocumentContextHtml(cur){
   return '<div class="cur-sub">Investigation document context</div>'+
     '<p class="hint">These documents inform this Investigation and its future questions.</p>'+
     contextDocumentHtml(cur.context_attachments||[],'curiosity',cur.id,false);
+}
+
+function curApprovedContextHtml(cur){
+  const items=cur.investigation_contexts||[];
+  if(!items.length) return '';
+  return '<details class="metric-panel"><summary class="metric-summary">'+
+    '<span class="metric-summary-title">'+curT('Approved conversation context','승인된 대화 맥락')+'</span>'+
+    '<span class="metric-summary-stats"><span>'+items.length+'</span></span></summary><div class="metric-body">'+
+    '<p class="hint">'+curT(
+      'Context you approved from chat. Faerie uses it for future Investigation questions and syntheses.',
+      '채팅에서 승인한 맥락이에요. 페어리는 이후 탐구 질문과 종합에 이 내용을 사용해요.')+'</p>'+
+    items.map(item=>'<div class="resolved-row"><div class="rr-body"><div class="rr-q">'+
+      esc(item.note||'')+'</div><div class="hint">'+esc(String(item.created_at||'').slice(0,10))+
+      '</div></div><span class="rr-tag">'+esc(item.source_kind||'chat')+'</span></div>').join('')+
+    '</div></details>';
 }
 
 function curInteractionPreferencesHtml(cur){
@@ -9793,6 +10804,7 @@ function curCardHtml(cur){
     '</div>' +
     '<div class="cur-directive">'+esc(cur.directive)+'</div>' +
     curDocumentContextHtml(cur) +
+    curApprovedContextHtml(cur) +
     curAttachmentHtml(cur) +
     curInteractionPreferencesHtml(cur) +
     curThreadsHtml(cur) +
@@ -9814,9 +10826,212 @@ function curCardHtml(cur){
   '</div>';
 }
 
+function curProposalReviewHtml(cur){
+  const suggestions=(cur.open_suggestions||[]).filter(item=>!item.thread_id);
+  return '<div class="card cur-proposal-review" id="cur-proposals-'+cur.id+'">'+
+    '<div class="cur-eyebrow">✦ '+curT('Proposals from this Investigation','이 탐구의 제안')+'</div>'+
+    '<p class="hint">'+curT('These are revisable next steps grounded in what Faerie has learned. Review, redirect, try, or dismiss them—you remain in control.','페어리가 배운 내용을 바탕으로 만든 수정 가능한 다음 단계예요. 검토하거나 방향을 바꾸고, 시도하거나 숨길 수 있어요. 결정권은 항상 사용자에게 있어요.')+'</p>'+
+    (suggestions.length?suggestions.map(curSuggestionHtml).join(''):
+      '<p>'+curT('No proposal is waiting right now. Faerie will prepare one at the next useful checkpoint.','현재 기다리는 제안이 없어요. 다음으로 유용한 확인 지점에서 페어리가 제안을 준비할 거예요.')+'</p>')+'</div>';
+}
+
+function bindCuriosityProposals(cur){
+  const card=$('cur-proposals-'+cur.id); if(!card) return;
+  (cur.open_suggestions||[]).filter(item=>!item.thread_id).forEach(bindCurSuggestion);
+}
+
+function curParagraphsHtml(text,className=''){
+  const clean=String(text||'').replace(/\s+/g,' ').trim();
+  if(!clean) return '';
+  if(clean.length<520) return '<p class="'+esc(className)+'">'+esc(clean)+'</p>';
+  const sentences=clean.match(/[^.!?]+[.!?]+(?:[\"”’']+)?|[^.!?]+$/g)||[clean];
+  const target=clean.length/2;
+  let length=0,split=1;
+  for(let i=0;i<sentences.length-1;i++){
+    length+=sentences[i].length;
+    if(length>=target){split=i+1;break;}
+  }
+  if(sentences.length<2){
+    const words=clean.split(' '),mid=Math.ceil(words.length/2);
+    return [words.slice(0,mid).join(' '),words.slice(mid).join(' ')].filter(Boolean)
+      .map(value=>'<p class="'+esc(className)+'">'+esc(value)+'</p>').join('');
+  }
+  return [sentences.slice(0,split).join(' ').trim(),sentences.slice(split).join(' ').trim()]
+    .filter(Boolean).map(value=>'<p class="'+esc(className)+'">'+esc(value)+'</p>').join('');
+}
+
+function curUnderstandingReviewHtml(cur){
+  const history=cur.syntheses||[];
+  const draft=history.find(item=>item.status==='draft');
+  const approved=history.filter(item=>item.status==='approved');
+  const current=approved[0]||null, previous=approved[1]||null;
+  const synthesisSections=p=>
+    curSynthesisList(curT('What Faerie knows so far','페어리가 지금까지 아는 내용'),p.supporting_evidence)+
+    curSynthesisList(curT('Exceptions or counterevidence','예외 또는 반대 근거'),p.counterevidence)+
+    curSynthesisList(curT('What remains unknown','아직 모르는 내용'),p.unknowns)+
+    curSynthesisList(curT('Possible next experiments','가능한 다음 실험'),p.experiments);
+  if(draft){
+    const p=draft.payload||{};
+    return '<div class="card cur-understanding-card" id="cur-understanding-'+cur.id+'">'+
+      '<div class="cur-eyebrow">✦ '+curT('Current working interpretation · draft v'+draft.version,'현재 작업 해석 · 초안 v'+draft.version)+'</div>'+
+      '<p class="hint">'+curT('This synthesis is waiting for your review. Edit it if needed, then approve or reject it.','이 종합 내용은 검토를 기다리고 있어요. 필요하면 수정한 뒤 승인하거나 거절하세요.')+'</p>'+
+      '<div class="cur-synthesis" data-synthesis-id="'+draft.id+'">'+
+        (current?'<div class="cur-sub">'+curT('Previous approved interpretation','이전 승인된 해석')+'</div>'+curParagraphsHtml((current.payload||{}).interpretation,'hint cur-prior-interpretation'):'')+
+        '<label>'+curT('Current working interpretation','현재 작업 해석')+'<textarea class="synthesis-interpretation" rows="8">'+esc(p.interpretation||'')+'</textarea></label>'+
+        '<p class="hint">'+curT('Confidence','신뢰도')+' '+Math.round(Number(p.confidence||0)*100)+'%'+
+          (p.changed_since_previous?' · '+esc(p.changed_since_previous):'')+'</p>'+
+        synthesisSections(p)+
+        '<div class="actions"><button class="synthesis-reject skip">'+curT('Reject','거절')+'</button>'+
+        '<button class="synthesis-approve accent">'+curT('Approve edited interpretation','수정한 해석 승인')+'</button></div></div></div>';
+  }
+  if(current){
+    const p=current.payload||{};
+    const older=approved.slice(2);
+    const historyHtml=older.length?'<details class="cur-synthesis-history"><summary class="cur-sub">'+
+      curT('Earlier interpretations ('+older.length+')','이전 해석 ('+older.length+')')+'</summary>'+older.map(item=>{
+        const ip=item.payload||{};
+        return '<div class="hint">v'+item.version+' · '+Math.round(Number(ip.confidence||0)*100)+'%</div>'+curParagraphsHtml(ip.interpretation,'hint');
+      }).join('')+'</details>':'';
+    return '<div class="card cur-understanding-card" id="cur-understanding-'+cur.id+'">'+
+      '<div class="cur-eyebrow">✦ '+curT('Current working interpretation · v'+current.version,'현재 작업 해석 · v'+current.version)+'</div>'+
+      '<div class="metric-summary-stats" style="margin:8px 0 14px"><span>'+Math.round(Number(p.confidence||0)*100)+'% '+curT('confidence','신뢰도')+'</span></div>'+
+      '<div class="cur-sub">'+curT('Updated interpretation','업데이트된 해석')+'</div>'+
+      curParagraphsHtml(p.interpretation,'cur-understanding-text')+
+      (previous?'<div class="cur-sub">'+curT('Previous interpretation','이전 해석')+'</div>'+curParagraphsHtml((previous.payload||{}).interpretation,'hint cur-prior-interpretation'):'')+
+      (p.changed_since_previous?'<div class="cur-sub">'+curT('What changed','변경된 내용')+'</div><p class="hint">'+esc(p.changed_since_previous)+'</p>':'')+
+      synthesisSections(p)+historyHtml+'</div>';
+  }
+  return '<div class="card cur-understanding-card" id="cur-understanding-'+cur.id+'">'+
+    '<div class="cur-eyebrow">✦ '+curT('Current working interpretation','현재 작업 해석')+'</div>'+
+    '<p>'+curT('Run a synthesis for this Investigation to update what Faerie currently understands.','이 탐구에 대해 종합을 실행하여 페어리가 현재 이해하는 내용을 업데이트하세요.')+'</p>'+
+    '<button type="button" class="synthesis-create accent">'+curT('Run synthesis','종합 실행')+'</button></div>';
+}
+
+function bindCuriosityUnderstanding(cur){
+  const card=$('cur-understanding-'+cur.id); if(!card) return;
+  const create=card.querySelector('.synthesis-create');
+  if(create) create.onclick=()=>synthesizeCuriosity(cur,create);
+  const synthesisBox=card.querySelector('.cur-synthesis[data-synthesis-id]');
+  if(!synthesisBox) return;
+  const id=parseInt(synthesisBox.dataset.synthesisId,10);
+  const draft=(cur.syntheses||[]).find(item=>item.id===id);
+  synthesisBox.querySelector('.synthesis-reject').onclick=()=>{
+    pywebview.api.curiosity_synthesis_decide(id,'reject',null,'Rejected during review').then(r=>{
+      if(!r||r.ok===false){toast((r&&r.message)||'Could not reject synthesis.',true);return;}
+      toast(curT('Synthesis rejected.','종합을 거절했어요.'));loadCuriosity();
+    }).catch(e=>toast('Could not reject synthesis: '+e,true));
+  };
+  synthesisBox.querySelector('.synthesis-approve').onclick=()=>{
+    const interpretation=synthesisBox.querySelector('.synthesis-interpretation').value.trim();
+    if(!interpretation){toast(curT('Write or keep an interpretation before approving.','승인하기 전에 해석을 작성하거나 기존 내용을 유지하세요.'),true);return;}
+    const payload={...(draft&&draft.payload||{}),interpretation};
+    pywebview.api.curiosity_synthesis_decide(id,'approve',payload,'Approved after review').then(r=>{
+      if(!r||r.ok===false){toast((r&&r.message)||'Could not approve synthesis.',true);return;}
+      toast(curT('Working interpretation approved.','작업 해석을 승인했어요.'));loadCuriosity();
+    }).catch(e=>toast('Could not approve synthesis: '+e,true));
+  };
+}
+
+function curPlacementReviewHtml(cur){
+  return '<div class="card cur-placement-review" id="cur-placement-'+cur.id+'">'+
+    '<div class="cur-eyebrow">⌖ '+curT('Growth placement','성장 트리 배치')+'</div>'+
+    '<p class="hint">'+curT('Review where this Investigation belongs. Nothing changes until you approve it.','이 탐구가 어디에 속하는지 검토하세요. 승인하기 전에는 아무것도 바뀌지 않아요.')+'</p>'+
+    (curClassificationHtml(cur)||'<p>'+curT('No placement proposal is waiting.','기다리는 배치 제안이 없어요.')+'</p>')+'</div>';
+}
+
+function bindCuriosityPlacement(cur){
+  const card=$('cur-placement-'+cur.id); if(!card) return;
+  card.querySelectorAll('.cur-classification').forEach(box=>{
+    const id=parseInt(box.dataset.cpid,10);
+    box.querySelector('.cur-class-dismiss').onclick=()=>curClassificationAction(id,'dismiss');
+    box.querySelector('.cur-class-approve').onclick=()=>curClassificationAction(id,'approve');
+  });
+}
+
+function createCuriosityThread(cur,direction,button){
+  if(button){button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Creating exploration thread','탐색 갈래 만드는 중'));}
+  pywebview.api.curiosity_thread_create(cur.id,direction.title.trim(),direction.directive.trim()).then(r=>{
+    if(!r||r.ok===false){
+      if(button){button.disabled=false;button.textContent=curT('Use this direction','이 방향 사용');}
+      toast((r&&r.message)||'Could not create the Exploration Thread.',true);return;
+    }
+    curExplorationSuggestions.delete(Number(cur.id));
+    toast(curT('Exploration Thread created.','탐색 갈래를 만들었어요.'));loadCuriosity();
+  }).catch(e=>{
+    if(button) button.disabled=false;
+    toast('Could not create the Exploration Thread: '+e,true);
+  });
+}
+
+function curExplorationSuggestionsHtml(cur){
+  const directions=curExplorationSuggestions.get(Number(cur.id));
+  if(!directions) return '';
+  if(!directions.length) return '<div class="cur-help-example cur-exploration-options">'+
+    curT('Faerie did not find a distinct new direction yet. Add more evidence or try again later.','페어리가 아직 뚜렷한 새 방향을 찾지 못했어요. 근거를 더 추가하거나 나중에 다시 시도하세요.')+'</div>';
+  return '<div class="cur-help-example cur-exploration-options"><div class="cur-eyebrow">✦ '+
+    curT('Suggested exploration directions','추천 탐색 방향')+'</div>'+directions.map((direction,index)=>
+      '<article class="agent-proposal"><b>'+esc(direction.title)+'</b><p>'+esc(direction.directive)+'</p>'+
+      (direction.rationale?'<p class="hint">'+esc(direction.rationale)+'</p>':'')+
+      '<button type="button" class="accent" data-cur-thread-option="'+index+'">'+curT('Use this direction','이 방향 사용')+'</button></article>').join('')+'</div>';
+}
+
+function addCuriosityThread(cur,button){
+  if(button){button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Finding three directions','세 가지 방향 찾는 중'));}
+  pywebview.api.curiosity_thread_suggest(cur.id).then(r=>{
+    if(!r||r.ok===false) throw new Error((r&&r.message)||'Could not suggest exploration directions.');
+    curExplorationSuggestions.set(Number(cur.id),(r.directions||[]).slice(0,3));
+    renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+  }).catch(e=>{
+    if(button){button.disabled=false;button.textContent=curT('Add exploration thread','탐색 갈래 추가');}
+    toast('Could not suggest exploration directions: '+e,true);
+  });
+}
+
+function synthesizeCuriosity(cur,button){
+  if(!api()) return;
+  if(button){button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Synthesizing','종합 중'));}
+  autoDatabaseRescue('before investigation synthesis').then(()=>pywebview.api.curiosity_synthesize(cur.id)).then(r=>{
+    if(!r||r.ok===false){
+      if(button){button.disabled=false;button.textContent=curT('Synthesize what Faerie understands','페어리가 이해한 내용 종합하기');}
+      toast((r&&r.message)||'Could not synthesize.',true);return;
+    }
+    toast(curT('Working interpretation drafted for review.','검토할 해석 초안을 만들었어요.'));loadCuriosity();
+  }).catch(e=>{
+    if(button) button.disabled=false;
+    toast('Could not synthesize: '+e,true);
+  });
+}
+
+function bindCuriosityThreadControls(card,cur){
+  const addThread=card.querySelector('.cur-thread-add');
+  if(addThread) addThread.onclick=()=>addCuriosityThread(cur,addThread);
+  card.querySelectorAll('.cur-thread').forEach(box=>{
+    const threadId=parseInt(box.dataset.threadId,10);
+    const generate=box.querySelector('.cur-thread-generate');
+    if(generate) generate.onclick=()=>{
+      generate.disabled=true;generate.innerHTML=thinkingDotsHtml(curT('Preparing next questions','다음 질문 준비 중'));
+      pywebview.api.curiosity_thread_generate(threadId).then(r=>{
+        if(!r||r.ok===false){generate.disabled=false;toast((r&&r.message)||'Could not continue this thread.',true);return;}
+        toast(curT('The thread has its next questions.','갈래의 다음 질문을 준비했어요.'));loadCuriosity();
+      }).catch(e=>{generate.disabled=false;toast('Could not continue this thread: '+e,true);});
+    };
+    box.querySelectorAll('.cur-thread-status').forEach(button=>button.onclick=()=>{
+      const status=button.dataset.status;
+      if(status==='archived'&&!confirm(curT('Archive this thread? Its answers and history will not be deleted.','이 갈래를 보관할까요? 답변과 기록은 삭제되지 않아요.'))) return;
+      button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Updating','업데이트 중'));
+      pywebview.api.curiosity_thread_status(threadId,status).then(r=>{
+        if(!r||r.ok===false){button.disabled=false;toast((r&&r.message)||'Could not update this thread.',true);return;}
+        loadCuriosity();
+      }).catch(e=>{button.disabled=false;toast('Could not update this thread: '+e,true);});
+    });
+  });
+}
+
 function bindCurCard(cur){
   const card=$('cur-'+cur.id);
+  if(!card) return;
   bindContextDocuments(card,'curiosity',cur.id,null,loadCuriosity);
+  bindCuriosityThreadControls(card,cur);
   card.querySelector('.cur-rename').onclick=()=>renameCuriosity(cur.id,cur.label);
   card.querySelector('.cur-chat').onclick=()=>{
     switchView('self');
@@ -9849,15 +11064,7 @@ function bindCurCard(cur){
     box.querySelector('.cur-class-approve').onclick=()=>curClassificationAction(id,'approve');
   });
   const synthesisCreate=card.querySelector('.synthesis-create');
-  if(synthesisCreate) synthesisCreate.onclick=()=>{
-    if(!api()) return;
-    synthesisCreate.disabled=true; synthesisCreate.textContent='Synthesizing…';
-    autoDatabaseRescue('before investigation synthesis').then(()=>
-      pywebview.api.curiosity_synthesize(cur.id)).then(r=>{
-      if(!r||r.ok===false){synthesisCreate.disabled=false;toast((r&&r.message)||'Could not synthesize.',true);return;}
-      toast('Working interpretation drafted for review.');loadCuriosity();
-    }).catch(e=>{synthesisCreate.disabled=false;toast('Could not synthesize: '+e,true);});
-  };
+  if(synthesisCreate) synthesisCreate.onclick=()=>synthesizeCuriosity(cur,synthesisCreate);
   const synthesisBox=card.querySelector('.cur-synthesis[data-synthesis-id]');
   if(synthesisBox){
     const id=parseInt(synthesisBox.dataset.synthesisId,10);
@@ -10156,24 +11363,12 @@ function curCandidatePanelHtml(state){
     (cards||'<p class="hint">'+(APP_LANG==='ko'
       ?'대기 중인 제안이 없어요. 새로 제안할 게 없다고 페어리가 판단했을 수도 있어요.'
       :'No suggestion is waiting. Faerie may also decide that nothing new is worthwhile.')+'</p>')+
-    (candidates.length<2&&active<5?'<button class="candidate-suggest">Look for worthwhile Investigations</button>':
-      active>=5?'<p class="hint">Your active Investigation capacity is full. Pause or archive one before adding another.</p>':'')+
+    (active>=5?'<p class="hint">Your active Investigation capacity is full. Pause or archive one before adding another.</p>':'')+
     '</div></details>';
 }
 
 function bindCandidatePanel(state){
   const panel=$('cur-candidates'); if(!panel) return;
-  const suggest=panel.querySelector('.candidate-suggest');
-  if(suggest) suggest.onclick=()=>{
-    suggest.disabled=true;suggest.textContent='Looking for useful uncertainty…';
-    pywebview.api.curiosity_candidate_suggest().then(r=>{
-      if(!r||r.ok===false){suggest.disabled=false;toast((r&&r.message)||'Could not suggest Investigations.',true);return;}
-      toast(Number(r.routed||0)>0
-        ?(APP_LANG==='ko'?'관련된 새 단서를 기존 탐구에 추가했어요.':'A related new lead was added to an existing Investigation instead of creating a duplicate.')
-        :(r.candidates||[]).length?'Investigation suggestions are ready.':'Nothing new is useful enough to suggest right now.');
-      loadCuriosity();
-    }).catch(e=>{suggest.disabled=false;toast('Could not suggest Investigations: '+e,true);});
-  };
   panel.querySelectorAll('.investigation-candidate').forEach(box=>{
     const id=parseInt(box.dataset.candidateId,10);
     const candidate=(state.investigation_candidates||[]).find(item=>item.id===id);
@@ -10263,38 +11458,6 @@ function bindRelatedInvestigationPanel(groups){
       if(!found.length) toast(APP_LANG==='ko'?'통합할 만큼 비슷한 진행 중 탐구가 없어요.':'No open Investigations are similar enough to combine.');
     }).catch(e=>{panel.innerHTML=curRelatedPanelHtml([],false);bindRelatedInvestigationPanel([]);toast('Could not compare Investigations: '+e,true);});
   };
-  const addThread=card.querySelector('.cur-thread-add');
-  if(addThread) addThread.onclick=()=>{
-    const title=prompt(APP_LANG==='ko'?'이 탐색 갈래의 짧은 이름은 무엇인가요?':'What is the short name of this exploration direction?','');
-    if(!title||!title.trim()) return;
-    const directive=prompt(APP_LANG==='ko'?'이 갈래가 알아내야 할 질문은 무엇인가요?':'What question should this thread investigate?','');
-    if(!directive||!directive.trim()) return;
-    addThread.disabled=true;addThread.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'갈래를 만들고 첫 질문을 준비 중…':'Creating the thread and preparing its first questions…');
-    pywebview.api.curiosity_thread_create(cur.id,title.trim(),directive.trim()).then(r=>{
-      if(!r||r.ok===false){addThread.disabled=false;addThread.textContent=APP_LANG==='ko'?'탐색 갈래 추가':'Add Exploration Thread';toast((r&&r.message)||'Could not create the Exploration Thread.',true);return;}
-      toast(APP_LANG==='ko'?'탐색 갈래를 만들었어요.':'Exploration Thread created.');loadCuriosity();
-    }).catch(e=>{addThread.disabled=false;toast('Could not create the Exploration Thread: '+e,true);});
-  };
-  card.querySelectorAll('.cur-thread').forEach(box=>{
-    const threadId=parseInt(box.dataset.threadId,10);
-    const generate=box.querySelector('.cur-thread-generate');
-    if(generate) generate.onclick=()=>{
-      generate.disabled=true;generate.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'이 갈래의 다음 질문 준비 중…':'Preparing the next questions for this thread…');
-      pywebview.api.curiosity_thread_generate(threadId).then(r=>{
-        if(!r||r.ok===false){generate.disabled=false;toast((r&&r.message)||'Could not continue this thread.',true);return;}
-        toast(APP_LANG==='ko'?'갈래의 다음 질문을 준비했어요.':'The thread has its next questions.');loadCuriosity();
-      }).catch(e=>{generate.disabled=false;toast('Could not continue this thread: '+e,true);});
-    };
-    box.querySelectorAll('.cur-thread-status').forEach(button=>button.onclick=()=>{
-      const status=button.dataset.status;
-      if(status==='archived'&&!confirm(APP_LANG==='ko'?'이 갈래를 보관할까요? 답변과 기록은 삭제되지 않아요.':'Archive this thread? Its answers and history will not be deleted.')) return;
-      button.disabled=true;button.innerHTML='<span class="spin"></span> '+(APP_LANG==='ko'?'업데이트 중…':'Updating…');
-      pywebview.api.curiosity_thread_status(threadId,status).then(r=>{
-        if(!r||r.ok===false){button.disabled=false;toast((r&&r.message)||'Could not update this thread.',true);return;}
-        loadCuriosity();
-      }).catch(e=>{button.disabled=false;toast('Could not update this thread: '+e,true);});
-    });
-  });
   panel.querySelectorAll('.cur-related-group').forEach(box=>{
     const group=(groups||[])[parseInt(box.dataset.groupIndex,10)];
     const button=box.querySelector('.cur-merge');
@@ -10318,28 +11481,484 @@ function bindRelatedInvestigationPanel(groups){
   });
 }
 
+let curLastBatchSummary=null;
+
+function curLatestApprovedInterpretation(cur){
+  return (cur.syntheses||[]).find(item=>item.status==='approved')||null;
+}
+
+function curRecommendedStep(cur){
+  const questions=(cur.open_questions||[]).length;
+  const suggestions=(cur.open_suggestions||[]).length;
+  const draft=(cur.syntheses||[]).find(item=>item.status==='draft');
+  const placements=(cur.classification_proposals||[]).length;
+  if(cur.status==='paused') return {
+    kind:'resume', icon:'▶', title:curT('This investigation is paused.','이 탐구는 일시정지되어 있어요.'),
+    body:curT('Resume it when you want Faerie to prepare and surface new questions again.','페어리가 새 질문을 준비하고 다시 보여주도록 탐구를 재개하세요.'),
+    primary:curT('Resume investigation','탐구 재개')
+  };
+  if(draft) return {
+    kind:'review', icon:'✦', title:curT('A working interpretation is ready.','현재 해석을 검토할 준비가 됐어요.'),
+    body:curT('Review what Faerie thinks the evidence supports, including uncertainty and open questions.','근거가 무엇을 뒷받침하는지, 불확실성과 열린 질문을 함께 검토하세요.'),
+    primary:curT('Review current understanding','현재 이해 검토')
+  };
+  // A concrete proposal must stay visible even while the Investigation keeps
+  // asking useful questions. Otherwise an intentionally open-ended inquiry can
+  // hide the proactive checkpoint behind an endless question stream.
+  if(suggestions) return {
+    kind:'proposals', icon:'✦', title:curT('Suggestions are ready for your judgment.','검토할 제안이 준비됐어요.'),
+    body:curT('Review the proposed experiments and keep only what feels useful.','제안된 실험을 검토하고 유용한 것만 남기세요.'),
+    primary:curT('Review proposals','제안 검토')
+  };
+  if(questions) return {
+    kind:'continue', icon:'✦', title:curT(questions+' follow-up question'+(questions===1?' is':'s are')+' ready.',questions+'개의 후속 질문이 준비됐어요.'),
+    body:curT('Continue in a calm, focused session. Your place and any unfinished answer are saved automatically.','차분한 집중 세션에서 계속하세요. 현재 위치와 작성 중인 답변은 자동 저장돼요.'),
+    primary:curT('Continue investigation','탐구 계속하기')
+  };
+  if(placements) return {
+    kind:'details', icon:'⌖', title:curT('A Growth placement is ready to review.','성장 트리 배치를 검토할 준비가 됐어요.'),
+    body:curT('Faerie has a proposal for where this investigation belongs. Nothing changes until you approve it.','페어리가 이 탐구가 속할 위치를 제안했어요. 승인하기 전에는 아무것도 바뀌지 않아요.'),
+    primary:curT('Review placement','배치 검토')
+  };
+  return {
+    kind:'continue', icon:'✦', title:curT('Your question batch is complete.','질문 묶음을 완료했어요.'),
+    body:curT('Continue when you want Faerie to use what it has learned and prepare the next useful follow-ups.','페어리가 지금까지 배운 내용을 바탕으로 다음 유용한 후속 질문을 준비하도록 계속하세요.'),
+    primary:curT('Continue investigation','탐구 계속하기')
+  };
+}
+
+function curOverviewHtml(cur){
+  if(!cur) return '<div class="empty" style="padding:70px 20px">'+
+    curT('No open investigations yet. Start one from a pattern, question, or tension you keep noticing.',
+      '아직 열린 탐구가 없어요. 계속 눈에 띄는 패턴, 질문, 긴장에서 새 탐구를 시작하세요.')+'</div>';
+  const step=curRecommendedStep(cur);
+  const answered=(cur.resolved||[]).filter(x=>x.kind==='question'&&x.status==='answered').length;
+  const totalQuestions=answered+(cur.open_questions||[]).length;
+  const syntheses=(cur.syntheses||[]).filter(x=>x.status==='approved').length;
+  const placement=curPlacementText(cur);
+  const latest=curLatestApprovedInterpretation(cur);
+  const synthesisDraft=(cur.syntheses||[]).find(item=>item.status==='draft');
+  const threadCount=(cur.threads||[]).filter(item=>item.status!=='archived').length;
+  const threadSummary=curT(
+    threadCount?threadCount+' active exploration thread'+(threadCount===1?'':'s')+' currently feed this investigation.':'Create a focused path for a related angle without starting a duplicate investigation.',
+    threadCount?threadCount+'개의 활성 탐색 갈래가 이 탐구에 연결되어 있어요.':'중복 탐구를 만들지 않고 관련 관점을 집중적으로 탐색하세요.'
+  );
+  const synthesisSummary=curT(
+    synthesisDraft?'A draft interpretation is ready for your review.':'Turn the answers and evidence gathered so far into a revisable interpretation.',
+    synthesisDraft?'해석 초안을 검토할 준비가 됐어요.':'지금까지 모은 답변과 근거를 수정 가능한 해석으로 종합하세요.'
+  );
+  const synthesisLabel=synthesisDraft?curT('Review synthesis','종합 검토'):
+    curT('Synthesize what Faerie understands','페어리가 이해한 내용 종합하기');
+  const updated=String(cur.updated_at||cur.created_at||'').slice(0,10)||curT('Recently','최근');
+  const batch=(curLastBatchSummary&&curLastBatchSummary.curiosityId===cur.id)?
+    '<div class="cur-status-pill good">✓ '+curT('New evidence added · '+curLastBatchSummary.answered+' answered',
+      '새 근거 추가됨 · '+curLastBatchSummary.answered+'개 답변')+'</div>':'';
+  return '<div class="cur-workspace-head"><div class="cur-workspace-copy">'+
+      '<div class="cur-eyebrow">✦ '+curT('Active investigation','활성 탐구')+'</div>'+
+      '<h1 class="cur-workspace-title">'+esc(cur.label)+'</h1>'+
+      '<p class="cur-workspace-directive">'+esc(cur.directive||curT('This investigation is still forming.','이 탐구는 아직 형성 중이에요.'))+'</p>'+
+    '</div><div class="cur-workspace-actions">'+
+      '<button type="button" data-cur-details title="'+curT('Review what Faerie currently understands.','페어리가 현재 이해하는 내용을 검토합니다.')+'">•••</button>'+
+    '</div></div>'+batch+
+    '<div class="cur-status-row">'+
+      '<span class="cur-status-pill '+((cur.open_questions||[]).length?'good':'')+'">'+
+        ((cur.open_questions||[]).length?'● ':'✓ ')+((cur.open_questions||[]).length?
+          curT((cur.open_questions||[]).length+' ready to answer',(cur.open_questions||[]).length+'개 답변 대기'):
+          curT('Question batch complete','질문 묶음 완료'))+'</span>'+
+      '<span class="cur-status-pill">'+esc(placement==='Unplaced'?curT('Soul-level · Unplaced','소울 단계 · 미배치'):placement)+'</span>'+
+      '<span class="cur-status-pill">'+esc(cur.status||'active')+'</span>'+
+    '</div>'+
+    '<div class="cur-overview-grid"><article class="cur-next-card"><div class="cur-next-icon">'+step.icon+'</div>'+
+      '<div class="cur-next-body"><div class="cur-eyebrow" style="margin:0">'+curT('Recommended next step','추천 다음 단계')+'</div>'+
+      '<h3>'+esc(step.title)+'</h3><p>'+esc(step.body)+'</p><div class="cur-next-actions">'+
+      '<button type="button" class="accent" data-cur-primary="'+step.kind+'">'+esc(step.primary)+' →</button>'+
+      (step.kind==='proposals'?'<button type="button" data-cur-answer-more>'+curT('Answer more questions','질문 더 답하기')+' →</button>':'')+
+      '<button type="button" data-cur-review>'+curT('Review current understanding','현재 이해 검토')+'</button>'+
+      '</div></div></article>'+
+    '<aside class="cur-glance-card"><div class="cur-eyebrow">✦ '+curT('Investigation at a glance','탐구 한눈에 보기')+'</div>'+
+      '<div class="cur-glance-list">'+
+        '<div class="cur-glance-row"><span>'+curT('Questions asked','질문 수')+'</span><b>'+totalQuestions+'</b></div>'+
+        '<div class="cur-glance-row"><span>'+curT('Interpretations synthesized','종합된 해석')+'</span><b>'+syntheses+'</b></div>'+
+        '<div class="cur-glance-row"><span>'+curT('Last updated','마지막 업데이트')+'</span><b>'+esc(updated)+'</b></div>'+
+        '<div class="cur-glance-row"><span>'+curT('Status','상태')+'</span><b>● '+esc(cur.status||'active')+'</b></div>'+
+        (latest?'<div class="cur-glance-row"><span>'+curT('Confidence','신뢰도')+'</span><b>'+
+          Math.round(Number((latest.payload||{}).confidence||0)*100)+'%</b></div>':'')+
+      '</div><button type="button" data-cur-details style="margin-top:auto">'+curT('Review current understanding','현재 이해 검토')+' →</button>'+
+    '</aside></div>'+
+    '<div class="cur-overview-tools"><article class="cur-overview-tool"><div class="cur-overview-tool-copy"><div class="cur-overview-tool-title"><h4>'+curT('Explore another direction','다른 방향 탐색')+'</h4>'+
+      '<button type="button" class="cur-inline-help" data-cur-explore-help aria-expanded="false" title="'+curT('Show an example of an Exploration Thread','탐색 갈래 예시 보기')+'">?</button></div><p>'+threadSummary+'</p></div>'+
+      '<button type="button" data-cur-explore>'+curT('Add exploration thread','탐색 갈래 추가')+'</button></article>'+
+      '<div class="cur-help-example" data-cur-explore-example hidden>'+curT(
+        'Example: inside “Agency as a Physiological Signal,” you could create a “Work situations” thread and a separate “Competitive games” thread. Each follows its own questions, while both contribute evidence to the same larger investigation.',
+        '예시: “주체성의 생리적 신호” 탐구 안에 “직장 상황” 갈래와 “경쟁 게임” 갈래를 따로 만들 수 있어요. 각 갈래는 서로 다른 질문을 따라가지만, 둘 다 같은 큰 탐구의 근거로 합쳐집니다.')+'</div>'+curExplorationSuggestionsHtml(cur)+
+    '<article class="cur-overview-tool"><div><h4>'+curT('What Faerie understands','페어리가 이해한 내용')+'</h4><p>'+synthesisSummary+'</p></div>'+
+      '<button type="button" data-cur-synthesize>'+synthesisLabel+'</button></article></div>';
+}
+
+function curShelfCardHtml(cur,selected){
+  const open=curOpenCount(cur);
+  const queued=curQueuedIds.has(Number(cur.id));
+  const isSelected=!!(selected&&Number(selected.id)===Number(cur.id));
+  return '<article class="cur-shelf-card '+(isSelected?'open':'')+'" data-curiosity-id="'+cur.id+
+    '" tabindex="0" role="button" aria-current="'+(isSelected?'true':'false')+'" aria-label="'+
+    esc(curT('Open investigation: ','탐구 열기: ')+cur.label)+'">'+
+    '<div class="cur-shelf-card-top"><div class="cur-shelf-mark">✦</div><div style="min-width:0;flex:1">'+
+      '<h4>'+esc(cur.label)+'</h4><div class="cur-shelf-meta">'+
+      (open?curT(open+' waiting on you',open+'개 응답 대기'):curT('Nothing waiting','대기 중인 항목 없음'))+
+      ' · '+esc(curPlacementText(cur)==='Unplaced'?curT('Unplaced','미배치'):curPlacementText(cur))+'</div></div></div>'+
+    '<div class="actions"><button type="button" class="cur-queue '+(queued?'on':'')+'" title="'+curT(
+      'Add this Investigation to one continuous question session. After its questions, Faerie moves to the next queued Investigation.',
+      '이 탐구를 연속 질문 세션에 추가합니다. 이 탐구의 질문이 끝나면 다음 대기 탐구로 이동해요.')+'">'+
+      (queued?'✓ ':'')+(queued?curT('Queued','대기 중'):curT('Queue questions','질문 대기열'))+'</button>'+
+      '<button type="button" class="cur-shelf-more" title="'+curT('Open this investigation and show its full controls.','이 탐구를 열고 전체 제어를 표시합니다.')+'">•••</button></div></article>';
+}
+
+function curShelfHtml(curiosities,filtered,selected){
+  const counts=curBoardCounts(curiosities);
+  const filters=[['all',curT('All','전체'),counts.all],['waiting',curT('Needs answer','답변 필요'),counts.waiting],
+    ['classify',curT('Ready to classify','분류 준비'),counts.classify],['active',curT('Active','활성'),counts.active]];
+  return '<div class="cur-shelf-head"><div class="cur-shelf-title"><h3>▤ '+curT('Investigation shelf','탐구 선반')+'</h3>'+
+      '<span>'+curT('Switch investigations without losing your place.','현재 위치를 잃지 않고 탐구를 전환하세요.')+'</span></div>'+
+      '<button type="button" id="cur-new-toggle">＋ '+curT('New investigation','새 탐구')+'</button></div>'+
+    '<div id="cur-new-form" class="cur-new-form" '+(curNewInvestigationOpen?'':'hidden')+'>'+
+      '<input id="cur-new-title" placeholder="'+curT('Optional title','선택적 제목')+'">'+
+      '<textarea id="cur-new-directive" rows="2" placeholder="'+curT('What have you been noticing? Describe the pattern, question, or tension…','무엇이 계속 눈에 띄나요? 패턴, 질문 또는 긴장을 설명하세요…')+'"></textarea>'+
+      '<button type="button" class="accent" id="cur-new-create">'+curT('Start investigation','탐구 시작')+'</button></div>'+
+    '<div class="cur-shelf-tools"><input id="cur-board-search" class="cur-board-search" type="text" placeholder="'+
+      curT('Search investigations…','탐구 검색…')+'" value="'+esc(curBoardQuery)+'"><div class="cur-board-filters">'+
+      filters.map(([key,label,count])=>'<button type="button" class="cur-filter '+(curBoardFilter===key?'active':'')+'" data-cur-filter="'+key+'">'+esc(label)+' · '+count+'</button>').join('')+
+      '</div></div>'+
+    (filtered.length?'<div class="cur-shelf-grid">'+filtered.map(c=>curShelfCardHtml(c,selected)).join('')+'</div>':
+      '<div class="empty" style="padding:24px">'+curT('No investigations match this view.','이 보기에 맞는 탐구가 없어요.')+'</div>')+
+    '<p class="hint" style="margin:10px 2px 0">✦ '+curT('Progress and unfinished answers are saved automatically.','진행 상황과 작성 중인 답변은 자동 저장돼요.')+'</p>';
+}
+
+function openCuriosityDetails(focusSelector,mode='understanding'){
+  curiosityDetailsMode=mode;
+  curiosityMode='overview';
+  if(currentCuriosityState) renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+  const overview=$('cur-overview'),session=$('cur-session');
+  if(overview) overview.hidden=false;
+  if(session) session.hidden=true;
+  const details=$('cur-management');
+  if(details){
+    details.hidden=false;
+    details.classList.add('open');
+    const backdrop=$('cur-management-backdrop');if(backdrop) backdrop.hidden=false;
+    setTimeout(()=>{
+      const target=focusSelector?details.querySelector(focusSelector):details;
+      if(target) target.scrollIntoView({behavior:'smooth',block:'start'});
+    },30);
+  }
+}
+
+function closeCuriosityDetails(){
+  const details=$('cur-management'),backdrop=$('cur-management-backdrop');
+  if(details){details.classList.remove('open');details.hidden=true;}
+  if(backdrop) backdrop.hidden=true;
+  curiosityDetailsMode='understanding';
+}
+
+function bindCuriosityOverview(curiosities,filtered,selected){
+  const closeDetails=$('cur-management-close'),detailsBackdrop=$('cur-management-backdrop');
+  if(closeDetails) closeDetails.onclick=closeCuriosityDetails;
+  if(detailsBackdrop) detailsBackdrop.onclick=closeCuriosityDetails;
+  document.querySelectorAll('[data-cur-details]').forEach(btn=>btn.onclick=()=>openCuriosityDetails(null,'understanding'));
+  document.querySelectorAll('[data-cur-review]').forEach(btn=>btn.onclick=()=>openCuriosityDetails(null,'understanding'));
+  document.querySelectorAll('[data-cur-answer-more]').forEach(btn=>btn.onclick=()=>beginCuriositySession(selected,btn));
+  document.querySelectorAll('[data-cur-explore]').forEach(btn=>btn.onclick=()=>{
+    if(selected) addCuriosityThread(selected,btn);
+  });
+  document.querySelectorAll('[data-cur-explore-help]').forEach(btn=>btn.onclick=()=>{
+    const example=document.querySelector('[data-cur-explore-example]');
+    if(!example) return;
+    example.hidden=!example.hidden;
+    btn.setAttribute('aria-expanded',String(!example.hidden));
+  });
+  document.querySelectorAll('[data-cur-thread-option]').forEach(btn=>btn.onclick=()=>{
+    if(!selected) return;
+    const directions=curExplorationSuggestions.get(Number(selected.id))||[];
+    const direction=directions[parseInt(btn.dataset.curThreadOption,10)];
+    if(direction) createCuriosityThread(selected,direction,btn);
+  });
+  document.querySelectorAll('[data-cur-synthesize]').forEach(btn=>btn.onclick=()=>{
+    if(!selected) return;
+    const draft=(selected.syntheses||[]).find(item=>item.status==='draft');
+    if(draft) openCuriosityDetails(null,'understanding');
+    else synthesizeCuriosity(selected,btn);
+  });
+  document.querySelectorAll('[data-cur-primary]').forEach(btn=>btn.onclick=()=>{
+    const kind=btn.dataset.curPrimary;
+    if(kind==='continue') beginCuriositySession(selected,btn);
+    else if(kind==='resume'){
+      btn.disabled=true;
+      pywebview.api.curiosity_reactivate(selected.id).then(r=>{
+        if(!r||r.ok===false){btn.disabled=false;toast((r&&r.message)||'Could not resume.',true);return;}
+        loadCuriosity();
+      }).catch(e=>{btn.disabled=false;toast('Could not resume: '+e,true);});
+    }else if(kind==='review') openCuriosityDetails(null,'understanding');
+    else if(kind==='proposals') openCuriosityDetails(null,'proposals');
+    else openCuriosityDetails(kind==='details'?'.cur-classification':null,'placement');
+  });
+  const newToggle=$('cur-new-toggle');
+  if(newToggle) newToggle.onclick=()=>{curNewInvestigationOpen=!curNewInvestigationOpen;renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);};
+  const create=$('cur-new-create');
+  if(create) create.onclick=()=>{
+    const directive=$('cur-new-directive').value.trim(),label=$('cur-new-title').value.trim();
+    if(!directive){toast(curT('Describe what you have been noticing first.','먼저 무엇이 눈에 띄었는지 설명하세요.'),true);return;}
+    const originalButtonHtml=create.innerHTML;
+    create.disabled=true;create.innerHTML=thinkingDotsHtml(curT('Starting investigation','탐구 시작 중'));
+    pywebview.api.curiosity_set(directive,label||null,false).then(r=>{
+      if(!r||r.ok===false){create.disabled=false;create.innerHTML=originalButtonHtml;toast((r&&r.message)||'Could not start investigation.',true);return;}
+      curNewInvestigationOpen=false;
+      if(r.curiosity_id) activeCuriosityId=Number(r.curiosity_id);
+      toast(curT('Investigation started.','탐구를 시작했어요.'));loadCuriosity();
+    }).catch(e=>{create.disabled=false;create.innerHTML=originalButtonHtml;toast('Could not start investigation: '+e,true);});
+  };
+  const search=$('cur-board-search');
+  if(search) search.oninput=()=>{
+    curBoardQuery=search.value;
+    const cursor=search.selectionStart;
+    renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+    const refreshed=$('cur-board-search');
+    if(refreshed){refreshed.focus();if(Number.isFinite(cursor)) refreshed.setSelectionRange(cursor,cursor);}
+  };
+  document.querySelectorAll('.cur-shelf-tools .cur-filter').forEach(btn=>btn.onclick=()=>{
+    curBoardFilter=btn.dataset.curFilter||'all';renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+  });
+  document.querySelectorAll('.cur-shelf-card').forEach(card=>{
+    const id=Number(card.dataset.curiosityId);
+    const cur=curiosities.find(x=>Number(x.id)===id);
+    const openCard=()=>{
+      activeCuriosityId=id;curiosityMode='overview';renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+    };
+    card.onclick=event=>{if(!event.target.closest('button')) openCard();};
+    card.onkeydown=event=>{
+      if((event.key==='Enter'||event.key===' ')&&!event.target.closest('button')){
+        event.preventDefault();openCard();
+      }
+    };
+    card.querySelector('.cur-queue').onclick=()=>{
+      if(curQueuedIds.has(id)) curQueuedIds.delete(id); else curQueuedIds.add(id);
+      saveCuriosityQueue();renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+    };
+    card.querySelector('.cur-shelf-more').onclick=()=>{
+      activeCuriosityId=id;curiosityMode='overview';renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+      setTimeout(()=>openCuriosityDetails(),20);
+    };
+  });
+}
+
+function makeCuriositySession(cur){
+  const questions=(cur.open_questions||[]).map(item=>Number(item.id));
+  const saved=loadSavedCuriositySession();
+  if(saved&&Number(saved.curiosityId)===Number(cur.id)){
+    const available=new Set((cur.open_questions||[]).map(item=>Number(item.id)));
+    saved.batch=(saved.batch||saved.queue||[]).map(Number).filter(id=>available.has(id));
+    saved.currentIndex=Math.max(0,Math.min(Number(saved.currentIndex)||0,saved.batch.length));
+    if(saved.batch.length){curiositySession=saved;return saved;}
+  }
+  curiositySession={curiosityId:Number(cur.id),batch:questions,currentIndex:0,answered:0,startedAt:new Date().toISOString()};
+  saveCuriositySession();
+  return curiositySession;
+}
+
+function beginCuriositySession(cur,button){
+  if(!cur) return;
+  if((cur.open_questions||[]).length){
+    activeCuriosityId=Number(cur.id);curiosityMode='session';makeCuriositySession(cur);renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);return;
+  }
+  continueCuriosity(cur.id,button,{session:true});
+}
+
+function exitCuriositySession(completed){
+  const completedCuriosityId=curiositySession?Number(curiositySession.curiosityId):null;
+  if(completed&&curiositySession){
+    curLastBatchSummary={curiosityId:Number(curiositySession.curiosityId),answered:Number(curiositySession.answered)||0};
+    curiositySession=null;saveCuriositySession();
+    const completedRow=(currentCuriosityState&&currentCuriosityState.curiosities||[]).find(candidate=>
+      Number(candidate.id)===completedCuriosityId);
+    const answeredTotal=completedRow?(completedRow.resolved||[]).filter(item=>
+      item.kind==='question'&&item.status==='answered').length:0;
+    const proactiveDue=completedRow&&answeredTotal>=15&&!(completedRow.open_questions||[]).length&&
+      !(completedRow.open_suggestions||[]).length;
+    if(proactiveDue) setTimeout(()=>continueCuriosity(completedCuriosityId,null,{auto:true}),0);
+    if(completedCuriosityId!==null&&curQueuedIds.has(completedCuriosityId)){
+      curQueuedIds.delete(completedCuriosityId);saveCuriosityQueue();
+    }
+    const activeRows=(currentCuriosityState&&currentCuriosityState.curiosities||[]);
+    const nextQueuedId=Array.from(curQueuedIds).find(id=>activeRows.some(candidate=>
+      Number(candidate.id)===Number(id)&&Number(candidate.id)!==completedCuriosityId&&
+      (candidate.open_questions||[]).length>0&&candidate.status==='active'));
+    const nextQueued=activeRows.find(candidate=>Number(candidate.id)===Number(nextQueuedId));
+    if(nextQueued){
+      activeCuriosityId=Number(nextQueued.id);
+      curiosityMode='session';
+      makeCuriositySession(nextQueued);
+      toast(curT('Continuing with the next queued Investigation.','대기열의 다음 탐구로 계속합니다.'));
+      renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+      return;
+    }
+  }else saveCuriositySession();
+  curiosityMode='overview';
+  loadCuriosity();
+}
+
+function curSessionUnderstandingProgressHtml(cur,answered){
+  const synthesis=(cur.syntheses||[]).find(item=>item.status==='draft')||curLatestApprovedInterpretation(cur);
+  const confidence=synthesis?Math.round(Number((synthesis.payload||{}).confidence||0)*100):
+    Math.min(85,Math.round((answered/20)*85));
+  const baseline=Math.min(100,Math.round((answered/20)*100));
+  const proposals=(cur.open_suggestions||[]).filter(item=>!item.thread_id).length;
+  let checkpoint;
+  if(proposals) checkpoint=curT(proposals+' proposal'+(proposals===1?' is':'s are')+' ready for review',proposals+'개의 제안을 검토할 수 있어요');
+  else if(answered>=15) checkpoint=curT('A proactive proposal is due at this batch boundary','이 질문 묶음이 끝나면 선제적 제안을 준비해요');
+  else checkpoint=curT((15-answered)+' answer'+(15-answered===1?'':'s')+' until the proactive proposal checkpoint','선제적 제안 확인 지점까지 답변 '+(15-answered)+'개');
+  const confidenceLabel=synthesis?curT('Synthesis confidence','종합 신뢰도'):curT('Estimated understanding','예상 이해도');
+  return '<div class="cur-understanding-progress"><div class="cur-understanding-progress-copy"><b>'+
+      curT(answered+' questions answered',answered+'개 질문 답변')+'</b><span>'+confidenceLabel+' · '+confidence+'%</span></div>'+
+    '<div class="cur-understanding-track"><i style="width:'+baseline+'%"></i></div>'+
+    '<div class="cur-proposal-checkpoint">'+esc(checkpoint)+(answered>=20?'<br>'+curT('Baseline complete; questions may continue while they remain useful.','기본 이해가 완성됐어요. 유용한 동안 질문은 계속될 수 있어요.'):'')+'</div></div>';
+}
+
+function curSessionStarterOptions(item){
+  if(item.response_type==='yes_no') return [curT('Yes','예'),curT('No','아니요'),curT('It depends','상황에 따라 달라요')];
+  return [curT('What I notice first','가장 먼저 느끼는 것'),curT('A specific example','구체적인 예'),curT('It depends on the context','상황에 따라 달라요'),curT("I'm not sure yet",'아직 잘 모르겠어요')];
+}
+
+function renderCuriositySession(cur){
+  const host=$('cur-session-content'); if(!host) return;
+  const session=makeCuriositySession(cur);
+  while(session.currentIndex<session.batch.length && !(cur.open_questions||[]).some(q=>Number(q.id)===Number(session.batch[session.currentIndex]))) session.currentIndex++;
+  if(session.currentIndex>=session.batch.length){exitCuriositySession(true);return;}
+  saveCuriositySession();
+  const item=(cur.open_questions||[]).find(q=>Number(q.id)===Number(session.batch[session.currentIndex]));
+  if(!item){exitCuriositySession(true);return;}
+  const draftKey='curDraft:'+item.id;
+  let draft='';try{draft=localStorage.getItem(draftKey)||'';}catch(e){}
+  const total=session.batch.length,current=session.currentIndex+1;
+  const answered=(cur.resolved||[]).filter(x=>x.kind==='question'&&x.status==='answered').length;
+  const syntheses=(cur.syntheses||[]).filter(x=>x.status==='approved').length;
+  host.innerHTML='<div class="cur-session-head"><div><div class="cur-eyebrow">✦ '+curT('Active investigation','활성 탐구')+'</div>'+
+      '<h2>'+esc(cur.label)+'</h2></div><button type="button" id="cur-session-exit">← '+curT('Exit session','세션 나가기')+'</button></div>'+
+    '<div class="cur-session-progress" style="--cur-step-count:'+Math.max(1,total)+'">'+session.batch.map((id,i)=>
+      '<div class="cur-session-step '+(i<session.currentIndex?'done':i===session.currentIndex?'active':'')+'">'+(i+1)+' · '+
+      (i===session.currentIndex?curT('Current question','현재 질문'):i<session.currentIndex?curT('Answered','답변 완료'):curT('Up next','다음 질문'))+'</div>').join('')+'</div>'+
+    '<div class="cur-session-context"><span>'+esc(cur.directive||'')+'</span><span>'+answered+' '+curT('questions answered','개 질문 답변')+' · '+syntheses+' '+curT('syntheses','개 종합')+' · '+curQueuedIds.size+' '+curT('queued','개 대기열')+'</span></div>'+
+    curSessionUnderstandingProgressHtml(cur,answered)+
+    '<div class="cur-session-question-wrap" id="cur-session-question" data-item-id="'+item.id+'">'+
+      '<div class="cur-eyebrow">✦ '+curT('Current question '+current+' of '+total,'현재 질문 '+current+' / '+total)+'</div>'+
+      '<div class="cur-session-question">'+esc(item.text)+'</div>'+
+      '<p class="hint">'+curT('Answer in your own words, choose a starting thread below, or leave and return later.','자신의 말로 답하거나 아래 시작 문구를 선택하세요. 나중에 다시 돌아와도 돼요.')+'</p>'+
+      contextDocumentHtml(item.context_attachments||[],'curiosity_item',item.id,true)+
+      '<textarea id="cur-session-answer" spellcheck="false" placeholder="'+curT('Write your answer…','답변 작성…')+'">'+esc(draft)+'</textarea>'+
+      '<div class="cur-eyebrow" style="margin-top:12px">✦ '+curT('Starter threads','시작 문구')+'</div>'+
+      '<div class="cur-session-starters">'+curSessionStarterOptions(item).map(option=>'<button type="button" data-cur-starter="'+esc(option)+'">'+esc(option)+'</button>').join('')+'</div>'+
+      '<div class="cur-answer-tools"><span class="hint" style="margin:0">'+curT('Was this a useful question?','유용한 질문이었나요?')+'</span>'+
+        '<button type="button" class="cur-thumb" data-fit="useful">👍</button><button type="button" class="cur-thumb" data-fit="thumbs_down">👎</button></div>'+
+    '</div>'+
+    '<div class="cur-session-footer"><div class="cur-session-save"><button type="button" id="cur-session-skip">'+curT('Skip for now','지금은 건너뛰기')+'</button>'+
+      '<span>✓ '+curT('Draft saved locally · Encrypted investigation','초안 로컬 저장 · 암호화된 탐구')+'</span></div>'+
+      '<button type="button" class="accent" id="cur-session-continue">'+curT('Save & continue','저장하고 계속')+' →</button></div>';
+  const textarea=$('cur-session-answer');
+  const saveDraft=()=>{try{if(textarea.value) localStorage.setItem(draftKey,textarea.value);else localStorage.removeItem(draftKey);}catch(e){}};
+  textarea.addEventListener('input',()=>{saveDraft();autoGrow(textarea);});autoGrow(textarea);
+  bindContextDocuments($('cur-session-question'),'curiosity_item',item.id,textarea,loadCuriosity);
+  document.querySelectorAll('[data-cur-starter]').forEach(btn=>btn.onclick=()=>{
+    const value=btn.dataset.curStarter||'';
+    textarea.value=textarea.value.trim()?textarea.value.trim()+'\n'+value+': ':value+': ';
+    saveDraft();autoGrow(textarea);textarea.focus();
+  });
+  document.querySelectorAll('#cur-session-question .cur-thumb').forEach(btn=>btn.onclick=()=>{
+    const active=btn.classList.contains('active');document.querySelectorAll('#cur-session-question .cur-thumb').forEach(b=>b.classList.remove('active'));if(!active)btn.classList.add('active');
+  });
+  $('cur-session-exit').onclick=()=>exitCuriositySession(false);
+  $('cur-session-skip').onclick=()=>{
+    if(total===1){exitCuriositySession(false);return;}
+    session.batch.push(session.batch.splice(session.currentIndex,1)[0]);saveCuriositySession();renderCuriositySession(cur);
+  };
+  const submit=()=>{
+    const text=textarea.value.trim();if(!text){toast(curT('Write an answer first.','먼저 답변을 작성하세요.'),true);return;}
+    const button=$('cur-session-continue'),thumb=document.querySelector('#cur-session-question .cur-thumb.active');
+    const originalButtonHtml=button.innerHTML;
+    button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Saving answer','답변 저장 중'));
+    withDbRetry(()=>pywebview.api.curiosity_answer(item.id,text,null,null,thumb?thumb.dataset.fit:null)).then(r=>{
+      if(!r||r.ok===false){button.disabled=false;button.innerHTML=originalButtonHtml;toast((r&&r.message)||'Could not save answer.',true);return;}
+      try{localStorage.removeItem(draftKey);}catch(e){}
+      session.answered=(Number(session.answered)||0)+1;session.currentIndex++;saveCuriositySession();loadCuriosity();
+    }).catch(e=>{button.disabled=false;button.innerHTML=originalButtonHtml;toast('Could not save answer: '+e,true);});
+  };
+  $('cur-session-continue').onclick=submit;
+  textarea.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();submit();}});
+}
+
 function renderCuriosity(s, images){
   images=images||backgroundImagesCache||[];
   currentCuriosityState=s;
+  const understandingOnly=curiosityDetailsMode==='understanding';
+  const proposalsOnly=curiosityDetailsMode==='proposals';
+  const placementOnly=curiosityDetailsMode==='placement';
+  const focusedManagement=understandingOnly||proposalsOnly||placementOnly;
+  const management=$('cur-management'),managementClose=$('cur-management-close');
+  const managementTitle=understandingOnly?curT('Current understanding','현재 이해'):
+    proposalsOnly?curT('Investigation proposals','탐구 제안'):
+      placementOnly?curT('Growth placement','성장 트리 배치'):curT('Investigation details','탐구 세부 정보');
+  if(management) management.setAttribute('aria-label',managementTitle);
+  if($('cur-management-title')) $('cur-management-title').textContent=managementTitle;
+  if($('cur-management-subtitle')) $('cur-management-subtitle').textContent=curT(
+    understandingOnly?'Faerie’s latest synthesis for this Investigation':
+      proposalsOnly?'Concrete next steps you can review, redirect, or dismiss':
+        placementOnly?'Approve or dismiss the proposed Growth location':'History, evidence, placement, and advanced controls',
+    understandingOnly?'이 탐구에 대한 페어리의 최신 종합':
+      proposalsOnly?'검토하거나 방향을 바꾸고 숨길 수 있는 구체적인 다음 단계':
+        placementOnly?'제안된 성장 위치를 승인하거나 거절합니다':'기록, 근거, 배치 및 고급 제어');
+  if(managementClose) managementClose.setAttribute('aria-label',curT('Close investigation details','탐구 세부 정보 닫기'));
   const candidatePanel=$('cur-candidates');
-  if(candidatePanel){candidatePanel.innerHTML=curCandidatePanelHtml(s);bindCandidatePanel(s);bindCollapsePrefs(candidatePanel);}
+  if(candidatePanel){
+    candidatePanel.hidden=focusedManagement;
+    candidatePanel.innerHTML=focusedManagement?'':curCandidatePanelHtml(s);
+    if(!focusedManagement){bindCandidatePanel(s);bindCollapsePrefs(candidatePanel);}
+  }
   const relatedPanel=$('cur-related');
-  if(relatedPanel&&!relatedPanel.innerHTML.trim()){
-    relatedPanel.innerHTML=curRelatedPanelHtml([],false);bindRelatedInvestigationPanel([]);
+  if(relatedPanel){
+    relatedPanel.hidden=focusedManagement;
+    if(focusedManagement) relatedPanel.innerHTML='';
+    else if(!relatedPanel.innerHTML.trim()){
+      relatedPanel.innerHTML=curRelatedPanelHtml([],false);bindRelatedInvestigationPanel([]);
+    }
   }
   const list=$('cur-list');
   const curiosities=dedupeCuriositiesForDisplay(s.curiosities||[]);
+  const workspace=$('cur-workspace'),shelf=$('cur-shelf'),overview=$('cur-overview'),sessionView=$('cur-session');
+  const selectedAll=selectedCuriosity(curiosities);
+  if(curiosityMode==='session'&&selectedAll){
+    if(overview) overview.hidden=true;
+    if(sessionView) sessionView.hidden=false;
+    renderCuriositySession(selectedAll);
+  }else{
+    curiosityMode='overview';
+    if(overview) overview.hidden=false;
+    if(sessionView) sessionView.hidden=true;
+    if(workspace) workspace.innerHTML=curOverviewHtml(selectedAll);
+    const shelfFiltered=curFilteredBoardCuriosities(curiosities);
+    if(shelf) shelf.innerHTML=curShelfHtml(curiosities,shelfFiltered,selectedAll);
+    bindCuriosityOverview(curiosities,shelfFiltered,selectedAll);
+  }
   if(!curiosities.length){
     renderCuriositySwitcher([], [], null, images);
     list.innerHTML='<div class="card"><div class="empty">No open investigations.</div></div>';
   } else {
     const filtered=curFilteredBoardCuriosities(curiosities);
-    const selected=selectedCuriosity(filtered);
+    const selected=selectedAll;
     renderCuriositySwitcher(curiosities, filtered, selected, images);
     if(selected){
-      list.innerHTML = curCardHtml(selected);
-      bindCurCard(selected);
-      bindCollapsePrefs(list);
+      list.innerHTML = understandingOnly?curUnderstandingReviewHtml(selected):
+        proposalsOnly?curProposalReviewHtml(selected):
+          placementOnly?curPlacementReviewHtml(selected):curUnderstandingReviewHtml(selected);
+      if(understandingOnly) bindCuriosityUnderstanding(selected);
+      else if(proposalsOnly) bindCuriosityProposals(selected);
+      else if(placementOnly) bindCuriosityPlacement(selected);
+      else bindCuriosityUnderstanding(selected);
     } else {
       list.innerHTML='<div class="card"><div class="empty">No investigations match this view.</div></div>';
     }
@@ -10361,12 +11980,53 @@ function renderCuriosity(s, images){
   });
 }
 
-function loadCuriosity(){
-  if(!api()) return;
-  Promise.all([
+function showCuriosityLoading(){
+  const workspace=$('cur-workspace');
+  if(!workspace||currentCuriosityState) return;
+  workspace.innerHTML='<div class="cur-next-card"><div class="cur-next-copy">'+
+    '<div class="cur-kicker">'+esc(curT('Active investigation','진행 중인 탐구'))+'</div>'+
+    '<h2>'+thinkingDotsHtml(curT('Loading investigations','탐구 불러오는 중'))+'</h2>'+
+    '<p>'+esc(curT('Restoring your saved questions and progress.','저장된 질문과 진행 상황을 복원하고 있어요.'))+'</p>'+
+    '</div></div>';
+}
+
+function showCuriosityLoadError(){
+  const workspace=$('cur-workspace');
+  if(!workspace) return;
+  workspace.innerHTML='<div class="cur-next-card"><div class="cur-next-copy">'+
+    '<div class="cur-kicker">'+esc(curT('Investigations','탐구'))+'</div>'+
+    '<h2>'+esc(curT('Investigations did not finish loading.','탐구를 불러오지 못했어요.'))+'</h2>'+
+    '<p>'+esc(curT('Your saved work is unchanged. Try loading it again.','저장된 내용은 그대로예요. 다시 불러와 보세요.'))+'</p>'+
+    '<button type="button" class="accent" id="cur-load-retry">'+esc(curT('Retry','다시 시도'))+'</button>'+
+    '</div></div>';
+  const retry=$('cur-load-retry');
+  if(retry) retry.onclick=()=>loadCuriosity({force:true});
+}
+
+function loadCuriosity(options={}){
+  if(!api()) return Promise.resolve();
+  if(curiosityLoadPromise&&!options.force) return curiosityLoadPromise;
+  showCuriosityLoading();
+  const request=++curiosityLoadSequence;
+  const load=Promise.all([
     pywebview.api.curiosity_state(),
-    loadBackgroundImages()
-  ]).then(([state,images])=>renderCuriosity(state,images)).catch(()=>{});
+    loadBackgroundImages().catch(()=>backgroundImagesCache||[])
+  ]).then(([state,images])=>new Promise((resolve,reject)=>{
+    requestAnimationFrame(()=>{
+      try{
+        if(request===curiosityLoadSequence) renderCuriosity(state,images);
+        resolve(state);
+      }catch(error){ reject(error); }
+    });
+  })).catch(()=>{
+    if(request===curiosityLoadSequence) showCuriosityLoadError();
+    return null;
+  });
+  curiosityLoadPromise=load.then(result=>{
+    if(request===curiosityLoadSequence) curiosityLoadPromise=null;
+    return result;
+  });
+  return curiosityLoadPromise;
 }
 
 /* ---------- memory ---------- */

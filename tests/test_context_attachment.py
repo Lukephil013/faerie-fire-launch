@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import tempfile
+import zipfile
 
 from livingpc import crypto, soul_calibration
 from livingpc.companion.brain import Companion, StubChat
@@ -67,6 +68,38 @@ def test_supported_text_document_is_extracted_locally(tmp_path):
     extracted = extract_document(str(path))
     assert extracted["name"] == "past.md"
     assert "Earlier journal" in extracted["text"]
+
+
+def test_csv_and_modern_excel_workbooks_are_extracted_locally(tmp_path):
+    csv_path = tmp_path / "roles.csv"
+    csv_path.write_text("Role,Years\nEngineer,5", encoding="utf-8")
+    csv_document = extract_document(str(csv_path))
+    assert csv_document["media_type"] == "text/csv"
+    assert "Engineer,5" in csv_document["text"]
+
+    workbook = tmp_path / "resume.xlsx"
+    with zipfile.ZipFile(workbook, "w") as archive:
+        archive.writestr("xl/workbook.xml", """<?xml version="1.0"?>
+          <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <sheets><sheet name="Experience" sheetId="1" r:id="rId1"/></sheets>
+          </workbook>""")
+        archive.writestr("xl/_rels/workbook.xml.rels", """<?xml version="1.0"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
+          </Relationships>""")
+        archive.writestr("xl/sharedStrings.xml", """<?xml version="1.0"?>
+          <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <si><t>Company</t></si><si><t>Faerie Fire</t></si>
+          </sst>""")
+        archive.writestr("xl/worksheets/sheet1.xml", """<?xml version="1.0"?>
+          <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <sheetData><row r="1"><c r="A1" t="s"><v>0</v></c>
+            <c r="B1" t="s"><v>1</v></c></row></sheetData>
+          </worksheet>""")
+    excel_document = extract_document(str(workbook))
+    assert "[Sheet: Experience]" in excel_document["text"]
+    assert "Company\tFaerie Fire" in excel_document["text"]
 
 
 def test_calibration_status_exposes_metadata_and_reset_deletes_documents(tmp_path):

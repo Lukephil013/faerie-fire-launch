@@ -75,6 +75,8 @@ class Config:
     # Companion (Phase 2)
     companion_backend: str = "claude"        # 'claude' | 'stub'
     companion_model: str = "claude-sonnet-4-6"
+    companion_proposal_scout_backend: str = ""  # '' => companion_backend
+    companion_proposal_scout_model: str = "claude-haiku-4-5"
     companion_memory_max_items: int = 20
     companion_memory_max_chars: int = 6000
     companion_memory_value_max_chars: int = 500
@@ -242,6 +244,11 @@ class Config:
     skills_dir: str = "skills"
     workflow_max_active: int = 3            # loaded SKILL.md bodies per chat (oldest evicted)
     workflow_body_max_chars: int = 20000    # a body over this is broken, not truncated
+    # Explicit, user-approved browser form assistance. This is separate from
+    # passive browser-history capture and remains available in the launch
+    # profile because it only runs after a Command Center approval.
+    browser_assistant_enabled: bool = True
+    browser_assistant_profile_dir: str = "data/browser-profile"
     # Reminders (/remind): fired as toasts by the daemon's 30s poll.
     reminders_enabled: bool = True
 
@@ -268,6 +275,7 @@ def load(path: str | None = None) -> Config:
     cfg.db_path = _project_path(cfg.db_path)
     cfg.blob_dir = _project_path(cfg.blob_dir)
     cfg.memory_db_path = _project_path(cfg.memory_db_path)
+    cfg.browser_assistant_profile_dir = _project_path(cfg.browser_assistant_profile_dir)
     if getattr(cfg, "profile", "personal") == "launch":
         cfg.ocr_enabled = False
         cfg.browser_history_enabled = False

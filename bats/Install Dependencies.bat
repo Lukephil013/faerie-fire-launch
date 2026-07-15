@@ -60,6 +60,13 @@ for /f "usebackq eol=# tokens=* delims=" %%P in ("requirements-core.txt") do ech
 echo.
 
 echo ------------------------------------------------------------
+echo [BROWSER] dedicated Chromium runtime for approved form filling
+echo ------------------------------------------------------------
+%PY% -m playwright install chromium
+if errorlevel 1 goto verifyfail
+echo.
+
+echo ------------------------------------------------------------
 echo [REPAIR] pywebview specifically - pip's "already satisfied" check
 echo trusts installed metadata even if the actual package files are
 echo missing or corrupted (this is what caused past freezes/crashes).
@@ -80,6 +87,8 @@ echo ------------------------------------------------------------
 %PY% -c "import PIL, pystray, webview; print('   [ok] PIL, pystray, webview (pywebview) all import')"
 if errorlevel 1 goto verifyfail
 %PY% -c "import anthropic, cryptography; print('   [ok] anthropic (chat) + cryptography (key storage) import')"
+if errorlevel 1 goto verifyfail
+%PY% -c "import playwright; print('   [ok] Playwright browser assistant import')"
 if errorlevel 1 goto verifyfail
 %PY% -c "import importlib.metadata as m; v=m.version('pywebview'); parts=tuple(int(p) for p in v.split('.')[:2]); import sys; print('   [ok] pywebview '+v+' (pinned range)' if (5,0)<=parts<(5,3) else '   [X] pywebview '+v+' is OUTSIDE the pinned >=5.0,<5.3 range'); sys.exit(0 if (5,0)<=parts<(5,3) else 1)"
 if errorlevel 1 goto verifyfail

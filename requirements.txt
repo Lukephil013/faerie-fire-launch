@@ -15,6 +15,12 @@ anthropic>=0.39
 # when LIVINGPC_DB_KEY is set. Without a key, nothing is encrypted. No compilation.
 cryptography>=42.0
 
+# Local document attachment extraction. Modern Word/Excel files are parsed
+# without Office; PDF uses pypdf. Legacy .doc/.xls use installed Office on
+# Windows through pywin32 and otherwise return a clear save-as-modern prompt.
+pypdf>=5.0
+pywin32>=306; platform_system == "Windows"
+
 # Companion window (Phase 2). Frameless desktop face via the built-in Edge
 # WebView2 on Windows. Only needed for companion.py.
 # Pinned below 5.3: that release added window.native, which queries newer
@@ -25,6 +31,10 @@ cryptography>=42.0
 # bound until the WebView2 Runtime is confirmed current, or until pywebview
 # fixes the fallback behavior.
 pywebview>=5.0,<5.3
+
+# Visible, approval-gated browser form assistant. Chromium is installed once
+# with: python -m playwright install chromium
+playwright>=1.49,<2
 
 # Companion voice (milestone C). Offline TTS via Windows SAPI — no downloads.
 pyttsx3>=2.90

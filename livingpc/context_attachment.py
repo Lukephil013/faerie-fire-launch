@@ -9,8 +9,11 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import posixpath
 import re
 import sqlite3
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime, timezone
 
 from . import crypto
@@ -19,6 +22,7 @@ from .db import connect
 
 ALLOWED_OWNER_KINDS = {"soul_calibration", "curiosity", "curiosity_item"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".log"}
+EXCEL_EXTENSIONS = {".xlsx", ".xlsm"}
 MAX_FILE_BYTES = 15_000_000
 MAX_EXTRACTED_CHARS = 200_000
 MAX_ATTACHMENTS_PER_OWNER = 8
@@ -56,6 +60,172 @@ def _clean_owner(owner_kind: str, owner_key) -> tuple[str, str]:
     return kind, key
 
 
+def _decode_text(data: bytes) -> str:
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
+def _column_index(reference: str) -> int:
+    letters = re.match(r"[A-Za-z]+", reference or "")
+    if not letters:
+        return 0
+    value = 0
+    for letter in letters.group(0).upper():
+        value = value * 26 + ord(letter) - 64
+    return max(0, value - 1)
+
+
+def _xlsx_to_text(data: bytes) -> str:
+    """Dependency-free extraction of displayed cell values from XLSX/XLSM."""
+    spreadsheet = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    office_rel = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    package_rel = "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as error:
+        raise ValueError("could not read that Excel workbook") from error
+    with archive:
+        names = set(archive.namelist())
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+            shared = ["".join(node.itertext()) for node in root.iter(spreadsheet + "si")]
+
+        sheets: list[tuple[str, str]] = []
+        try:
+            workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+            relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            targets = {
+                node.attrib.get("Id", ""): node.attrib.get("Target", "")
+                for node in relationships.iter(package_rel)
+            }
+            for sheet in workbook.iter(spreadsheet + "sheet"):
+                target = targets.get(sheet.attrib.get(office_rel, ""), "")
+                if not target:
+                    continue
+                path = (posixpath.normpath(target.lstrip("/")) if target.startswith("/")
+                        else posixpath.normpath(posixpath.join("xl", target)))
+                if path in names:
+                    sheets.append((sheet.attrib.get("name", "Sheet"), path))
+        except (KeyError, ET.ParseError):
+            pass
+        if not sheets:
+            sheets = [(f"Sheet {index + 1}", name) for index, name in enumerate(
+                      sorted(name for name in names
+                             if name.startswith("xl/worksheets/") and name.endswith(".xml")))]
+
+        rendered: list[str] = []
+        for sheet_name, path in sheets:
+            try:
+                root = ET.fromstring(archive.read(path))
+            except (KeyError, ET.ParseError):
+                continue
+            rows: list[str] = []
+            for row in root.iter(spreadsheet + "row"):
+                values: dict[int, str] = {}
+                for cell in row.findall(spreadsheet + "c"):
+                    column = _column_index(cell.attrib.get("r", ""))
+                    kind = cell.attrib.get("t", "")
+                    if kind == "inlineStr":
+                        value = "".join(cell.itertext())
+                    else:
+                        node = cell.find(spreadsheet + "v")
+                        value = node.text if node is not None and node.text is not None else ""
+                        if kind == "s" and value:
+                            try:
+                                value = shared[int(value)]
+                            except (ValueError, IndexError):
+                                pass
+                        elif kind == "b":
+                            value = "TRUE" if value == "1" else "FALSE"
+                    values[column] = str(value or "").replace("\r", " ").replace("\n", " ")
+                if values:
+                    last = min(max(values), 255)
+                    rows.append("\t".join(values.get(index, "") for index in range(last + 1)).rstrip())
+            if rows:
+                rendered.append(f"[Sheet: {sheet_name}]\n" + "\n".join(rows))
+        return "\n\n".join(rendered).strip()
+
+
+def _legacy_doc_to_text(path: str) -> str:
+    """Read binary .doc through local Microsoft Word when available."""
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError as error:
+        raise ValueError("legacy DOC support needs Microsoft Word; save it as DOCX") from error
+    pythoncom.CoInitialize()
+    word = document = None
+    try:
+        word = win32com.client.DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0
+        document = word.Documents.Open(
+            FileName=os.path.abspath(path), ConfirmConversions=False,
+            ReadOnly=True, AddToRecentFiles=False, Visible=False, OpenAndRepair=True)
+        return str(document.Content.Text or "")
+    except Exception as error:
+        raise ValueError("could not read that DOC file; save it as DOCX") from error
+    finally:
+        if document is not None:
+            try:
+                document.Close(False)
+            except Exception:
+                pass
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:
+                pass
+        pythoncom.CoUninitialize()
+
+
+def _legacy_xls_to_text(path: str) -> str:
+    """Read binary .xls through local Microsoft Excel when available."""
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError as error:
+        raise ValueError("legacy XLS support needs Microsoft Excel; save it as XLSX") from error
+    pythoncom.CoInitialize()
+    excel = workbook = None
+    try:
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        workbook = excel.Workbooks.Open(os.path.abspath(path), ReadOnly=True)
+        output: list[str] = []
+        for sheet in workbook.Worksheets:
+            raw = sheet.UsedRange.Value
+            rows = raw if isinstance(raw, tuple) else ((raw,),)
+            lines = []
+            for row in rows:
+                cells = row if isinstance(row, tuple) else (row,)
+                lines.append("\t".join("" if value is None else str(value)
+                                       for value in cells).rstrip())
+            if any(line for line in lines):
+                output.append(f"[Sheet: {sheet.Name}]\n" + "\n".join(lines))
+        return "\n\n".join(output).strip()
+    except Exception as error:
+        raise ValueError("could not read that XLS file; save it as XLSX") from error
+    finally:
+        if workbook is not None:
+            try:
+                workbook.Close(False)
+            except Exception:
+                pass
+        if excel is not None:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+        pythoncom.CoUninitialize()
+
+
 def extract_document(path: str) -> dict:
     """Extract supported document text locally; never retain the raw bytes."""
     name = os.path.basename(str(path or ""))
@@ -69,6 +239,9 @@ def extract_document(path: str) -> dict:
         from .docx_text import docx_to_text
         text = docx_to_text(data)
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif ext == ".doc":
+        text = _legacy_doc_to_text(path)
+        media_type = "application/msword"
     elif ext == ".pdf":
         try:
             from pypdf import PdfReader
@@ -80,13 +253,20 @@ def extract_document(path: str) -> dict:
         except Exception as error:
             raise ValueError("could not read that PDF") from error
         media_type = "application/pdf"
+    elif ext in EXCEL_EXTENSIONS:
+        text = _xlsx_to_text(data)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif ext == ".xls":
+        text = _legacy_xls_to_text(path)
+        media_type = "application/vnd.ms-excel"
     elif ext in TEXT_EXTENSIONS:
         if b"\x00" in data[:4096]:
             raise ValueError("document appears to be binary")
-        text = data.decode("utf-8", errors="replace")
-        media_type = "text/plain"
+        text = _decode_text(data)
+        media_type = "text/csv" if ext in {".csv", ".tsv"} else "text/plain"
     else:
-        raise ValueError("attach a PDF, DOCX, Markdown, text, CSV, TSV, JSON, or log file")
+        raise ValueError(
+            "attach a DOC, DOCX, PDF, CSV, TSV, XLS, XLSX, Markdown, text, JSON, or log file")
     text = str(text or "").replace("\x00", "").strip()
     if not text:
         raise ValueError("no readable text was found in that document")

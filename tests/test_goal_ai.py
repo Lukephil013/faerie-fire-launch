@@ -24,6 +24,7 @@ from livingpc.goal_ai import (
     prepare_goal_archive, summarize_goal_answer,
     open_leaf_workspace, send_leaf_workspace, decide_leaf_workspace_proposal,
     clear_leaf_workspace_messages, parse_leaf_workspace_reply, reopen_leaf_workspace,
+    prepare_missing_leaf_handoff,
 )
 from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
@@ -1831,6 +1832,72 @@ def test_completed_leaf_hands_approved_work_to_next_project_leaf_without_raw_cha
     assert destination_model.calls[-1]["event"]["type"] == "incoming_handoff"
     assert destination_model.calls[-1]["context"]["incoming_handoffs"][0]["id"] == handoff["id"]
     assert agents.leaf_handoff(handoff["id"])["status"] == "consumed"
+
+
+def test_completed_legacy_leaf_can_recover_an_approved_handoff_without_duplicate_outcome(world):
+    cfg, goals, agents, _, ids = world
+    area = goals.create("subgoal", "Work", parent_id=ids["over_a"])
+    goals._set_semantic_role(area, "area", rationale="Owns work.")
+    project = goals.create("subgoal", "Choose a service", parent_id=area)
+    goals._set_semantic_role(project, "project", rationale="Produces one service choice.")
+    source = goals.create("task", "Brainstorm candidates", parent_id=project, priority="high")
+    destination = goals.create("task", "Evaluate candidates", parent_id=project, priority="high")
+    agents.ensure_agents()
+    open_leaf_workspace(cfg, source, model=RecordingWorkspaceModel(["Let’s brainstorm."]))
+    agents.add_leaf_workspace_message(source, "user", "RAW PRIVATE LEGACY CHAT")
+    pending = send_leaf_workspace(
+        cfg, source, "The list is finished.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "The list is ready.", proposal={"type": "complete_leaf", "payload": {
+                "result": "Four candidates are ready.",
+                "what_happened": "We identified cleanup, PDF splitting, data entry, and reports.",
+                "lesson": "The candidates need comparison next.",
+            }, "rationale": "Ready."})]))
+    completion = pending["messages"][-1]["payload"]["proposal"]
+    completed = decide_leaf_workspace_proposal(cfg, source, completion["id"], "approve")
+    original_handoff = completed["completion_handoff"]
+    outcome_count = agents.conn.execute(
+        "SELECT COUNT(*) FROM experiment_outcome WHERE goal_id=?", (source,)).fetchone()[0]
+
+    # Recreate the pre-handoff legacy state while preserving its real outcome.
+    agents.conn.execute("DELETE FROM goal_leaf_handoff WHERE id=?", (original_handoff["id"],))
+    state = agents.leaf_workspace_state(source)
+    agreement = dict(state["agreement"])
+    agreement.pop("handoff_id", None)
+    agreement.pop("handoff_destination_id", None)
+    agents.update_leaf_workspace(source, agreement=agreement)
+    agents.add_leaf_workspace_message(destination, "user", "An existing destination conversation.")
+
+    drafted = prepare_missing_leaf_handoff(cfg, source)
+    proposal = drafted["messages"][-1]["payload"]["proposal"]
+    assert proposal["type"] == "handoff_recovery"
+    assert proposal["payload"]["handoff_target"]["leaf_id"] == destination
+    assert "RAW PRIVATE LEGACY CHAT" not in json.dumps(proposal["payload"], ensure_ascii=False)
+    edited = dict(proposal["payload"])
+    edited["handoff"] = {
+        "output_summary": "Four automation candidates are ready to compare.",
+        "working_material": "Cleanup; PDF splitting; data entry; recurring reports",
+        "constraints": ["Do not brainstorm again."],
+        "unresolved_questions": "Which has the clearest demand?",
+        "suggested_start": "Score the four candidates.",
+    }
+    recovered = decide_leaf_workspace_proposal(
+        cfg, source, proposal["id"], "approve", edited_payload=edited)
+
+    handoff = recovered["recovery_handoff"]
+    assert goals.get(source)["status"] == "completed"
+    assert handoff["destination_leaf_id"] == destination
+    assert agents.conn.execute(
+        "SELECT COUNT(*) FROM experiment_outcome WHERE goal_id=?", (source,)).fetchone()[0] == outcome_count
+    context = build_leaf_workspace_context(goals, agents, destination)
+    encoded = json.dumps(context, ensure_ascii=False)
+    assert "Four automation candidates are ready to compare" in encoded
+    assert "RAW PRIVATE LEGACY CHAT" not in encoded
+
+    destination_model = RecordingWorkspaceModel(["I received the four candidates. Let’s score them."])
+    opened = open_leaf_workspace(cfg, destination, model=destination_model)
+    assert opened["messages"][-1]["content"].startswith("I received the four candidates")
+    assert destination_model.calls[-1]["event"]["type"] == "incoming_handoff"
 
 
 def test_leaf_workspace_summary_is_compact_and_never_exposes_raw_transcript(world):

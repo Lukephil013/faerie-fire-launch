@@ -13,3 +13,4 @@ pywebview>=5.0,<5.3
 anthropic>=0.39
 cryptography>=42.0
 pypdf>=5.0
+playwright>=1.49,<2

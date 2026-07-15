@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import tempfile
 import threading
 import traceback
 from datetime import datetime, timezone
@@ -56,6 +57,7 @@ class Api:
         self._window = None            # set after create_window, see main()
         self._ui_state_lock = threading.Lock()
         self._companion_lock = threading.Lock()
+        self._browser_service = None
 
     def _ensure(self):
         # pywebview dispatches each js_api call on its own worker thread. On
@@ -83,10 +85,14 @@ class Api:
             log("respond error:\n" + traceback.format_exc())
             reply = "(couldn't reach the brain — is ANTHROPIC_API_KEY set? see companion_error.log)"
             color = personas_mod.get_persona(self.persona_key).color
+        browser_state = self.browser_state()
         return {"user": text, "text": reply, "color": color,
                 "active_chat_id": c.chat_id if c else None,
+                "proposals_enabled": c.proposals_enabled if c else True,
                 "chats": c.list_chats() if c else [],
-                "pending_proposal": c.pending_proposal() if c else None}
+                "pending_proposal": c.pending_proposal() if c else None,
+                "pending_proposals": c.pending_proposals() if c else [],
+                "browser_tasks": browser_state.get("tasks", [])}
 
     # --- text path --------------------------------------------------------
     def send(self, text, attachments=None):
@@ -98,6 +104,7 @@ class Api:
                     ".webp": "image/webp"}
     _MAX_IMAGE_BYTES = 4_500_000       # API limit is ~5MB per image
     _MAX_TEXT_CHARS = 40_000
+    _MAX_DROP_BYTES = 20_000_000       # bound base64 transfer through WebView2
 
     def attach_file(self):
         """Native file picker -> attachment dict for the UI to hold until send."""
@@ -116,13 +123,16 @@ class Api:
             return {"ok": False, "message": "couldn't open that file"}
 
     def _load_attachment(self, path) -> dict:
-        """Turn a path into an attachment: images pass through as base64 for
-        the vision API; .docx and text-like files become extracted text."""
+        """Turn a path into an attachment.
+
+        Images pass through as base64 for vision. Documents and spreadsheets
+        are extracted locally before any content is sent to the model.
+        """
         name = os.path.basename(str(path))
         ext = os.path.splitext(name)[1].lower()
-        with open(path, "rb") as f:
-            data = f.read()
         if ext in self._IMAGE_TYPES:
+            with open(path, "rb") as f:
+                data = f.read()
             if len(data) > self._MAX_IMAGE_BYTES:
                 return {"ok": False,
                         "message": f"{name} is too large for the vision API (max ~4.5MB)"}
@@ -130,28 +140,162 @@ class Api:
                 "kind": "image", "name": name,
                 "media_type": self._IMAGE_TYPES[ext],
                 "data": base64.b64encode(data).decode("ascii")}}
-        if ext == ".docx":
-            from livingpc.docx_text import docx_to_text
-            text = docx_to_text(data)
-        else:
-            if b"\x00" in data[:4096]:
-                return {"ok": False,
-                        "message": f"{name} looks binary — attach images, .docx, or text files"}
-            text = data.decode("utf-8", errors="replace")
+        try:
+            from livingpc.context_attachment import extract_document
+            extracted = extract_document(str(path))
+        except Exception as error:
+            return {"ok": False, "message": f"Could not read {name}: {error}"}
         return {"ok": True, "attachment": {
-            "kind": "text", "name": name,
-            "text": text[: self._MAX_TEXT_CHARS]}}
+            "kind": "text", "name": extracted["name"],
+            "media_type": extracted["media_type"],
+            "text": extracted["text"][: self._MAX_TEXT_CHARS],
+            "char_count": min(extracted["char_count"], self._MAX_TEXT_CHARS),
+            "truncated": bool(extracted.get("truncated") or
+                              extracted["char_count"] > self._MAX_TEXT_CHARS)}}
+
+    def attach_dropped_file(self, name, media_type, data_base64) -> dict:
+        """Load a browser-dropped file through the native attachment path.
+
+        WebView file objects do not reliably expose a usable Windows path, so
+        the page sends bounded base64 bytes. A private temporary file preserves
+        support for PDF/Word/Excel extractors that require a path; it is always
+        removed before this call returns.
+        """
+        safe_name = os.path.basename(str(name or "dropped-file")).strip()
+        if not safe_name:
+            safe_name = "dropped-file"
+        try:
+            payload = base64.b64decode(str(data_base64 or ""), validate=True)
+        except Exception:
+            return {"ok": False, "message": f"Could not read {safe_name}: invalid file data"}
+        if not payload:
+            return {"ok": False, "message": f"{safe_name} is empty"}
+        if len(payload) > self._MAX_DROP_BYTES:
+            return {"ok": False,
+                    "message": f"{safe_name} is too large to drop here (max 20MB)"}
+        suffix = os.path.splitext(safe_name)[1].lower()
+        path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    prefix="faerie-chat-drop-", suffix=suffix, delete=False) as handle:
+                path = handle.name
+                handle.write(payload)
+            result = self._load_attachment(path)
+            if result.get("ok") and result.get("attachment"):
+                result["attachment"]["name"] = safe_name
+                if media_type and not result["attachment"].get("media_type"):
+                    result["attachment"]["media_type"] = str(media_type)
+            return result
+        except Exception as error:
+            return {"ok": False, "message": f"Could not read {safe_name}: {error}"}
+        finally:
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     def chat_state(self):
         """Return the active chat and its persisted history."""
         try:
             c = self._ensure()
+            browser_state = self.browser_state()
             return {"ok": True, "active_chat_id": c.chat_id,
+                    "proposals_enabled": c.proposals_enabled,
                     "chats": c.list_chats(), "messages": c.history,
-                    "pending_proposal": c.pending_proposal()}
+                    "pending_proposal": c.pending_proposal(),
+                    "pending_proposals": c.pending_proposals(),
+                    "browser_tasks": browser_state.get("tasks", [])}
         except Exception:
             log("chat_state error:\n" + traceback.format_exc())
             return {"ok": False, "chats": [], "messages": []}
+
+    def approve_proposal(self, index):
+        """Apply one card from a multi-proposal response without a model call."""
+        try:
+            c = self._ensure()
+            c.approve_proposal(int(index))
+            return self.chat_state()
+        except Exception:
+            log("approve_proposal error:\n" + traceback.format_exc())
+            return {"ok": False, "message": "Could not approve that proposal."}
+
+    def dismiss_proposal(self, index):
+        """Remove one pending proposal without applying it."""
+        try:
+            c = self._ensure()
+            if not c.dismiss_proposal(int(index)):
+                return {"ok": False, "message": "That proposal is no longer pending."}
+            return self.chat_state()
+        except Exception:
+            log("dismiss_proposal error:\n" + traceback.format_exc())
+            return {"ok": False, "message": "Could not dismiss that proposal."}
+
+    def commands(self):
+        try:
+            return {"ok": True, "commands": self._ensure().available_commands()}
+        except Exception:
+            log("commands error:\n" + traceback.format_exc())
+            return {"ok": False, "commands": []}
+
+    # --- guarded browser form assistant -----------------------------------
+    def _browser(self):
+        if not getattr(self.cfg, "browser_assistant_enabled", True):
+            return None
+        if self._browser_service is None:
+            from livingpc.browser_assistant import BrowserAssistant
+            self._browser_service = BrowserAssistant(self.cfg)
+        return self._browser_service
+
+    def browser_state(self):
+        try:
+            service = self._browser()
+            return service.state() if service else {"ok": True, "tasks": [], "permissions": []}
+        except Exception:
+            log("browser_state error:\n" + traceback.format_exc())
+            return {"ok": False, "tasks": [], "permissions": [],
+                    "message": "Browser assistance is unavailable."}
+
+    def browser_approve_domain(self, task_id):
+        return self._browser_action("approve_domain", task_id)
+
+    def browser_open(self, task_id):
+        return self._browser_action("open", task_id)
+
+    def browser_scan(self, task_id):
+        try:
+            service = self._browser()
+            if not service:
+                return {"ok": False, "message": "Browser assistance is disabled."}
+            companion = self._ensure()
+            service.scan_and_plan(str(task_id), companion._skill_ctx()["llm"])
+            return service.state()
+        except Exception as error:
+            log("browser_scan error:\n" + traceback.format_exc())
+            return {"ok": False, "message": f"Could not scan that form: {type(error).__name__}"}
+
+    def browser_fill(self, task_id):
+        return self._browser_action("fill", task_id)
+
+    def browser_cancel(self, task_id):
+        return self._browser_action("close", task_id, completed=False)
+
+    def browser_finish(self, task_id):
+        return self._browser_action("close", task_id, completed=True)
+
+    def browser_revoke(self, origin):
+        return self._browser_action("revoke", str(origin))
+
+    def _browser_action(self, name, *args, **kwargs):
+        try:
+            service = self._browser()
+            if not service:
+                return {"ok": False, "message": "Browser assistance is disabled."}
+            getattr(service, name)(*args, **kwargs)
+            return service.state()
+        except Exception as error:
+            log(f"browser_{name} error:\n" + traceback.format_exc())
+            return {"ok": False, "message": f"Browser action failed: {type(error).__name__}"}
 
     def calibration_status(self):
         """Snapshot of Soul Calibration progress for a small UI checklist."""
@@ -187,13 +331,23 @@ class Api:
             log("calibration_synthesis error:\n" + traceback.format_exc())
             return {"ok": False, "message": "Could not generate that."}
 
-    def new_chat(self):
+    def new_chat(self, proposals_enabled=True):
         try:
-            self._ensure().new_chat()
+            self._ensure().new_chat(bool(proposals_enabled))
             return self.chat_state()
         except Exception:
             log("new_chat error:\n" + traceback.format_exc())
             return {"ok": False, "chats": [], "messages": []}
+
+    def set_chat_proposals_enabled(self, enabled):
+        try:
+            c = self._ensure()
+            if not c.set_proposals_enabled(bool(enabled)):
+                return {"ok": False, "message": "Chat not found."}
+            return self.chat_state()
+        except Exception:
+            log("set_chat_proposals_enabled error:\n" + traceback.format_exc())
+            return {"ok": False, "message": "Could not change proposal mode."}
 
     def switch_chat(self, chat_id):
         try:

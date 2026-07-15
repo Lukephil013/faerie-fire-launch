@@ -41,7 +41,7 @@ LEAF_WORKSPACE_KINDS = {
 }
 LEAF_WORKSPACE_PROPOSAL_TYPES = {
     "agreement", "plan", "revise_plan", "complete_item", "complete_leaf",
-    "reshape", "reopen",
+    "reshape", "reopen", "handoff_recovery",
 }
 
 
@@ -1368,9 +1368,10 @@ class GoalAgentStore:
         stored_type = row["proposal_type"]
         public_type = (str(payload.get("_workspace_action"))
                        if stored_type == "agreement" and
-                       payload.get("_workspace_action") in {"reshape", "reopen"}
+                       payload.get("_workspace_action") in {
+                           "reshape", "reopen", "handoff_recovery"}
                        else stored_type)
-        if public_type in {"reshape", "reopen"}:
+        if public_type in {"reshape", "reopen", "handoff_recovery"}:
             payload = {key: value for key, value in payload.items()
                        if key != "_workspace_action"}
         return {"id": int(row["id"]), "leaf_id": int(row["node_id"]),
@@ -1387,7 +1388,7 @@ class GoalAgentStore:
             raise ValueError("invalid Leaf Workspace proposal type")
         stored_type = proposal_type
         stored_payload = dict(payload or {})
-        if proposal_type in {"reshape", "reopen"}:
+        if proposal_type in {"reshape", "reopen", "handoff_recovery"}:
             # Keep the additive table compatible with early v2 databases whose
             # CHECK predates reversible transitions. The public type remains
             # explicit through this encrypted action marker.
@@ -2637,13 +2638,21 @@ def _leaf_workspace_view(goals: GoalStore, agents: GoalAgentStore,
                 message["payload"]["proposal"] = presented
             except (TypeError, ValueError):
                 message["payload"].pop("proposal", None)
+    outgoing = agents.outgoing_leaf_handoffs(node_id, 3)
+    recovery_target = None
+    if node.get("status") == "completed" and not outgoing:
+        recovery_target = _leaf_handoff_target(goals, int(node_id))
     return {"leaf_id": int(node_id), "title": node["title"], "path": path,
             "status": node.get("status"), "completed": node.get("status") == "completed",
             "phase": state["phase"], "kind": state["kind"],
             "agreement": state["agreement"], "working": state["working"],
             "plan": agents.leaf_workspace_plan(node_id), "messages": messages,
             "incoming_handoffs": agents.incoming_leaf_handoffs(node_id, 3),
-            "outgoing_handoffs": agents.outgoing_leaf_handoffs(node_id, 3),
+            "outgoing_handoffs": outgoing,
+            "handoff_recovery": {
+                "eligible": bool(recovery_target),
+                "target": recovery_target,
+            },
             "legacy_messages": agents.leaf_workspace_legacy_messages(node_id)}
 
 
@@ -2687,6 +2696,36 @@ def _fallback_leaf_handoff(context: dict) -> dict:
     })
 
 
+def _draft_leaf_handoff(config, goals: GoalStore, agents: GoalAgentStore,
+                        node_id: int, destination: dict, completion: dict) -> dict:
+    state = agents.leaf_workspace_state(node_id)
+    context = {
+            "language": "ko" if lang_is_ko() else "en",
+            "source_leaf": {key: value for key, value in (goals.get(node_id) or {}).items()
+                            if key in {"id", "title", "description", "notes"}},
+            "destination": destination,
+            "completion": {key: completion.get(key) for key in
+                           ("result", "what_happened", "lesson", "next_adjustment")},
+            "agreement": state.get("agreement") or {},
+            "plan": agents.leaf_workspace_plan(node_id),
+            "source_conversation": _bounded_leaf_workspace_messages(
+                agents.leaf_workspace_messages(node_id, 100), max_chars=7000, limit=24),
+        }
+    try:
+        active = _leaf_handoff_model(config)
+        if not hasattr(active, "leaf_handoff"):
+            raise ValueError("configured model does not support Leaf handoffs")
+        drafted = parse_leaf_handoff(active.leaf_handoff(context))
+        if not drafted:
+            raise ValueError("GoalAI returned no usable Leaf handoff")
+    except Exception as error:
+        log_diag(
+            "goal-ai",
+            f"Leaf handoff draft fallback node_id={node_id} error={type(error).__name__}")
+        drafted = _fallback_leaf_handoff(context)
+    return drafted
+
+
 def _prepare_leaf_completion_handoff(config, goals: GoalStore,
                                      agents: GoalAgentStore, node_id: int,
                                      reply: LeafWorkspaceReply) -> LeafWorkspaceReply:
@@ -2697,36 +2736,76 @@ def _prepare_leaf_completion_handoff(config, goals: GoalStore,
     destination = _leaf_handoff_target(goals, int(node_id))
     payload["handoff_target"] = destination
     if destination:
-        state = agents.leaf_workspace_state(node_id)
-        context = {
-            "language": "ko" if lang_is_ko() else "en",
-            "source_leaf": {key: value for key, value in (goals.get(node_id) or {}).items()
-                            if key in {"id", "title", "description", "notes"}},
-            "destination": destination,
-            "completion": {key: payload.get(key) for key in
-                           ("result", "what_happened", "lesson", "next_adjustment")},
-            "agreement": state.get("agreement") or {},
-            "plan": agents.leaf_workspace_plan(node_id),
-            "source_conversation": _bounded_leaf_workspace_messages(
-                agents.leaf_workspace_messages(node_id, 100), max_chars=7000, limit=24),
-        }
-        try:
-            active = _leaf_handoff_model(config)
-            if not hasattr(active, "leaf_handoff"):
-                raise ValueError("configured model does not support Leaf handoffs")
-            drafted = parse_leaf_handoff(active.leaf_handoff(context))
-            if not drafted:
-                raise ValueError("GoalAI returned no usable Leaf handoff")
-        except Exception as error:
-            log_diag(
-                "goal-ai",
-                f"Leaf handoff draft fallback node_id={node_id} error={type(error).__name__}")
-            drafted = _fallback_leaf_handoff(context)
+        drafted = _draft_leaf_handoff(
+            config, goals, agents, node_id, destination, payload)
         payload["handoff"] = drafted
     else:
         payload.pop("handoff", None)
     reply.proposal = {**proposal, "payload": payload}
     return reply
+
+
+def prepare_missing_leaf_handoff(config, node_id: int, *, model=None) -> dict:
+    """Draft an approved-only downstream handoff for a legacy completed Leaf."""
+    del model
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node.get("type") != "task" or node.get("status") != "completed":
+            raise ValueError("a completed Leaf is required")
+        agents.ensure_leaf_workspace(node)
+        if agents.outgoing_leaf_handoffs(int(node_id), 1):
+            raise ValueError("this Leaf already has a downstream handoff")
+        destination = _leaf_handoff_target(goals, int(node_id))
+        if not destination:
+            raise ValueError("this Leaf has no downstream Leaf to receive a handoff")
+        outcome = agents.conn.execute(
+            "SELECT id FROM experiment_outcome WHERE goal_id=? ORDER BY id DESC LIMIT 1",
+            (int(node_id),)).fetchone()
+        if not outcome:
+            raise ValueError("this Leaf has no confirmed completion outcome to hand off")
+        open_rows = agents.conn.execute(
+            "SELECT id FROM goal_leaf_workspace_proposal "
+            "WHERE node_id=? AND status='open' ORDER BY id DESC",
+            (int(node_id),)).fetchall()
+        for row in open_rows:
+            current = agents.leaf_workspace_proposal(int(row["id"]))
+            if current.get("type") == "handoff_recovery":
+                return _leaf_workspace_view(goals, agents, int(node_id))
+        state = agents.leaf_workspace_state(int(node_id))
+        agreement = state.get("agreement") or {}
+        completion = {
+            "result": agreement.get("result") or agreement.get("outcome") or
+                      "Completed the source Leaf.",
+            "what_happened": agreement.get("what_happened") or
+                             agreement.get("result") or agreement.get("outcome") or "",
+            "lesson": agreement.get("lesson") or "",
+            "next_adjustment": agreement.get("next_adjustment") or "",
+        }
+        drafted = _draft_leaf_handoff(
+            config, goals, agents, int(node_id), destination, completion)
+        reply = LeafWorkspaceReply(
+            ("이전에 완료된 Leaf의 저장된 결과에서 다음 Leaf로 보낼 인계 초안을 만들었어요. "
+             "원문 대화는 전달되지 않으며, 승인 전에 내용을 수정할 수 있어요."
+             if lang_is_ko() else
+             "I reconstructed a handoff from this completed Leaf's saved result. "
+             "The raw conversation will not transfer, and you can edit everything before approval."),
+            proposal={
+                "type": "handoff_recovery",
+                "payload": {
+                    "handoff_target": destination,
+                    "handoff": drafted,
+                    "outcome_id": int(outcome["id"]),
+                },
+                "rationale": ("다음 Leaf가 이미 완료한 작업을 다시 묻지 않도록 합니다."
+                              if lang_is_ko() else
+                              "This lets the next Leaf continue without asking you to reconstruct finished work."),
+            })
+        _persist_leaf_workspace_reply(agents, int(node_id), reply)
+        return _leaf_workspace_view(goals, agents, int(node_id))
+    finally:
+        agents.close(); goals.close()
 
 
 def _persist_leaf_workspace_reply(agents: GoalAgentStore, node_id: int,
@@ -2985,7 +3064,8 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
         payload = (dict(edited_payload) if isinstance(edited_payload, dict)
                    else dict(proposal.get("payload") or {}))
         completion_target = None
-        if proposal["type"] == "complete_leaf":
+        recovery_target = None
+        if proposal["type"] in {"complete_leaf", "handoff_recovery"}:
             current_target = _leaf_handoff_target(goals, int(node_id))
             presented_target = (proposal.get("payload") or {}).get("handoff_target")
             if isinstance(presented_target, dict) and presented_target.get("leaf_id"):
@@ -2994,12 +3074,16 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
                     raise ValueError(
                         "the next Leaf changed after this handoff was drafted; "
                         "refresh the completion proposal before approving it")
-                completion_target = current_target
+                if proposal["type"] == "complete_leaf":
+                    completion_target = current_target
+                else:
+                    recovery_target = current_target
         # Proposal resolution and every resulting semantic mutation share one
         # SQLite transaction. A crash cannot leave an applied proposal open and
         # accidentally apply it a second time.
         completion_outcome_id = None
         completion_handoff_id = None
+        recovery_handoff_id = None
         completion_propagation_error = ""
         try:
             agents.conn.execute("BEGIN IMMEDIATE")
@@ -3092,6 +3176,39 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
                 agents.conn.execute(
                     "UPDATE goal_node SET status='completed',completed_at=?,updated_at=? "
                     "WHERE id=? AND node_type='task'", (now, now, int(node_id)))
+            elif proposal["type"] == "handoff_recovery":
+                if node.get("status") != "completed" or not recovery_target:
+                    raise ValueError("a completed Leaf with a downstream Leaf is required")
+                if agents.outgoing_leaf_handoffs(int(node_id), 1):
+                    raise ValueError("this Leaf already has a downstream handoff")
+                outcome = agents.conn.execute(
+                    "SELECT id FROM experiment_outcome WHERE goal_id=? ORDER BY id DESC LIMIT 1",
+                    (int(node_id),)).fetchone()
+                if not outcome:
+                    raise ValueError("this Leaf has no confirmed completion outcome to hand off")
+                handoff_payload = _normalize_leaf_handoff(payload.get("handoff"))
+                if not handoff_payload["output_summary"] or not handoff_payload["working_material"]:
+                    raise ValueError("the handoff needs both a result and working material")
+                if not handoff_payload["suggested_start"]:
+                    handoff_payload["suggested_start"] = (
+                        "Begin " + str(recovery_target.get("title") or "the next Leaf") +
+                        " using this approved result.")
+                now = _now()
+                handoff = agents.add_leaf_handoff(
+                    int(node_id), int(recovery_target["leaf_id"]),
+                    int(recovery_target["project_id"]), int(outcome["id"]),
+                    handoff_payload, commit=False)
+                recovery_handoff_id = int(handoff["id"])
+                agreement = dict(state.get("agreement") or {})
+                agreement["handoff_id"] = recovery_handoff_id
+                agreement["handoff_destination_id"] = int(recovery_target["leaf_id"])
+                agents.update_leaf_workspace(
+                    node_id, phase="reflecting", agreement=agreement, commit=False)
+                agents.conn.execute(
+                    "UPDATE goal_agent_state SET dirty=1,dirty_reason=?,deferred=0,updated_at=? "
+                    "WHERE node_id=?",
+                    ("approved recovered Leaf handoff", now,
+                     int(recovery_target["leaf_id"])))
             agents.resolve_leaf_workspace_proposal(
                 proposal_id, "approved", commit=False)
             current = int(node_id)
@@ -3122,6 +3239,8 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
             view["completion_outcome_id"] = int(completion_outcome_id)
         if completion_handoff_id is not None:
             view["completion_handoff"] = agents.leaf_handoff(int(completion_handoff_id))
+        if recovery_handoff_id is not None:
+            view["recovery_handoff"] = agents.leaf_handoff(int(recovery_handoff_id))
         if completion_propagation_error:
             view["learning_sync_warning"] = completion_propagation_error
         return view

@@ -6,27 +6,42 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 ## Start Here
 
 - Branch: `main`
-- Parent HEAD: `a4621ab`
-- Generated UTC: `2026-07-14T23:09:12+00:00`
-- Changed areas: review
+- Parent HEAD: `a0b5332`
+- Generated UTC: `2026-07-15T23:30:17+00:00`
+- Changed areas: agent-context, companion, filing, review, storage
 - Read the latest commit message, then run the narrow context command below.
 - Do not scan README, FEATURES, design documents, or devlogs unless the task requires history.
 
 ## Changed Files In This Commit
 
+- `FEATURES.md`
+- `README.md`
+- `bats/Install Dependencies.bat`
+- `companion.py`
 - `gui.py`
-- `livingpc/ui/assets/icons/brand-emblem.png`
-- `livingpc/ui/assets/icons/golden-trim.png`
-- `livingpc/ui/assets/icons/milestone-star.png`
-- `livingpc/ui/assets/icons/nav-command-center.png`
-- `livingpc/ui/assets/icons/nav-growth.png`
-- `livingpc/ui/assets/icons/nav-investigations.png`
-- `livingpc/ui/assets/icons/sparkle-accent.png`
+- `livingpc/browser_assistant.py`
+- `livingpc/companion/brain.py`
+- `livingpc/companion/companion.html`
+- `livingpc/companion/history.py`
+- `livingpc/config.py`
+- `livingpc/context_attachment.py`
+- `livingpc/curiosity.py`
+- `livingpc/goal_ai.py`
+- `livingpc/ui/command_center_preview.html`
 - `livingpc/ui/memory.html`
+- `requirements-core.txt`
+- `requirements.txt`
+- `skills/upwork-profile-draft/SKILL.md`
+- `tests/test_browser_assistant.py`
+- `tests/test_command_center_preview.py`
+- ...and 7 more; use `git show --stat -1`.
 
 ## Context Commands
 
+- `python tools/project_context.py companion`
+- `python tools/project_context.py filing`
 - `python tools/project_context.py review`
+- `python tools/project_context.py storage`
 
 ## Verification
 
@@ -36,6 +51,6 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 
 ## Recent History Before This Commit
 
+- a0b5332 Update 2026-07-14
 - a4621ab Update 2026-07-14
 - 8e012c9 Update 2026-07-13
-- 857493d Update 2026-07-12

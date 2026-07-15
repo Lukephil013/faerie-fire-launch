@@ -239,6 +239,12 @@ A lightly animated wizard raccoon on your desktop that knows you and talks back.
 - **The brain** (`livingpc/companion/brain.py`) — each message is answered by
   Claude given the active persona + relevant memory + recent screen context. Knows you
   and sees what you're doing.
+- **Guarded browser forms** (`livingpc/browser_assistant.py`) — an explicitly
+  requested task opens a visible, separate Playwright Chromium profile. Each
+  exact website requires approval; Faerie sends only ordinary form metadata to
+  Claude, shows a field-by-field preview, and fills after a second approval.
+  Save/Submit, credentials, MFA, payments, identity checks, uploads, and Upwork
+  automation are not available. Approved websites can be revoked in Settings.
 - **Personas** (`livingpc/companion/personas.py`) — switchable personalities:
   *Companion* (warm/curious), *Coach* (LoL tactical), *Gremlin* (playful roast for
   videos). Add your own via a `personas.json`. Each has a color that tints the face.
@@ -380,8 +386,11 @@ LIVINGPC_DB_KEY     # optional; enables at-rest encryption
   9am`, `list`, `cancel <id>` — fired as desktop toasts by the daemon's 30s
   poll, stored in memory.db), `/today [date]` (recap of a day's captured
   activity: aggregate -> redact -> one model call), `/briefing` (pending
-  reminders + active goals + freshest project docs in one morning note).
-- Config: `skills_dir`, `reminders_enabled`.
+  reminders + active goals + freshest project docs in one morning note), plus
+  the on-demand `upwork-profile-draft` workflow, which prepares truthful
+  field-by-field copy for the user to enter manually.
+- Config: `skills_dir`, `reminders_enabled`, `browser_assistant_enabled`,
+  `browser_assistant_profile_dir`.
 
 ## Recently shipped
 - **Skills system** — user-extensible slash commands with approval-gated

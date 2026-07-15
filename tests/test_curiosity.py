@@ -11,10 +11,12 @@ from livingpc.curiosity import (CuriosityContext, CuriosityStore, GeneratedItem,
                                 StubCuriosityModel, answer_item, archive_curiosity,
                                 dismiss_item, generate_items, pause_curiosity,
                                 parse_items, reactivate_curiosity, respond_suggestion,
+                                reassess_open_suggestions,
                                 reconcile_synthesis, run_all_active, set_curiosity,
                                 set_curiosity_from_journal, set_greatest,
                                 merge_investigations, related_investigation_groups,
                                 start_investigation_candidate,
+                                suggest_exploration_threads,
                                 suggest_investigation_candidates,
                                 synthesize_curiosity, _classification_origin)
 from livingpc.goals import GoalStore
@@ -46,6 +48,33 @@ class _ContextCapturingModel(_FakeModel):
     def generate(self, directive, context):
         self.seen_contexts.append(context)
         return super().generate(directive, context)
+
+
+class _ExplorationReviewModel(_FakeModel):
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.review_calls = 0
+
+    def suggest_threads(self, curiosity, context, synthesis, existing):
+        return [
+            {"title": "Existing direction", "directive": "Duplicate it."},
+            {"title": "Body signals", "directive": "Compare physical signals.",
+             "rationale": "The current synthesis leaves this uncertain."},
+            {"title": "Work context", "directive": "Compare different work settings.",
+             "rationale": "The answers mention more than one environment."},
+            {"title": "Early memory", "directive": "Trace the earliest example.",
+             "rationale": "The origin of the pattern is unresolved."},
+        ]
+
+    def review_suggestions(self, curiosity, context, suggestions):
+        self.review_calls += 1
+        return [{
+            "item_id": suggestions[0]["id"],
+            "status": "needs_revision",
+            "confidence": .82,
+            "rationale": "The new answer narrows when this experiment applies.",
+            "revised_text": "Try it only after a high-conflict handoff.",
+        }]
 
 
 def _empty_context() -> CuriosityContext:
@@ -96,6 +125,15 @@ class TestCuriosityStore(unittest.TestCase):
 
     def test_get_missing_curiosity_is_none(self):
         self.assertIsNone(self.store.get_curiosity(999))
+
+    def test_approved_investigation_context_is_deduplicated(self):
+        cid = self.store.add_curiosity("understand agency reactions", "Agency")
+        note = "Slowing down feels relieving and uncomfortable at the same time."
+        first = self.store.add_context(cid, note, source_kind="chat", source_ref="chat-1")
+        repeated = self.store.add_context(cid, "  " + note + "  ", source_kind="chat")
+        self.assertTrue(first["created"])
+        self.assertFalse(repeated["created"])
+        self.assertEqual([row["note"] for row in self.store.contexts(cid)], [note])
 
     def test_rename_curiosity_changes_label_not_directive(self):
         cid = self.store.add_curiosity("understand Korean study", "Korean")
@@ -337,6 +375,58 @@ class TestGeneration(unittest.TestCase):
         texts = [i["text"] for i in self.store.open_items(cid)]
         self.assertEqual(texts, ["above the bar"])
 
+    def test_approved_chat_context_reaches_investigation_ai(self):
+        cid = self.store.add_curiosity(
+            "understand obligation and agency", "Agency")
+        self.store.add_context(
+            cid,
+            "My internal clock creates urgency without an external deadline; slowing down "
+            "feels relieving and uncomfortable.",
+            source_kind="chat")
+        model = _ContextCapturingModel([
+            GeneratedItem("question", "What makes the discomfort spike?", .9)
+        ])
+        self.assertEqual(generate_items(self.mem, self.inf, self.store, cid, model), 1)
+        self.assertIn("internal clock", model.seen_contexts[0].investigation_context_block)
+        self.assertIn("relieving and uncomfortable",
+                      model.seen_contexts[0].investigation_context_block)
+
+    def test_exploration_thread_suggestions_are_grounded_bounded_and_distinct(self):
+        cid = self.store.add_curiosity("understand a recurring work pattern", "Pattern")
+        self.store.add_thread(cid, "Existing direction", "Already being explored.")
+        question = self.store.add_item(
+            cid, "question", "Where does it show up?", confidence=.9)
+        self.store.mark_answered(question, "At work and during competitive games.", None)
+
+        directions = suggest_exploration_threads(
+            self.mem, self.inf, self.store, cid, _ExplorationReviewModel())
+
+        self.assertEqual(len(directions), 3)
+        self.assertEqual([item["title"] for item in directions],
+                         ["Body signals", "Work context", "Early memory"])
+        self.assertTrue(all(item["directive"] for item in directions))
+
+    def test_open_suggestion_is_reassessed_once_per_new_answer(self):
+        cid = self.store.add_curiosity("understand a recurring work pattern", "Pattern")
+        suggestion = self.store.add_item(
+            cid, "suggestion", "Try the same experiment after every handoff.",
+            confidence=.9)
+        question = self.store.add_item(
+            cid, "question", "What did the latest example show?", confidence=.9)
+        self.store.mark_answered(question, "Only high-conflict handoffs cause the crash.", None)
+        model = _ExplorationReviewModel()
+
+        reviewed = reassess_open_suggestions(
+            self.mem, self.inf, self.store, cid, model)
+
+        self.assertEqual(len(reviewed), 1)
+        current = self.store.get_item(suggestion)
+        self.assertEqual(current["relevance_status"], "needs_revision")
+        self.assertEqual(current["relevance_based_on_item_id"], question)
+        self.assertIn("high-conflict", current["relevance_revised_text"])
+        reassess_open_suggestions(self.mem, self.inf, self.store, cid, model)
+        self.assertEqual(model.review_calls, 1)
+
     def test_deep_investigation_refreshes_later_calibration_and_relevant_chat(self):
         from livingpc.curiosity import _build_context, build_synthesis_prompt
 
@@ -439,6 +529,22 @@ class TestGeneration(unittest.TestCase):
         items = self.store.open_items(cid)
         self.assertEqual({i["kind"] for i in items}, {"question", "suggestion"})
         self.assertIn("try a grounded next step", {i["text"] for i in items})
+
+    def test_proactive_checkpoint_surfaces_a_revisable_suggestion_after_fifteen_answers(self):
+        cid = self.store.add_curiosity("understand a recurring pattern", "pattern")
+        for n in range(15):
+            iid = self.store.add_item(cid, "question", f"answered {n}", confidence=0.9)
+            self.store.mark_answered(iid, f"answer {n}", None)
+        model = _FakeModel([
+            GeneratedItem("question", "one more useful distinction", 0.92),
+            GeneratedItem("suggestion", "try this safe and revisable experiment", 0.56),
+        ])
+
+        created = generate_items(self.mem, self.inf, self.store, cid, model, limit=2)
+
+        self.assertEqual(created, 2)
+        self.assertIn("try this safe and revisable experiment",
+                      {item["text"] for item in self.store.open_items(cid)})
 
     def test_no_generation_for_paused_curiosity(self):
         cid = self.store.add_curiosity("fitness goals", "fitness")
@@ -814,6 +920,13 @@ class TestAnswerDismissRespond(unittest.TestCase):
         self.assertEqual(provenance["source_refs"][0]["kind"], "curiosity-answer")
         self.assertEqual(self.store.get_item(iid)["status"], "answered")
 
+    def test_answer_item_can_save_locally_without_a_model_round_trip(self):
+        iid = self.store.add_item(self.cid, "question", "What happened first?")
+        result = answer_item(self.mem, self.store, iid, "My shoulders tightened.", None)
+        self.assertEqual(self.store.get_item(iid)["status"], "answered")
+        self.assertEqual(crypto.dec(self.mem.get(result["resulting_memory_id"])["value"]),
+                         "My shoulders tightened.")
+
     def test_answer_item_rejects_suggestion(self):
         iid = self.store.add_item(self.cid, "suggestion", "try this")
         with self.assertRaises(ValueError):
@@ -1063,6 +1176,17 @@ class TestGuiBridge(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("resulting_memory_id", result)
         self.assertIn("curiosity_id", result)
+
+    def test_curiosity_answer_bridge_does_not_run_cloud_sync_per_answer(self):
+        created = self.api.curiosity_set("help me get fit", label="fitness")
+        state = self.api.curiosity_state()
+        item_id = state["curiosities"][0]["open_questions"][0]["id"]
+        self.api._sync_curiosity_notion_quietly = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("answer save should not trigger a cloud summary"))
+
+        result = self.api.curiosity_answer(item_id, "I go to the gym 3x a week")
+
+        self.assertTrue(result["ok"])
 
     def test_curiosity_bridges_skip_notion_sync_silently_when_unconfigured(self):
         """Default Config has no notion_api_key set, so the best-effort sync

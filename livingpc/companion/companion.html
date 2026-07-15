@@ -52,8 +52,17 @@
   #workspace { min-height:0; flex:1; display:flex; position:relative; z-index:1; -webkit-app-region:no-drag; }
   #sidebar { width:164px; flex:none; padding:8px 8px 12px; border-right:1px solid var(--line2);
     background:linear-gradient(180deg,rgba(4,16,10,.68),rgba(3,11,8,.5)); overflow-y:auto; }
+  #newChatWrap { position:relative; }
   #newChat { width:100%; padding:8px 9px; border-radius:10px; cursor:pointer; color:var(--green);
     border:1px solid var(--line); background:rgba(10,31,20,.7); font:600 12px inherit; }
+  #newChatMenu { position:absolute; z-index:8; top:39px; left:0; width:224px; padding:5px;
+    border:1px solid var(--line); border-radius:11px; background:rgba(5,17,11,.98);
+    box-shadow:0 10px 28px rgba(0,0,0,.45); }
+  #newChatMenu.hidden { display:none; }
+  .new-chat-option { display:block; width:100%; padding:9px 10px; border:0; border-radius:8px;
+    background:transparent; color:var(--fg); text-align:left; cursor:pointer; font:12px/1.3 inherit; }
+  .new-chat-option:hover { background:rgba(30,58,42,.65); }
+  .new-chat-option small { display:block; margin-top:2px; color:var(--muted); font-size:10.5px; }
   #chatList { margin-top:9px; display:flex; flex-direction:column; gap:5px; }
   .chat-row { display:flex; align-items:center; gap:4px; border-radius:9px; }
   .chat-row:hover { background:rgba(30,58,42,.25); }
@@ -69,6 +78,11 @@
   .chat-delete:hover { color:var(--red); border-color:rgba(255,107,138,.35);
     background:rgba(255,107,138,.08); }
   #chatPane { flex:1; min-width:0; display:flex; flex-direction:column; }
+  #chatModeBar { flex:0 0 auto; display:flex; justify-content:flex-end; padding:1px 14px 2px; }
+  #proposalToggle { border:1px solid var(--line2); border-radius:999px; padding:4px 9px;
+    background:rgba(7,20,13,.68); color:var(--muted); cursor:pointer; font:10.5px inherit; }
+  #proposalToggle.on { color:var(--green); border-color:var(--line); }
+  #proposalToggle:hover { background:rgba(20,34,26,.9); }
 
   #log { flex:1 1 auto; overflow-y:auto; padding:6px 14px; user-select:text; cursor:text; }
   .msg { margin:6px 0; font-size:13px; line-height:1.5; max-width:88%; padding:9px 12px;
@@ -179,10 +193,19 @@
   </header>
   <div id="workspace">
     <aside id="sidebar">
-      <button id="newChat">＋ New chat</button>
+      <div id="newChatWrap">
+        <button id="newChat">＋ New chat</button>
+        <div id="newChatMenu" class="hidden">
+          <button class="new-chat-option" data-proposals="true">Growth + Investigation-aware
+            <small>Proactively offers approval-only proposals.</small></button>
+          <button class="new-chat-option" data-proposals="false">Proposal-free
+            <small>Conversation without Growth or Investigation cards.</small></button>
+        </div>
+      </div>
       <div id="chatList"></div>
     </aside>
     <main id="chatPane">
+      <div id="chatModeBar"><button id="proposalToggle" class="on">✦ Proposals on</button></div>
       <div id="log"></div>
       <div id="attachRow"></div>
       <div id="textRow">
@@ -209,6 +232,7 @@ window.addEventListener('resize',fit);
 let lastUiError=null;
 let activeChatId=null;
 let chats=[];
+let proposalsEnabled=true;
 let chatStateLoaded=false;
 let chatStateLoading=false;
 const debugEvents=[];
@@ -222,6 +246,11 @@ function addMessage(role,text){ const d=document.createElement('div');
 window.addMessage=addMessage;
 
 function greeting(){ addMessage('ai',"Hi — I'm Faerie. Type a message to get started."); }
+function visibleMessageText(value){
+  const text=String(value==null?'':value), marker='\n\n<ATTACHED_DOCUMENT_CONTEXT>';
+  const index=text.indexOf(marker);
+  return index>=0?text.slice(0,index):text;
+}
 function renderChats(){ const list=document.getElementById('chatList'); list.innerHTML='';
   chats.forEach(chat=>{ const row=document.createElement('div'); row.className='chat-row';
     const b=document.createElement('button'); b.className='chat-link'+
@@ -231,9 +260,10 @@ function renderChats(){ const list=document.getElementById('chatList'); list.inn
     del.title='Delete conversation'; del.onclick=e=>{ e.stopPropagation(); deleteChat(chat.id, chat.title||'New chat'); };
     row.appendChild(b); row.appendChild(del); list.appendChild(row); }); }
 function applyChatState(state){ if(!state||state.ok===false)return;
-  activeChatId=state.active_chat_id; chats=state.chats||[]; renderChats();
+  activeChatId=state.active_chat_id; chats=state.chats||[];
+  proposalsEnabled=state.proposals_enabled!==false; renderChats(); renderProposalMode();
   const log=document.getElementById('log'); log.innerHTML='';
-  (state.messages||[]).forEach(m=>addMessage(m.role==='user'?'me':'ai',m.content));
+  (state.messages||[]).forEach(m=>addMessage(m.role==='user'?'me':'ai',visibleMessageText(m.content)));
   if(!(state.messages||[]).length)greeting(); }
 function openChat(id){ if(id===activeChatId)return;
   if(window.pywebview&&pywebview.api&&pywebview.api.switch_chat)
@@ -262,7 +292,8 @@ function showTyping(on){ const log=document.getElementById('log');
 function showExchange(r){ showTyping(false); if(!r||r.empty) return;
   // the user's message was already rendered by sendText — only add the reply
   if(r.text) addMessage('ai', r.text);
-  if(r.chats){ chats=r.chats; activeChatId=r.active_chat_id||activeChatId; renderChats(); }
+  if(r.chats){ chats=r.chats; activeChatId=r.active_chat_id||activeChatId;
+    proposalsEnabled=r.proposals_enabled!==false; renderChats(); renderProposalMode(); }
   if(filesOpen) filesRefresh(); } // a /file may have created or updated a doc
 
 function resizeComposer(){ const box=document.getElementById('textIn'); box.style.height='auto';
@@ -326,9 +357,27 @@ document.getElementById('textIn').addEventListener('keydown', e=>{
   if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendText(); }
 });
 
-document.getElementById('newChat').onclick=()=>{
-  if(window.pywebview&&pywebview.api&&pywebview.api.new_chat)
-    pywebview.api.new_chat().then(applyChatState).catch(()=>{});
+const newChatMenu=document.getElementById('newChatMenu');
+document.getElementById('newChat').onclick=e=>{
+  e.stopPropagation(); newChatMenu.classList.toggle('hidden');
+};
+document.querySelectorAll('.new-chat-option').forEach(option=>{
+  option.onclick=e=>{ e.stopPropagation(); newChatMenu.classList.add('hidden');
+    const enabled=option.dataset.proposals==='true';
+    if(window.pywebview&&pywebview.api&&pywebview.api.new_chat)
+      pywebview.api.new_chat(enabled).then(applyChatState).catch(()=>{});
+  };
+});
+document.addEventListener('click',()=>newChatMenu.classList.add('hidden'));
+function renderProposalMode(){ const button=document.getElementById('proposalToggle');
+  button.classList.toggle('on',proposalsEnabled);
+  button.textContent=proposalsEnabled?'✦ Proposals on · Growth + Investigations':'Proposals off';
+  button.title=proposalsEnabled?'Disable Growth and Investigation proposals for this chat':
+    'Enable Growth and Investigation proposals for this chat';
+}
+document.getElementById('proposalToggle').onclick=()=>{
+  if(window.pywebview&&pywebview.api&&pywebview.api.set_chat_proposals_enabled)
+    pywebview.api.set_chat_proposals_enabled(!proposalsEnabled).then(applyChatState).catch(()=>{});
 };
 
 document.getElementById('minimize').onclick=()=>{

@@ -1,5 +1,7 @@
 """Tests for the companion's persona system and context-aware prompt building."""
+import base64
 import os
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -15,6 +17,34 @@ from livingpc.companion.brain import Companion, StubChat  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class ScriptedChat:
+    def __init__(self, *replies):
+        self.replies = list(replies)
+
+    def reply(self, system, messages, max_tokens=400):
+        return self.replies.pop(0)
+
+
+class CapturingChat:
+    def __init__(self):
+        self.calls = []
+
+    def reply(self, system, messages, max_tokens=400):
+        self.calls.append(messages)
+        return "Okay."
+
+
+class ScriptedScout:
+    def __init__(self, *results):
+        self.results = list(results)
+        self.contexts = []
+
+    def review(self, context):
+        self.contexts.append(context)
+        return self.results.pop(0) if self.results else {
+            "decision": "none", "reason": "", "question": "", "proposals": []}
 
 
 def test_personas_exist():
@@ -49,6 +79,52 @@ def test_companion_prompt_uses_memory_and_screen():
         c.close()
 
 
+def test_text_attachment_remains_available_to_follow_up_turns():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        chat = CapturingChat()
+        companion = Companion(cfg=cfg, chat=chat)
+        companion.reply("Please read my resume.", attachments=[{
+            "kind": "text", "name": "resume.docx",
+            "text": "Built deployment automation and database tooling.",
+        }])
+        companion.reply("What did my resume say?")
+
+        prior_user_turn = chat.calls[1][0]["content"]
+        assert "Built deployment automation" in prior_user_turn
+        assert "ATTACHED_DOCUMENT_CONTEXT" in prior_user_turn
+        stored = companion.chats.messages(companion.chat_id)[0]["content"]
+        assert "Built deployment automation" in stored
+        companion.close()
+
+
+def test_dropped_document_uses_native_attachment_extraction_and_original_name():
+    import companion
+    api = companion.Api()
+    payload = base64.b64encode(
+        b"A dropped project note with concrete context.").decode("ascii")
+
+    result = api.attach_dropped_file("project-note.md", "text/markdown", payload)
+
+    assert result["ok"] is True
+    assert result["attachment"]["kind"] == "text"
+    assert result["attachment"]["name"] == "project-note.md"
+    assert "dropped project note" in result["attachment"]["text"]
+
+
+def test_dropped_file_transfer_is_bounded_before_extraction():
+    import companion
+    api = companion.Api()
+    api._MAX_DROP_BYTES = 3
+    payload = base64.b64encode(b"four").decode("ascii")
+
+    result = api.attach_dropped_file("too-large.txt", "text/plain", payload)
+
+    assert result["ok"] is False
+    assert "too large" in result["message"]
+
+
 def test_companion_prompt_has_read_only_lifecycle_context():
     with tempfile.TemporaryDirectory() as d:
         cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
@@ -56,6 +132,617 @@ def test_companion_prompt_has_read_only_lifecycle_context():
         prompt = c.system_prompt()
         assert "read-only architecture reference" in prompt
         assert "Cultivation Lifecycle" in prompt
+        c.close()
+
+
+def test_companion_proactively_scouts_patterns_and_can_offer_several_investigations():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        prompt = c.system_prompt()
+        assert "PATTERN SCOUTING IS PART OF ORDINARY CONVERSATION" in prompt
+        assert "without waiting for them to ask" in prompt
+        assert "at most three distinct items" in prompt
+        assert "separate start_investigation block for each" in prompt
+        c.close()
+
+
+def test_proposal_scout_gate_is_behavioral_not_a_fixed_topic_vocabulary():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        scout = ScriptedScout(
+            {"decision": "none", "reason": "", "question": "", "proposals": []})
+        companion = Companion(
+            cfg=cfg, chat=ScriptedChat("Grammar explanation.", "Nice progress."),
+            proposal_scout=scout)
+
+        companion.reply("Can you explain Korean grammar?")
+        assert scout.contexts == []
+
+        companion.reply("I started studying Korean grammar again.")
+        assert len(scout.contexts) == 1
+        assert scout.contexts[0]["signals"]["action"] is True
+        companion.close()
+
+
+def test_proposal_scout_uses_the_same_gate_across_unrelated_growth_domains():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        goals.create("overgoal", "Health & Energy", description="Exercise, sleep, and health.")
+        goals.create("overgoal", "Money & Resources", description="Budgeting and finances.")
+        goals.create("overgoal", "Relationships & Belonging",
+                     description="Family, friends, and difficult conversations.")
+        goals.close()
+        scout = ScriptedScout(*[
+            {"decision": "none", "reason": "", "question": "", "proposals": []}
+            for _ in range(3)])
+        companion = Companion(
+            cfg=cfg, chat=ScriptedChat("Good.", "Good.", "I hear you."),
+            proposal_scout=scout)
+
+        companion.reply("I started exercising every morning.")
+        companion.reply("I decided to make a weekly budget.")
+        companion.reply("I keep avoiding a conversation with my sister because I feel anxious.")
+
+        assert len(scout.contexts) == 3
+        assert all(len(context["growth_tree"]) >= 4 for context in scout.contexts)
+        assert scout.contexts[0]["signals"]["action"] is True
+        assert scout.contexts[1]["signals"]["action"] is True
+        assert scout.contexts[2]["signals"]["struggle"] is True
+        companion.close()
+
+
+def test_upwork_action_scout_can_propose_growth_and_existing_investigation_context():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"),
+                     filing_offer_min_chars=20)
+        goals = GoalStore(cfg.memory_db_path)
+        money = goals.create("overgoal", "Money & Resources")
+        career = goals.create("subgoal", "Career & Building Things", parent_id=money)
+        project = goals.create(
+            "subgoal", "Run Upwork automation micro-test", parent_id=career,
+            description="Validate freelance automation demand through a bounded experiment.")
+        goals.close()
+        investigations = CuriosityStore(cfg.memory_db_path)
+        investigation_id = investigations.add_curiosity(
+            "Find project filters that preserve interest in freelance work.",
+            "Upwork Project Selection Filter")
+        investigations.close()
+        scout = ScriptedScout({
+            "decision": "propose", "reason": "Two grounded updates.", "question": "",
+            "proposals": [
+                {"action": "create_leaf", "label": "Reposition Upwork profile",
+                 "directive": "Rewrite the profile around Python automation with AI/LLM work.",
+                 "reasoning": "This is the next concrete preparation step.",
+                 "confidence": 0.94, "target_node_id": project, "priority": "normal"},
+                {"action": "add_investigation_context", "label": "AI/LLM preference",
+                 "directive": "I prefer automation projects that involve AI or LLMs.",
+                 "reasoning": "This directly narrows the project-selection filter.",
+                 "confidence": 0.96, "investigation_id": investigation_id},
+            ],
+        })
+        companion = Companion(
+            cfg=cfg, chat=ScriptedChat("That preference gives us a clear positioning."),
+            proposal_scout=scout)
+
+        rendered = companion.reply(
+            "I definitely prefer automation that has AI/LLM involved; help me update my profile.")
+        proposals = companion.pending_proposals()
+
+        assert [item["action"] for item in proposals] == [
+            "create_leaf", "add_investigation_context"]
+        assert proposals[0]["target_node_id"] == project
+        assert proposals[1]["investigation_id"] == investigation_id
+        assert any(item["title"] == "Run Upwork automation micro-test"
+                   and "freelance automation" in item["description"]
+                   for item in scout.contexts[0]["growth_tree"])
+        assert any(item["label"] == "Upwork Project Selection Filter"
+                   for item in scout.contexts[0]["investigations"])
+        assert "/file" not in rendered
+        companion.close()
+
+
+def test_proposal_free_chat_skips_scout_and_explicit_request_offers_enable():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        scout = ScriptedScout()
+        companion = Companion(cfg=cfg, chat=ScriptedChat("unused"), proposal_scout=scout)
+        companion.new_chat(proposals_enabled=False)
+
+        rendered = companion.reply("Propose this as a Leaf in my Growth tree.")
+
+        assert "proposal-free" in rendered
+        assert "Turn on" in rendered
+        assert scout.contexts == []
+        assert companion.pending_proposals() == []
+        companion.close()
+
+
+def test_enabled_chat_can_decline_an_ungrounded_explicit_proposal_request():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        scout = ScriptedScout({
+            "decision": "decline",
+            "reason": "There is not yet a concrete action or unresolved pattern to place.",
+            "question": "", "proposals": [],
+        })
+        companion = Companion(
+            cfg=cfg, chat=ScriptedChat("We can keep talking about it."),
+            proposal_scout=scout)
+
+        rendered = companion.reply("Propose this in my Growth tree.")
+
+        assert "not yet a concrete action" in rendered
+        assert companion.pending_proposals() == []
+        companion.close()
+
+
+def test_proposal_mode_and_pending_cards_persist_per_chat():
+    response = (
+        '<<<faerie_proposal\n{"action":"start_investigation","label":"Study friction",'
+        '"directive":"Understand what makes study sessions hard to begin."}\n'
+        'faerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        aware_chat = companion.chat_id
+        companion.reply("I keep avoiding study even when I want to learn.")
+        assert companion.pending_proposals()[0]["label"] == "Study friction"
+
+        free_chat = companion.new_chat(proposals_enabled=False)
+        assert companion.proposals_enabled is False
+        assert companion.switch_chat(aware_chat) is True
+        assert companion.proposals_enabled is True
+        assert companion.pending_proposals()[0]["label"] == "Study friction"
+        companion.close()
+
+        reopened = Companion(cfg=cfg, chat=StubChat(), chat_id=free_chat)
+        assert reopened.proposals_enabled is False
+        assert reopened.pending_proposals() == []
+        assert reopened.switch_chat(aware_chat) is True
+        assert reopened.pending_proposals()[0]["label"] == "Study friction"
+        reopened.close()
+
+
+def test_existing_chat_database_migrates_to_proposals_enabled():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.companion.history import ChatStore
+
+        path = os.path.join(directory, "m.db")
+        database = sqlite3.connect(path)
+        try:
+            database.execute(
+                "CREATE TABLE companion_chat (id TEXT PRIMARY KEY,title TEXT NOT NULL,"
+                "created_at TEXT NOT NULL,updated_at TEXT NOT NULL)")
+            database.commit()
+        finally:
+            database.close()
+
+        store = ChatStore(path)
+        chat_id = store.create()
+
+        assert store.proposals_enabled(chat_id) is True
+        assert store.list()[0]["proposals_enabled"] is True
+
+
+def test_approved_goal_progress_adds_evidence_without_completing_leaf():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Learning & Growth")
+        korean = goals.create("subgoal", "Korean Language", parent_id=root)
+        leaf = goals.create("task", "Study Korean grammar", parent_id=korean)
+        goals.close()
+        scout = ScriptedScout({
+            "decision": "propose", "reason": "Equivalent Leaf exists.", "question": "",
+            "proposals": [{
+                "action": "record_goal_progress", "label": "Korean grammar progress",
+                "directive": "Started studying Korean grammar again.",
+                "reasoning": "The existing Leaf already owns this work.",
+                "confidence": 0.95, "target_node_id": leaf,
+            }],
+        })
+        companion = Companion(
+            cfg=cfg, chat=ScriptedChat("Good restart."), proposal_scout=scout)
+        companion.reply("I started studying Korean grammar again.")
+        applied = companion.approve_proposal(0)
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            node = goals.get(leaf)
+            tree = goals.tree()
+            pending = [tree]
+            rendered = None
+            while pending:
+                candidate = pending.pop()
+                if candidate["id"] == leaf:
+                    rendered = candidate
+                    break
+                pending.extend(candidate.get("children", []))
+            assert node["status"] == "active"
+            assert rendered["evidence"][0]["source_kind"] == "companion_chat"
+            assert "Started studying" in rendered["evidence"][0]["label"]
+        finally:
+            goals.close()
+        assert "completion status did not change" in applied
+        companion.close()
+
+
+def test_approved_branch_proposal_persists_semantic_role():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        goals.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"create_branch","label":"Freelance launch",'
+            '"directive":"Land a first small automation contract.",'
+            '"reasoning":"This is a finite outcome inside the money domain.",'
+            f'"confidence":0.92,"target_node_id":{root},"semantic_role":"project"}}\n'
+            'faerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        companion.reply("Help me start a freelance launch project.")
+        companion.approve_proposal(0)
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            child = goals.conn.execute(
+                "SELECT id FROM goal_node WHERE parent_id=?", (root,)).fetchone()
+            assert goals.semantic_role(int(child["id"]))["role"] == "project"
+        finally:
+            goals.close()
+        companion.close()
+
+
+def test_companion_exposes_core_commands_for_the_slash_menu():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        values = {item["value"].strip() for item in c.available_commands()}
+        assert {"/browser", "/file", "/undo", "/projects", "/skills", "/teach", "/recalibrate"} <= values
+        c.close()
+
+
+def test_browser_slash_command_explains_usage_without_creating_a_task():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=StubChat())
+        rendered = companion.reply("/browser")
+        assert "/browser <real form URL>" in rendered
+        from livingpc.browser_assistant import BrowserTaskStore
+        assert BrowserTaskStore(cfg.memory_db_path).list_active() == []
+        companion.close()
+
+
+def test_browser_slash_command_creates_task_without_model_proposal():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=StubChat())
+        rendered = companion.reply(
+            "/browser https://forms.example/profile | "
+            "Professional title: Automation Engineer")
+        assert "Browser task ready" in rendered
+        from livingpc.browser_assistant import BrowserTaskStore
+        tasks = BrowserTaskStore(cfg.memory_db_path).list_active()
+        assert len(tasks) == 1
+        assert tasks[0]["origin"] == "https://forms.example"
+        assert tasks[0]["status"] == "awaiting_domain_approval"
+        assert "Professional title" not in tasks[0]
+        companion.close()
+
+
+def test_browser_slash_command_uses_attached_document_text():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=StubChat())
+        rendered = companion.reply(
+            "/browser https://forms.example/profile",
+            attachments=[{"kind": "text", "name": "resume.txt",
+                          "text": "Professional title: Automation Engineer"}],
+        )
+        assert "Browser task ready" in rendered
+        from livingpc.browser_assistant import BrowserTaskStore
+        store = BrowserTaskStore(cfg.memory_db_path)
+        public_task = store.list_active()[0]
+        private_task = store.get(public_task["id"], private=True)
+        assert "resume.txt" in private_task["source_context"]
+        assert "Automation Engineer" in private_task["source_context"]
+        companion.close()
+
+
+def test_browser_slash_command_rejects_upwork():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=StubChat())
+        rendered = companion.reply(
+            "/browser https://www.upwork.com/freelancers/settings | Title: Engineer")
+        assert "Upwork does not permit" in rendered
+        from livingpc.browser_assistant import BrowserTaskStore
+        assert BrowserTaskStore(cfg.memory_db_path).list_active() == []
+        companion.close()
+
+
+def test_companion_can_propose_and_create_a_guarded_browser_task():
+    response = (
+        "I can prepare that as a visible browser task.\n"
+        '<<<faerie_proposal\n{"action":"browser_task","label":"Update profile",'
+        '"url":"https://forms.example/profile","directive":"Fill the visible profile form",'
+        '"source_context":"Professional title: Automation Engineer",'
+        '"reasoning":"The user explicitly requested this form update.","confidence":1.0}\n'
+        "faerie_proposal>>>"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply("Fill https://forms.example/profile using my title.")
+        assert "Prepare a visible browser form task" in rendered
+        assert companion.pending_proposal()["action"] == "browser_task"
+        applied = companion.approve_proposal(0)
+        assert "Browser task ready" in applied
+        from livingpc.browser_assistant import BrowserTaskStore
+        assert BrowserTaskStore(cfg.memory_db_path).list_active()[0]["origin"] == "https://forms.example"
+        companion.close()
+
+
+def test_companion_rejects_upwork_browser_proposals_and_prompts_for_draft_only():
+    response = (
+        '<<<faerie_proposal\n{"action":"browser_task","label":"Upwork profile",'
+        '"url":"https://www.upwork.com/freelancers/settings","directive":"Fill profile",'
+        '"source_context":"Title: Engineer","confidence":1.0}\nfaerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        assert companion.pending_proposal() is None
+        assert "nothing changed" in companion.reply("Fill my Upwork profile.")
+        prompt = companion.system_prompt()
+        assert "Never emit browser_task for Upwork" in prompt
+        assert "upwork-profile-draft" in prompt
+        companion.close()
+
+
+def test_companion_keeps_distinct_proposal_batch_and_discards_exact_duplicate():
+    first = (
+        "Two patterns look worth following.\n"
+        '<<<faerie_proposal\n{"action":"start_investigation","label":"Agency as a Signal",'
+        '"description":"Track the trapped response across contexts.","reason":"It repeats."}\n'
+        "faerie_proposal>>>\n"
+        '<<<faerie_proposal\n{"action":"start_investigation","label":"Upwork Project Selection",'
+        '"description":"Find work filters that preserve interest.","reason":"It affects the experiment."}\n'
+        "faerie_proposal>>>\n"
+        '<<<faerie_proposal\n{"action":"start_investigation","label":"Agency as a Signal",'
+        '"description":"Duplicate wording.","reason":"Duplicate."}\n'
+        "faerie_proposal>>>"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat(first))
+        rendered = c.reply("What patterns do you see?")
+        proposals = c.pending_proposals()
+        assert [item["label"] for item in proposals] == [
+            "Agency as a Signal", "Upwork Project Selection"]
+        assert rendered.count("Track as a new investigation:") == 2
+        assert "Duplicate wording" not in rendered
+        c.close()
+
+
+def test_companion_can_approve_one_proposal_without_losing_the_other():
+    response = (
+        '<<<faerie_proposal\n{"action":"start_investigation","label":"Agency as a Signal",'
+        '"description":"Track agency reactions.","reason":"It repeats."}\nfaerie_proposal>>>\n'
+        '<<<faerie_proposal\n{"action":"start_investigation","label":"Upwork Project Selection",'
+        '"description":"Find a useful selection filter.","reason":"It affects the next move."}\nfaerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat(response))
+        c.reply("Track both.")
+        result = c.approve_proposal(1)
+        assert "Upwork Project Selection" in result
+        assert [item["label"] for item in c.pending_proposals()] == ["Agency as a Signal"]
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            assert [item["label"] for item in store.list_curiosities("active")] == [
+                "Upwork Project Selection"]
+        finally:
+            store.close()
+        c.close()
+
+
+def test_corrective_context_retires_only_the_affected_pending_proposal():
+    response = (
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Draft rate guidance for profile",'
+        '"description":"Research a defensible starting hourly rate."}\n'
+        'faerie_proposal>>>\n'
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Upwork Project Selection Filter",'
+        '"description":"Find which automation projects are worth pursuing."}\n'
+        'faerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(
+            cfg=cfg, chat=ScriptedChat(response, "That is a reasonable starting approach."))
+        companion.reply("I am planning my Upwork profile and project selection.")
+
+        companion.reply(
+            "I don't need to worry much about rate right now; I'll start at $50/hr.")
+
+        assert [item["label"] for item in companion.pending_proposals()] == [
+            "Upwork Project Selection Filter"]
+        companion.close()
+
+
+def test_corrected_proposal_is_replaced_while_unrelated_card_remains():
+    first = (
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Draft rate guidance for profile",'
+        '"description":"Research a defensible starting hourly rate."}\n'
+        'faerie_proposal>>>\n'
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Upwork Project Selection Filter",'
+        '"description":"Find which automation projects are worth pursuing."}\n'
+        'faerie_proposal>>>'
+    )
+    refined = (
+        'That simplifies the rate decision.\n'
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Rate feedback after first clients",'
+        '"description":"Revisit rate only after real profile and client feedback."}\n'
+        'faerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(first, refined))
+        companion.reply("I am planning my Upwork profile and project selection.")
+
+        companion.reply(
+            "I don't want the current rate proposal; instead revisit rate after clients.")
+
+        assert [item["label"] for item in companion.pending_proposals()] == [
+            "Upwork Project Selection Filter", "Rate feedback after first clients"]
+        companion.close()
+
+
+def test_companion_can_dismiss_one_pending_proposal_without_applying_it():
+    response = (
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Agency as a Signal","description":"Track agency reactions."}\n'
+        'faerie_proposal>>>\n'
+        '<<<faerie_proposal\n{"action":"start_investigation",'
+        '"label":"Upwork Project Selection","description":"Find a useful filter."}\n'
+        'faerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        companion.reply("Track both possibilities.")
+
+        assert companion.dismiss_proposal(0) is True
+        assert [item["label"] for item in companion.pending_proposals()] == [
+            "Upwork Project Selection"]
+        assert companion.dismiss_proposal(9) is False
+        companion.close()
+
+
+def test_companion_suggests_and_approves_context_for_an_existing_investigation():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(cfg.memory_db_path)
+        investigation_id = store.add_curiosity(
+            "Understand when obligation creates a trapped response.", "Agency")
+        store.close()
+        context = (
+            "The user notices an internal clock that treats coworker requests as urgent "
+            "even without an actual deadline. Deliberately slowing down feels relieving "
+            "and uncomfortable at the same time."
+        )
+        response = (
+            "This looks connected to Agency.\n"
+            f'<<<faerie_proposal\n{{"action":"add_investigation_context",'
+            f'"label":"Agency","investigation_id":{investigation_id},'
+            f'"directive":"{context}","reasoning":"It is another obligation-linked pull.",'
+            '"confidence":0.91}\nfaerie_proposal>>>'
+        )
+        c = Companion(cfg=cfg, chat=ScriptedChat(response))
+        prompt = c.system_prompt()
+        assert f"id={investigation_id} Agency" in prompt
+        assert "propose add_investigation_context instead" in prompt
+        assert "never attach context silently" in prompt
+        rendered = c.reply("Slowing down feels relieving but uncomfortable.")
+        assert "Add this context to the **Agency** Investigation" in rendered
+        assert c.pending_proposals()[0]["investigation_id"] == investigation_id
+
+        applied = c.approve_proposal(0)
+        assert "will inform its next questions and synthesis" in applied
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            saved = store.contexts(investigation_id)
+            assert len(saved) == 1
+            assert "internal clock" in saved[0]["note"]
+            assert saved[0]["source_kind"] == "chat"
+        finally:
+            store.close()
+        c.close()
+
+
+def test_investigation_context_proposal_recovers_common_model_field_variants():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(cfg.memory_db_path)
+        investigation_id = store.add_curiosity(
+            "Understand agency as a physiological response.",
+            "Agency as a Physiological Signal")
+        store.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"add_investigation_context",'
+            '"investigation":"Agency as a Physiological Signal",'
+            '"context":"Slowing down feels relieving and uncomfortable.",'
+            '"reason":"This is another agency-linked body response."}\n'
+            'faerie_proposal>>>'
+        )
+        c = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = c.reply("Can we add this context to the Agency investigation?")
+
+        assert "Add this context to the **Agency as a Physiological Signal** Investigation" in rendered
+        proposal = c.pending_proposals()[0]
+        assert proposal["investigation_id"] == investigation_id
+        assert proposal["directive"] == "Slowing down feels relieving and uncomfortable."
+        assert proposal["reasoning"] == "This is another agency-linked body response."
+        assert proposal["confidence"] == c.PROPOSAL_CONFIDENCE_GATE
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            assert store.contexts(investigation_id) == []
+        finally:
+            store.close()
+        c.close()
+
+
+def test_invalid_investigation_context_block_never_leaves_an_empty_chat_bubble():
+    response = (
+        '<<<faerie_proposal\n{"action":"add_investigation_context",'
+        '"label":"Missing Investigation","context":"Some context."}\n'
+        'faerie_proposal>>>'
+    )
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = c.reply("Add this to the missing Investigation.")
+        assert "couldn't match that proposal" in rendered
+        assert c.pending_proposals() == []
         c.close()
 
 
@@ -354,6 +1041,7 @@ def test_companion_api_has_no_voice_methods():
                     "hotkey_talk", "_ensure_ears", "_on_wake", "_hotkey_work"):
         assert not hasattr(api, removed), removed
     assert hasattr(api, "send")
+    assert hasattr(api, "approve_proposal")
     assert hasattr(api, "get_reflection")
     assert hasattr(api, "refine_reflection")
 
@@ -371,6 +1059,11 @@ def test_companion_ui_is_plain_text_chat_no_voice():
     assert 'pywebview.api.send' in html
     assert '<textarea id="textIn"' in html
     assert 'id="sidebar"' in html
+    assert 'id="newChatMenu"' in html
+    assert 'Growth + Investigation-aware' in html
+    assert 'Proposal-free' in html
+    assert 'id="proposalToggle"' in html
+    assert 'set_chat_proposals_enabled' in html
     assert 'id="newChat"' in html
     assert 'e.key===\'Enter\'&&!e.shiftKey' in html
     assert 'user-select:text' in html

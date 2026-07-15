@@ -1,6 +1,7 @@
 """Encrypted persistent multi-chat history for the Companion."""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import uuid
@@ -19,6 +20,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS companion_chat (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    proposals_enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -33,6 +35,17 @@ CREATE TABLE IF NOT EXISTS companion_message (
 );
 CREATE INDEX IF NOT EXISTS idx_companion_message_chat
 ON companion_message(chat_id, id);
+CREATE TABLE IF NOT EXISTS companion_pending_proposal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(chat_id, position),
+    FOREIGN KEY (chat_id) REFERENCES companion_chat(id)
+);
+CREATE INDEX IF NOT EXISTS idx_companion_pending_proposal_chat
+ON companion_pending_proposal(chat_id, position);
 """
 
 
@@ -42,6 +55,12 @@ class ChatStore:
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {row["name"] for row in conn.execute(
+                "PRAGMA table_info(companion_chat)").fetchall()}
+            if "proposals_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE companion_chat ADD COLUMN "
+                    "proposals_enabled INTEGER NOT NULL DEFAULT 1")
 
     @contextmanager
     def _connect(self):
@@ -53,12 +72,14 @@ class ChatStore:
         finally:
             conn.close()
 
-    def create(self, title: str = "New chat") -> str:
+    def create(self, title: str = "New chat", *, proposals_enabled: bool = True) -> str:
         chat_id, timestamp = uuid.uuid4().hex, _now()
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO companion_chat (id,title,created_at,updated_at) VALUES (?,?,?,?)",
-                (chat_id, crypto.enc(title), timestamp, timestamp),
+                "INSERT INTO companion_chat "
+                "(id,title,proposals_enabled,created_at,updated_at) VALUES (?,?,?,?,?)",
+                (chat_id, crypto.enc(title), int(bool(proposals_enabled)),
+                 timestamp, timestamp),
             )
         return chat_id
 
@@ -75,12 +96,94 @@ class ChatStore:
     def list(self) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id,title,created_at,updated_at FROM companion_chat "
+                "SELECT id,title,proposals_enabled,created_at,updated_at FROM companion_chat "
                 "ORDER BY updated_at DESC"
             ).fetchall()
         return [{"id": row["id"], "title": crypto.dec(row["title"]),
+                 "proposals_enabled": bool(row["proposals_enabled"]),
                  "created_at": row["created_at"], "updated_at": row["updated_at"]}
                 for row in rows]
+
+    def proposals_enabled(self, chat_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT proposals_enabled FROM companion_chat WHERE id=?", (str(chat_id),)
+            ).fetchone()
+        return bool(row and row["proposals_enabled"])
+
+    def set_proposals_enabled(self, chat_id: str, enabled: bool) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM companion_chat WHERE id=?", (str(chat_id),)
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                "UPDATE companion_chat SET proposals_enabled=?,updated_at=? WHERE id=?",
+                (int(bool(enabled)), _now(), str(chat_id)),
+            )
+            if not enabled:
+                conn.execute(
+                    "DELETE FROM companion_pending_proposal WHERE chat_id=?", (str(chat_id),))
+        return True
+
+    def pending_proposals(self, chat_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM companion_pending_proposal WHERE chat_id=? "
+                "ORDER BY position,id", (str(chat_id),)
+            ).fetchall()
+        proposals = []
+        for row in rows:
+            try:
+                value = json.loads(crypto.dec(row["payload"]) or "")
+            except (TypeError, ValueError):
+                continue
+            if isinstance(value, dict):
+                proposals.append(value)
+        return proposals
+
+    def replace_pending_proposals(self, chat_id: str, proposals: list[dict]) -> None:
+        timestamp = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM companion_pending_proposal WHERE chat_id=?", (str(chat_id),))
+            for position, proposal in enumerate(list(proposals or [])[:3]):
+                if not isinstance(proposal, dict):
+                    continue
+                payload = crypto.enc(json.dumps(proposal, ensure_ascii=False))
+                conn.execute(
+                    "INSERT INTO companion_pending_proposal "
+                    "(chat_id,position,payload,created_at) VALUES (?,?,?,?)",
+                    (str(chat_id), int(position), payload, timestamp),
+                )
+
+    def pop_pending_proposal(self, chat_id: str, index: int) -> dict | None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id,payload FROM companion_pending_proposal WHERE chat_id=? "
+                "ORDER BY position,id", (str(chat_id),)
+            ).fetchall()
+            try:
+                row = rows[int(index)]
+            except (IndexError, TypeError, ValueError):
+                return None
+            conn.execute(
+                "DELETE FROM companion_pending_proposal WHERE id=?", (int(row["id"]),))
+            remaining = conn.execute(
+                "SELECT id FROM companion_pending_proposal WHERE chat_id=? "
+                "ORDER BY position,id", (str(chat_id),)
+            ).fetchall()
+            for position, item in enumerate(remaining):
+                conn.execute(
+                    "UPDATE companion_pending_proposal SET position=? WHERE id=?",
+                    (int(position), int(item["id"])),
+                )
+        try:
+            value = json.loads(crypto.dec(row["payload"]) or "")
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
 
     def messages(self, chat_id: str) -> list[dict]:
         with self._connect() as conn:
@@ -168,6 +271,8 @@ class ChatStore:
             ).fetchone()
             if not row:
                 return False
+            conn.execute(
+                "DELETE FROM companion_pending_proposal WHERE chat_id=?", (str(chat_id),))
             conn.execute("DELETE FROM companion_message WHERE chat_id=?", (str(chat_id),))
             conn.execute("DELETE FROM companion_chat WHERE id=?", (str(chat_id),))
         return True

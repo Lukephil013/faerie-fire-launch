@@ -65,6 +65,28 @@ def test_memory_html_inline_script_parses_with_node():
         assert result.returncode == 0, result.stderr or result.stdout
 
 
+def test_command_center_has_guarded_browser_task_cards_and_domain_controls():
+    html = _html()
+    script = _script()
+    render = _function_body(script, "renderBrowserTasks")
+    buttons = _function_body(script, "browserTaskButtons")
+    actions = _function_body(script, "runBrowserTaskAction")
+    permissions = _function_body(script, "renderBrowserPermissions")
+
+    assert 'id="cc-browser-tasks"' in html
+    assert 'id="settings-browser-domains"' in html
+    assert "browserTaskButtons(task)" in render
+    assert "review_ready" in buttons and "Fill these fields" in buttons
+    assert "buttons.push(['cancel'" in buttons
+    assert "command_browser_approve_domain" in actions
+    assert "command_browser_scan" in actions
+    assert "command_browser_fill" in actions
+    assert "command_browser_finish" in actions
+    assert "command_browser_revoke" in script
+    assert "data-browser-revoke" in permissions
+    assert "save manually" in script
+
+
 def test_growth_focus_questions_filter_already_submitted_answers():
     script = _script()
     answered = _function_body(script, "goalAnsweredQuestionKeys")
@@ -101,13 +123,14 @@ def test_investigation_synthesis_is_explicit_and_reviewable():
     script = _script()
     render = _function_body(script, "curSynthesisHtml")
     bind = _function_body(script, "bindCurCard")
+    synthesize = _function_body(script, "synthesizeCuriosity")
 
     assert "cur.synthesis_due" in render
     assert "new experiment outcome" in render
     assert "Previous approved interpretation" in render
     assert "Approve edited interpretation" in render
     assert "Review with new evidence" in render
-    assert "curiosity_synthesize" in bind
+    assert "curiosity_synthesize" in synthesize
     assert "curiosity_synthesis_decide" in bind
     assert "curiosity_person_reconcile" in bind
     assert "curiosity_person_proposal" in bind
@@ -123,12 +146,12 @@ def test_suggested_investigations_are_bounded_and_never_autostart():
     assert "Nothing starts automatically" in render
     assert "Never suggest this topic" in render
     assert "What this could change" in render
-    assert "curiosity_candidate_suggest" in bind
+    assert "Look for worthwhile Investigations" not in render
+    assert "curiosity_candidate_suggest" not in bind
     assert "curiosity_candidate_action" in bind
     assert "candidate-start" in bind
     assert "sensitive topic" in bind
     assert "Starting Investigation" in bind
-    assert "instead of creating a duplicate" in bind
 
 
 def test_related_investigations_can_be_compared_and_merged_with_loading_feedback():
@@ -165,6 +188,80 @@ def test_investigation_exploration_threads_separate_directions_and_roll_up():
     assert "candidate-direction" in candidates
     assert "Create a thread inside" in candidates
     assert "Start as a separate Investigation" in candidates
+
+
+def test_investigation_workspace_has_overview_shelf_and_focused_resumable_session():
+    html = _html()
+    script = _script()
+    overview = _function_body(script, "curOverviewHtml")
+    session = _function_body(script, "renderCuriositySession")
+
+    assert 'class="curiosity-shell"' in html
+    assert 'id="cur-workspace"' in html and 'id="cur-shelf"' in html
+    assert 'id="cur-session"' in html and 'id="cur-session-content"' in html
+    assert "Recommended next step" in overview and "Investigation at a glance" in overview
+    assert "Investigation shelf" in script and "Switch investigations without losing your place" in script
+    assert "Save & continue" in session and "Exit session" in session
+    assert "curDraft:" in session and "contextDocumentHtml" in session
+    assert "curiosity_answer" in session
+    assert "ffCuriositySession" in script and "ffCuriosityQueue" in script
+
+
+def test_investigation_understanding_review_is_synthesis_only():
+    script = _script()
+    review = _function_body(script, "curUnderstandingReviewHtml")
+    open_details = _function_body(script, "openCuriosityDetails")
+    render = _function_body(script, "renderCuriosity")
+
+    assert "Current working interpretation" in review
+    assert "Run a synthesis for this Investigation" in review
+    assert "Previous approved interpretation" in review
+    assert "Updated interpretation" in review and "Previous interpretation" in review
+    assert "What Faerie knows so far" in review
+    assert "What remains unknown" in review
+    assert "Exceptions or counterevidence" in review
+    assert "Possible next experiments" in review
+    assert "curLoopHtml" not in review and "curThreadsHtml" not in review
+    assert "curPersonModelHtml" not in review
+    assert "curiosityDetailsMode=mode" in open_details
+    assert "function openCuriosityDetails(focusSelector,mode='understanding')" in script
+    assert "understandingOnly?curUnderstandingReviewHtml" in render
+    assert "focusedManagement" in render
+    assert "placementOnly?curPlacementReviewHtml" in render
+    assert "curThreadsHtml(selected)" not in render and "curLoopHtml(selected)" not in render
+
+
+def test_investigation_sessions_show_progress_proposals_and_advance_the_queue():
+    script = _script()
+    progress = _function_body(script, "curSessionUnderstandingProgressHtml")
+    finish = _function_body(script, "exitCuriositySession")
+    step = _function_body(script, "curRecommendedStep")
+    render = _function_body(script, "renderCuriosity")
+
+    assert "Estimated understanding" in progress and "Synthesis confidence" in progress
+    assert "proactive proposal checkpoint" in progress
+    assert "curQueuedIds" in finish and "nextQueued" in finish
+    assert "Continuing with the next queued Investigation" in finish
+    assert "answeredTotal>=15" in finish and "continueCuriosity" in finish
+    assert "kind:'proposals'" in step
+    assert step.index("if(suggestions)") < step.index("if(questions)")
+    assert "curProposalReviewHtml" in render and "bindCuriosityProposals" in render
+
+
+def test_investigation_primary_actions_preserve_existing_engine_and_management_controls():
+    script = _script()
+    begin = _function_body(script, "beginCuriositySession")
+    bind = _function_body(script, "bindCuriosityOverview")
+    render = _function_body(script, "renderCuriosity")
+
+    assert "continueCuriosity" in begin
+    assert "curiosity_set" in bind
+    assert "curiosity_reactivate" in bind
+    assert "bindCandidatePanel" in render
+    assert "bindRelatedInvestigationPanel" in render
+    assert "bindCuriosityUnderstanding" in render
+    assert "bindCuriosityPlacement" in render
+    assert "Review current understanding" in script and "현재 이해 검토" in script
 
 
 def test_tree_gardening_explains_new_evidence_and_requires_approval():
@@ -280,8 +377,8 @@ def test_growth_map_skin_switches_between_tree_and_solar_system():
     layout = _function_body(script, "buildGoalConstellation")
 
     assert 'id="settings-growth-skin"' in html
-    assert '<option value="tree">Living tree</option>' in html
-    assert '<option value="solar">Solar system</option>' in html
+    assert '<option value="tree">Living Tree</option>' in html
+    assert '<option value="solar">Solar System</option>' in html
     assert "ffGrowthMapSkin" in script
     assert "localStorage.setItem('ffGrowthMapSkin'" in setting
     assert "classList.toggle('skin-solar'" in setting
@@ -291,8 +388,23 @@ def test_growth_map_skin_switches_between_tree_and_solar_system():
     assert "planet-shine" in constellation
     assert "rings" in layout
     assert ".growth-map-tree.skin-solar" in html
-    assert "'Growth map style':'성장 지도 스타일'" in script
-    assert "'Solar system':'태양계'" in script
+    assert "'Growth Map Style':'성장 지도 스타일'" in script
+    assert "'Solar System':'태양계'" in script
+
+
+def test_growth_map_is_viewport_locked_compact_and_gold_framed():
+    html = _html()
+
+    assert "#view-goals { height:100vh; box-sizing:border-box; overflow:hidden; padding:0 4px 4px; }" in html
+    assert 'id="goal-ai-strip"' not in html
+    assert ".growth-map-main { height:100%; min-height:0; overflow:hidden; }" in html
+    assert "gap:4px; align-items:stretch; height:100%; min-height:0" in html
+    assert ".growth-map-main .growth-map-tree { flex:1 1 auto; height:auto; min-height:0;" in html
+    assert 'border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 14px' in html
+    assert ".goal-focus-panel { position:relative; top:0; height:100%; max-height:none; overflow:auto;" in html
+    assert ".growth-map-main .constellation-legend { position:absolute; z-index:8; top:17px; left:17px; right:17px;" in html
+    assert "box.classList.add('dragging','panning-all')" in html
+    assert "box.classList.remove('dragging','panning-all')" in html
 
 
 def test_leaf_panel_has_one_agent_entry_and_hides_step_checklist_controls():
@@ -317,13 +429,95 @@ def test_leaf_panel_has_one_agent_entry_and_hides_step_checklist_controls():
 def test_primary_navigation_uses_compact_icon_rows_instead_of_pills():
     html = _html()
 
-    assert "nav .tab::before,.group-label::before" in html
-    assert 'nav .tab[data-view="self"]::before' in html
-    assert 'nav .tab[data-view="goals"]::before' in html
-    assert 'nav .tab[data-view="curiosity"]::before' in html
+    assert "nav .tab .nav-icon" in html
+    assert html.count('class="nav-icon"') >= 3
     assert "border-radius:7px" in html
     assert "background:rgba(23,28,25,.94)" in html
     assert "box-shadow:inset 2px 0 0 var(--green)" in html
+
+
+def test_command_center_rail_cards_share_the_portrait_gold_frame():
+    html = _html()
+
+    assert "header > .self-panel.self-identity-card" in html
+    assert "#self-profile-widgets > .command-widget" in html
+    assert "#self-dashboard > .command-widget" in html
+    assert 'border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 14px' in html
+
+
+def test_command_center_rail_lifts_profile_and_compacts_gold_cards():
+    html = _html()
+
+    assert "header { position:relative" in html
+    assert "header .brand { position:absolute" in html
+    assert "top:15px; right:20px" in html
+    assert "gap:0; padding:4px 9px 2px" in html
+    assert "#self-rail-dashboard { display:flex; flex-direction:column; gap:4px; margin:6px 0 4px; }" in html
+    assert "#self-dashboard > .command-widget { margin-bottom:4px; }" in html
+
+
+def test_primary_navigation_lives_inside_the_gold_profile_container():
+    html = _html()
+    script = _script()
+    header = html[html.index("<header>"):html.index("</header>")]
+
+    assert 'class="rail-primary-nav"' in header
+    assert header.count('class="nav-icon"') == 3
+    assert 'data-view="self"' in header
+    assert 'data-view="goals"' in header
+    assert 'data-view="curiosity"' in header
+    assert 'id="self-portrait"' in header
+    assert header.index('id="self-level-widget"') < header.index('id="self-portrait"') < header.index('class="rail-primary-nav"')
+    assert ".rail-primary-nav { display:grid; gap:2px" in html
+    assert "nav .tab,.rail-primary-nav .tab" in html
+    assert "querySelectorAll('nav .tab,.rail-primary-nav .tab')" in script
+
+
+def test_shared_sidebar_is_persistent_and_collapsible_across_primary_views():
+    html = _html()
+    script = _script()
+    activate = _function_body(script, "activateView")
+
+    assert 'id="rail-collapse"' in html
+    assert "body.rail-collapsed #app" in html
+    assert "ffRailCollapsed" in script
+    assert "if(railDash) railDash.style.display=''" in activate
+    assert "Collapse sidebar" in script and "사이드바 접기" in script
+
+
+def test_portrait_customizer_stays_bounded_inside_compact_rail_portrait():
+    html = _html()
+
+    assert ".self-customizer { position:absolute; z-index:12; top:44px; right:8px" in html
+    assert "max-height:calc(100% - 52px); overflow-y:auto; box-sizing:border-box" in html
+    assert ".self-customizer .actions button { padding:6px 7px; font-size:10.5px; white-space:nowrap; }" in html
+
+
+def test_command_center_rail_uses_large_nav_icons_and_keeps_today_first():
+    html = _html()
+    start = html.index("function selfProfileWidgetsHtml(data)")
+    end = html.index("function selfSidebarHtml(data)", start)
+    render = html[start:end]
+
+    assert "width:30px; height:30px" in html
+    assert render.index("command-widget-today") < render.index("command-widget-threads")
+    assert "command-widget-state" not in render
+    assert "command-widget-milestone" not in render
+    assert "Current State" not in render
+    assert "Next Milestone" not in render
+
+
+def test_command_center_level_bar_uses_global_xp_remainder():
+    html = _html()
+    start = html.index("function selfLevelWidgetHtml(data)")
+    end = html.index("function selfProfileWidgetsHtml(data)", start)
+    render = html[start:end]
+
+    assert "data.curiosity&&data.curiosity.global_xp" in render
+    assert "Math.floor(totalXp/100)+1" in render
+    assert "xpIntoLevel=totalXp%100" in render
+    assert "self-xp-bar" in render
+    assert "xpIntoLevel+' / 100 XP" in render
 
 
 def test_all_buttons_and_navigation_controls_receive_quick_hover_help():
@@ -342,7 +536,7 @@ def test_all_buttons_and_navigation_controls_receive_quick_hover_help():
     assert "첨부된 기록을 삭제하지 않고" in helper
     assert "nav .tab" in helper and ".group-label" in helper
     assert "aria-description" in show
-    assert "button,nav .tab,.group-label" in script
+    assert "button,nav .tab,.rail-primary-nav .tab,.group-label" in script
     assert "},140)" in show
 
 
@@ -358,6 +552,59 @@ def test_leaf_workspace_renders_optional_suggestions_retry_and_clear():
     assert "data-coach-shortcut" not in html
     assert "leaf-coach-retry" in error
     assert "goal_leaf_workspace_clear" in script
+
+
+def test_command_center_frame_sits_flush_to_top_and_near_right_edge():
+    html = _html()
+
+    assert "#view-self { height:100vh; box-sizing:border-box; overflow:hidden; padding:0 4px 0 0; }" in html
+
+
+def test_command_center_is_viewport_locked_without_investigation_strip():
+    html = _html()
+
+    assert "command-investigations-panel" not in html
+    assert 'id="self-investigations-cards"' not in html
+    assert ".command-chat-col { display:flex; flex-direction:column; gap:0; height:100%; min-height:0;" in html
+    assert ".command-chat-panel { flex:1 1 auto; height:100%; min-height:0;" in html
+    assert ".cc-log { flex:1; min-height:300px; overflow:auto;" in html
+
+
+def test_command_center_uses_distinct_compact_bubbles_for_both_sides():
+    html = _html()
+    script = _script()
+    compact = _function_body(script, "commandConversationHtml")
+    render = _function_body(script, "renderCommandChat")
+
+    assert ".cc-message.assistant { align-self:flex-start; max-width:88%;" in html
+    assert "background:linear-gradient(135deg,rgba(86,82,164,.24),rgba(48,72,112,.22));" in html
+    assert ".cc-message.user { align-self:flex-end; background:rgba(47,227,160,.12);" in html
+    assert ".cc-message p + p { margin-top:8px; }" in html
+    assert "line-height:1.45" in html
+    assert "split(/\\n[ \\t]*\\n+/)" in compact
+    assert "commandConversationHtml(commandMessageText(m))" in render
+
+
+def test_command_center_renders_copy_ready_text_without_literal_quote_arrows():
+    html = _html()
+    script = _script()
+    compact = _function_body(script, "commandConversationHtml")
+    render = _function_body(script, "renderCommandChat")
+    bind = _function_body(script, "bindCommandCopyBlocks")
+
+    assert ".cc-copy-block" in html
+    assert "Copy-ready text" in compact
+    assert "lines.some(line=>/^\\s*>/.test(line)||copyLine(line))" in compact
+    assert "copyLine=line=>line.trim().match" in compact
+    assert "replace(/^\\s*>\\s?/,''" in compact
+    assert "flushPlain(); quoteLines.push" in compact
+    assert "rendered+=copyBlock(standalone[1])" in compact
+    assert "split(/```" in compact
+    assert "data-cc-copy-block" in compact
+    assert "clipboard_write" in bind and "navigator.clipboard.writeText" in bind
+    assert "result&&result.ok!==false" in bind
+    assert "document.execCommand('copy')" in bind
+    assert "bindCommandCopyBlocks(log)" in render
 
 
 def test_leaf_coach_open_failure_clears_stale_loading_message():
@@ -383,13 +630,16 @@ def test_leaf_workspace_offers_stable_responses_and_reviewable_proposals():
 def test_text_is_selectable_and_right_click_has_copy_paste_menu():
     html = _html()
     script = _script()
+    gui = (ROOT / "gui.py").read_text(encoding="utf-8")
 
     assert "user-select:text" in html
     assert ".text-context-menu" in html
     assert "installTextContextMenu" in script
     assert "clipboard_write" in script and "clipboard_read" in script
     assert "contextmenu" in script
-    assert "text_select=True" in (ROOT / "gui.py").read_text(encoding="utf-8")
+    assert "text_select=True" in gui
+    assert "SetClipboardData(13, handle)" in gui
+    assert "GetClipboardData(13)" in gui
     assert "confirmed resolutions will remain" in script
 
 
@@ -710,11 +960,11 @@ def test_mascot_visibility_setting_persists_and_defaults_on():
     assert "!=='0'" in script
     assert "mascot-disabled" in refresh
     assert "localStorage.setItem('ffFaerieMascotEnabled'" in setter
-    assert "'Show Faerie mascot':'페어리 마스코트 표시'" in script
+    assert "'Show Faerie Mascot':'페어리 마스코트 표시'" in script
     assert "'Open Faerie chat':'페어리 채팅 열기'" in script
 
 
-def test_dark_fae_mascot_skin_is_selectable_persistent_and_animated():
+def test_dark_fae_mascot_skin_is_no_longer_user_selectable():
     html = _html()
     script = _script()
     refresh = _function_body(script, "refreshFaerieMascotSetting")
@@ -725,7 +975,7 @@ def test_dark_fae_mascot_skin_is_selectable_persistent_and_animated():
     assert asset.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert 'id="settings-mascot-skin"' in html
     assert '<option value="classic">Pixel Faerie</option>' in html
-    assert '<option value="dark">Dark flame faerie</option>' in html
+    assert '<option value="dark">' not in html
     assert 'src="assets/dark-fae-mascot.png"' in html
     assert "dark-fae-wing-echo" in html and "dark-fae-flame" in html
     assert "@keyframes dark-fae-wings" in html
@@ -737,8 +987,9 @@ def test_dark_fae_mascot_skin_is_selectable_persistent_and_animated():
     assert "persistDurableUiPreference('mascot_skin'" in setter
     assert "ui_preferences_get" in script
     assert "hydrateDurableUiPreferences().then(()=>info)" in script
-    assert "'Faerie style':'페어리 스타일'" in script
-    assert "'Dark flame faerie':'어둠의 불꽃 페어리'" in script
+    assert "['classic','cat','knight','meditate'].includes" in script
+    assert "'Faerie Style':'페어리 스타일'" in script
+    assert "Dark flame faerie" not in html
 
 
 def test_pixel_cupid_cat_skin_is_transparent_selectable_and_animated():
@@ -748,13 +999,13 @@ def test_pixel_cupid_cat_skin_is_transparent_selectable_and_animated():
 
     assert asset.exists() and asset.stat().st_size > 50_000
     assert asset.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    assert '<option value="cat">Cupid flower cat</option>' in html
+    assert '<option value="cat">Cupid Flower Cat</option>' in html
     assert 'src="assets/cupid-cat-mascot.png"' in html
     assert "cupid-cat-aura" in html and "cupid-cat-heart" in html
     assert "@keyframes cupid-cat-breathe" in html
     assert "@keyframes cupid-cat-heart" in html
-    assert "['classic','dark','cat','knight','meditate'].includes" in script
-    assert "'Cupid flower cat':'큐피드 꽃 고양이'" in script
+    assert "['classic','cat','knight','meditate'].includes" in script
+    assert "'Cupid Flower Cat':'큐피드 꽃 고양이'" in script
 
 
 def test_knight_and_meditating_pixel_cat_skins_are_transparent_and_selectable():
@@ -769,15 +1020,154 @@ def test_knight_and_meditating_pixel_cat_skins_are_transparent_and_selectable():
         raw = asset.read_bytes()
         assert asset.exists() and asset.stat().st_size > 50_000
         assert raw.startswith(b"\x89PNG\r\n\x1a\n") and raw[25] == 6  # RGBA PNG
-    assert '<option value="knight">Knight star cat</option>' in html
-    assert '<option value="meditate">Meditating lotus cat</option>' in html
+    assert '<option value="knight">Knight Star Cat</option>' in html
+    assert '<option value="meditate">Meditating Lotus Cat</option>' in html
     assert 'src="assets/knight-cat-mascot.png"' in html
     assert 'src="assets/meditating-cat-mascot.png"' in html
     assert "knight-cat-skin" in html and "meditating-cat-skin" in html
     assert "@keyframes pixel-cat-breathe" in html
     assert "@keyframes pixel-cat-particle" in html
-    assert "'Knight star cat':'별의 기사 고양이'" in script
-    assert "'Meditating lotus cat':'명상하는 연꽃 고양이'" in script
+    assert "'Knight Star Cat':'별의 기사 고양이'" in script
+    assert "'Meditating Lotus Cat':'명상하는 연꽃 고양이'" in script
+
+
+def test_sidebar_quote_and_duplicate_mascot_tooltip_are_removed():
+    html = _html()
+    assert "Stay curious, seeker." not in html
+    assert 'aria-label="Open Faerie chat"' in html
+    assert 'title="Open Faerie chat"' not in html
+    assert 'data-help-en="Open Faerie Chat"' in html
+
+
+def test_settings_are_grouped_explained_and_use_an_in_app_soul_name_editor():
+    html = _html()
+    script = _script()
+    editor = _function_body(script, "openEditSoul")
+    reports = _function_body(script, "runActivityReport")
+
+    for heading in ("Soul & Account", "Appearance & Language", "Usage & Reports", "Advanced Tools"):
+        assert heading in html
+    assert "Edit Soul Name" in html
+    assert 'id="soul-name-modal"' in html
+    assert "soul-name-modal').classList.add('open')" in editor
+    assert "prompt('Soul name:'" not in script
+    assert "Soul purpose (why this Soul exists)" not in script
+    assert 'id="settings-usage" class="settings-usage-card"' in html
+    assert 'id="settings-report-kind"' in html
+    assert "Today’s Report — Activity From Today" in html
+    assert "Full Report — Complete Activity History" in html
+    assert 'id="settings-generate-report"' in html
+    assert "generate_daily_report" in reports and "generate_full_report" in reports
+    assert "data-help-en=" in html and "data-help-ko=" in html
+
+
+def test_settings_use_only_the_active_language_and_explain_today_cost():
+    html = _html()
+    script = _script()
+    usage = _function_body(script, "refreshSettingsUsageLine")
+    language = _function_body(script, "refreshSettingsLanguageLabel")
+
+    settings = html[html.index('id="settings-drawer"'):html.index('id="soul-name-modal"')]
+    assert "API Usage · 사용량" not in settings
+    assert ">Language<span" in settings
+    assert "Language · 언어" not in settings
+    assert 'id="settings-usage-breakdown"' in settings
+    assert "Main Chat" in usage and "GoalAI / Leaf" in usage and "Today Focus" in usage
+    assert "+usd.toFixed(2)+' USD'" in usage
+    assert "Current: English — change language" in language
+    assert "현재: 한국어 — 언어 변경" in language
+
+
+def test_settings_language_change_waits_for_confirmed_restart():
+    html = _html()
+    script = _script()
+    open_modal = _function_body(script, "openLanguageRestartModal")
+    confirm = _function_body(script, "confirmLanguageRestart")
+
+    assert 'id="language-restart-modal"' in html
+    assert "Nothing on the current screen changes before confirmation" in open_modal
+    assert "Save any text you have not submitted yet" in open_modal
+    assert "Investigation answer drafts are saved automatically" in open_modal
+    assert "pendingLanguageTarget=(APP_LANG==='ko')?'en':'ko'" in open_modal
+    assert "app_set_language" not in open_modal
+    assert "enableKoreanUI" not in open_modal
+    assert "app_restart_language(pendingLanguageTarget,currentView)" in confirm
+    assert "$('settings-language').onclick=openLanguageRestartModal" in script
+
+
+def test_command_composer_shows_slash_menu_and_typing_state_as_chat_feedback():
+    html = _html()
+    script = _script()
+    menu = _function_body(script, "renderCommandMenu")
+    bind = _function_body(script, "bindCommandCenter")
+
+    assert 'id="cc-command-menu"' in html
+    for command in ("/browser ", "/file ", "/undo ", "/projects", "/skills", "/teach ", "/recalibrate"):
+        assert "value:'" + command + "'" in script
+    assert "commandCenterCommands.filter" in menu
+    assert "renderCommandMenu(input.value)" in bind
+    assert "loadCommandCenterCommands()" in bind
+    assert "command_commands" in script
+    assert "Message Faerie… Type / for commands, or use + to attach context." in html
+    log_pos = html.index('id="cc-log"')
+    status_pos = html.index('id="cc-status"')
+    compose_pos = html.index('<div class="cc-compose-input-wrap">')
+    assert log_pos < status_pos < compose_pos
+    assert "cc-chat-status" in html
+    assert "cc-compose-status" not in html
+
+
+def test_main_chat_accepts_bounded_multi_file_drag_and_drop_attachments():
+    html = _html()
+    script = _script()
+    bind = _function_body(script, "bindCommandCenter")
+    reader = _function_body(script, "commandDroppedFileData")
+
+    assert 'id="cc-drop-overlay"' in html
+    assert "Drop files to attach" in html
+    assert ".cc-chat-main.file-drop-active .cc-drop-overlay" in html
+    assert "COMMAND_DROP_MAX_FILES=8" in script
+    assert "COMMAND_DROP_MAX_BYTES=20_000_000" in script
+    assert "command_attach_dropped_file(name,file.type||'',data)" in script
+    assert "commandAttachments.push(result.attachment)" in script
+    assert "reader.readAsDataURL(file)" in reader
+    assert "chatPanel.addEventListener('dragenter'" in bind
+    assert "chatPanel.addEventListener('drop'" in bind
+    assert "event.dataTransfer.dropEffect='copy'" in bind
+    assert "event.preventDefault()" in bind
+
+
+def test_command_center_renders_and_approves_distinct_proposal_cards():
+    script = _script()
+    render = _function_body(script, "renderPendingProposal")
+    approve = _function_body(script, "approvePendingProposal")
+    dismiss = _function_body(script, "dismissPendingProposal")
+
+    assert "pending_proposals" in render
+    assert "proposals.map" in render
+    assert "data-cc-proposal-approve" in render
+    assert "data-cc-proposal-dismiss" in render
+    assert "command_approve_proposal(index)" in approve
+    assert "command_dismiss_proposal(index)" in dismiss
+    assert "Applying proposal" in approve
+    gui = (ROOT / "gui.py").read_text(encoding="utf-8")
+    assert "def command_approve_proposal" in gui
+    assert "def command_dismiss_proposal" in gui
+    assert "def command_commands" in gui
+
+
+def test_command_center_offers_per_chat_growth_and_investigation_proposal_modes():
+    html = (ROOT / "livingpc/ui/memory.html").read_text(encoding="utf-8")
+    gui = (ROOT / "gui.py").read_text(encoding="utf-8")
+
+    assert 'id="cc-new-chat-menu"' in html
+    assert "Growth + Investigation-aware" in html
+    assert "Proposal-free" in html
+    assert 'id="cc-proposal-mode"' in html
+    assert "command_new_chat(enabled)" in html
+    assert "command_set_chat_proposals_enabled(enabled)" in html
+    assert "def command_new_chat(self, proposals_enabled=True)" in gui
+    assert "def command_set_chat_proposals_enabled" in gui
 
 
 def test_every_mascot_skin_mirrors_toward_cursor_or_screen_center():
@@ -1071,7 +1461,25 @@ def test_leaf_completion_edits_and_opens_only_the_approved_downstream_handoff():
     assert "이전 Leaf에서 승인된 인계" in incoming
     assert "raw conversation" in render and "원문 대화" in render
     assert "handoffLeafId?goalFind" in advance
-    assert "completion_handoff&&view.completion_handoff.destination_leaf_id" in script
+    assert "view.completion_handoff||view.recovery_handoff" in script
+
+
+def test_completed_legacy_leaf_can_prepare_an_editable_approved_only_handoff():
+    html = _html()
+    script = _script()
+    recovery = _function_body(script, "leafWorkspaceRecoveryHtml")
+    prepare = _function_body(script, "prepareMissingLeafHandoff")
+    editor = _function_body(script, "leafWorkspaceProposalEditorHtml")
+    decision = _function_body(script, "decideLeafWorkspaceProposal")
+
+    assert 'id="leaf-workspace-recovery"' in html
+    assert "Prepare Missing Handoff" in recovery and "누락된 인계 준비" in recovery
+    assert "raw conversation" in recovery and "원문 대화" in recovery
+    assert "goal_leaf_workspace_prepare_handoff" in prepare
+    assert "handoff_recovery" in editor
+    assert "Approve handoff" in script and "인계 승인" in script
+    assert "proposal.type==='handoff_recovery'" in decision
+    assert "view.recovery_handoff" in decision
 
 
 def test_all_details_remember_their_collapsed_state():
@@ -1163,3 +1571,146 @@ def test_documents_attach_to_calibration_and_investigation_context():
     assert "context_attachment_add" in binder
     assert "context_attachment_remove" in binder
     assert "setRangeText" in binder
+
+
+def test_command_center_hides_persisted_attachment_context_from_message_bubbles():
+    script = _script()
+    message_text = _function_body(script, "commandMessageText")
+
+    assert "ATTACHED_DOCUMENT_CONTEXT" in message_text
+    assert "text.slice(0,markerIndex)" in message_text
+
+
+def test_approved_chat_context_is_visible_in_the_investigation_record():
+    script = _script()
+    context = _function_body(script, "curApprovedContextHtml")
+    card = _function_body(script, "curCardHtml")
+
+    assert "cur.investigation_contexts" in context
+    assert "Approved conversation context" in context
+    assert "future Investigation questions and syntheses" in context
+    assert "curApprovedContextHtml(cur)" in card
+
+
+def test_investigations_first_open_has_loading_retry_and_single_inflight_request():
+    script = _script()
+    activate = _function_body(script, "activateView")
+    loading = _function_body(script, "showCuriosityLoading")
+    failure = _function_body(script, "showCuriosityLoadError")
+    load = _function_body(script, "loadCuriosity")
+
+    assert "Loading investigations" in loading
+    assert "탐구 불러오는 중" in loading
+    assert "Investigations did not finish loading" in failure
+    assert "cur-load-retry" in failure
+    assert "loadCuriosity({force:true})" in failure
+    assert "curiosityLoadPromise&&!options.force" in load
+    assert "loadBackgroundImages().catch" in load
+    assert "requestAnimationFrame" in load
+    assert "catch(error){ reject(error); }" in load
+    assert "curiosityLoadSequence" in load
+    assert "showCuriosityLoadError" in load
+    assert "Promise.resolve(investigationLoad).then" in activate
+
+
+def test_investigation_shelf_search_grows_and_keeps_keyboard_focus():
+    html = _html()
+    script = _script()
+    shelf = _function_body(script, "curShelfHtml")
+    card = _function_body(script, "curShelfCardHtml")
+    bind = _function_body(script, "bindCuriosityOverview")
+
+    assert "filtered.map(c=>curShelfCardHtml(c,selected))" in shelf
+    assert "CUR_SHELF_PAGE_SIZE" not in script
+    assert "cur-shelf-prev" not in shelf and "cur-shelf-next" not in shelf
+    assert "curBoardQuery=search.value" in bind
+    assert "const cursor=search.selectionStart" in bind
+    assert "refreshed.focus()" in bind
+    assert "refreshed.setSelectionRange(cursor,cursor)" in bind
+    assert 'tabindex="0" role="button"' in card
+    assert "card.onclick=event=>" in bind
+    assert "event.key==='Enter'||event.key===' '" in bind
+    assert "overflow-y:auto" in html
+    assert ".cur-shelf-card:hover" in html
+
+
+def test_investigation_advanced_record_is_a_drawer_and_primary_learning_tools_stay_visible():
+    html = _html()
+    script = _script()
+    overview = _function_body(script, "curOverviewHtml")
+    open_details = _function_body(script, "openCuriosityDetails")
+    close_details = _function_body(script, "closeCuriosityDetails")
+    related = _function_body(script, "bindRelatedInvestigationPanel")
+    thread_controls = _function_body(script, "bindCuriosityThreadControls")
+
+    assert '<aside id="cur-management"' in html
+    assert '<details id="cur-management"' not in html
+    assert "cur-management-backdrop" in html
+    assert "data-cur-explore" in overview
+    assert "data-cur-explore-help" in overview
+    assert "data-cur-explore-example" in overview
+    assert "Work situations" in overview
+    assert "data-cur-synthesize" in overview
+    assert "details.hidden=false" in open_details
+    assert "details.hidden=true" in close_details
+    assert "card.querySelector('.cur-thread-add')" not in related
+    assert "card.querySelector('.cur-thread-add')" in thread_controls
+
+
+def test_exploration_thread_picker_uses_current_investigation_context_and_three_choices():
+    script = _script()
+    overview = _function_body(script, "curOverviewHtml")
+    suggest = _function_body(script, "addCuriosityThread")
+    choices = _function_body(script, "curExplorationSuggestionsHtml")
+    bind = _function_body(script, "bindCuriosityOverview")
+
+    assert "data-cur-explore" in overview
+    assert "curiosity_thread_suggest(cur.id)" in suggest
+    assert "Finding three directions" in suggest
+    assert "Suggested exploration directions" in choices
+    assert "data-cur-thread-option" in choices
+    assert "createCuriosityThread" in bind
+
+
+def test_proposal_checkpoint_keeps_questions_available_and_labels_relevance():
+    script = _script()
+    overview = _function_body(script, "curOverviewHtml")
+    bind = _function_body(script, "bindCuriosityOverview")
+    proposal = _function_body(script, "curSuggestionHtml")
+
+    assert "data-cur-answer-more" in overview
+    assert "Answer more questions" in overview
+    assert "beginCuriositySession(selected,btn)" in bind
+    assert "still_relevant" in proposal
+    assert "needs_revision" in proposal
+    assert "possibly_stale" in proposal
+    assert "relevance_revised_text" in proposal
+
+
+def test_long_working_interpretations_are_split_at_readable_sentence_boundaries():
+    script = _script()
+    paragraphs = _function_body(script, "curParagraphsHtml")
+    review = _function_body(script, "curUnderstandingReviewHtml")
+
+    assert "clean.length<520" in paragraphs
+    assert "const target=clean.length/2" in paragraphs
+    assert "sentences.slice(0,split)" in paragraphs
+    assert "curParagraphsHtml(p.interpretation" in review
+    assert "curParagraphsHtml((previous.payload||{}).interpretation" in review
+
+
+def test_investigation_loading_buttons_keep_visible_labels_and_restore_after_failure():
+    html = _html()
+    script = _script()
+    overview = _function_body(script, "bindCuriosityOverview")
+    session = _function_body(script, "renderCuriositySession")
+    generate = _function_body(script, "continueCuriosity")
+
+    assert "button > .chat-thinking" in html
+    assert "color:inherit" in html
+    assert "button:disabled:has(> .chat-thinking)" in html
+    assert "const originalButtonHtml=create.innerHTML" in overview
+    assert "create.innerHTML=originalButtonHtml" in overview
+    assert "const originalButtonHtml=button.innerHTML" in session
+    assert "button.innerHTML=originalButtonHtml" in session
+    assert "const originalButtonHtml=button?button.innerHTML:''" in generate

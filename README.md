@@ -47,12 +47,24 @@ per-app (games dense, documents sparse).
 ## Install & run (Windows)
 
 ```bash
-pip install -r requirements.txt          # mss, Pillow, psutil, rapidocr
+pip install -r requirements.txt          # app + AI + browser-assistant packages
+python -m playwright install chromium    # one-time dedicated browser runtime
 cp config.example.toml config.toml       # optional; edit knobs + blocklist
 python run.py                            # starts capturing; Ctrl-C to stop
 python run.py --no-ocr                   # store screenshots, skip OCR
 python capture_status.py                 # how much it has captured
 ```
+
+The Command Center browser assistant uses its own visible Chromium profile.
+Faerie asks once per exact website, previews every field, fills only after a
+second approval, and leaves Save/Submit to you. Passwords, MFA, payments,
+identity checks, and Upwork browser automation are excluded.
+
+In Command Center, type `/browser` to see the guided format, or create a task
+directly with `/browser https://permitted.example/profile/edit | Title: Data
+Analyst; availability: part time`. You can attach a text-readable résumé or
+document instead of putting the information after `|`. Always use the real
+edit-form URL; `example.com` is only a documentation placeholder.
 
 The active-window + idle backend uses the Windows API (ctypes + psutil). On
 non-Windows it falls back to a stub backend so the code still imports and the

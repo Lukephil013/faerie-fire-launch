@@ -45,11 +45,13 @@ AREAS = {
     ),
     "companion": Area(
         "Command Center embeds the companion bridge; legacy companion.py is locked unless opted in; "
-        "personal profile adds recent screen context while launch profile uses only explicit chat/memory/investigation context.",
+        "personal profile adds recent screen context while launch profile uses only explicit chat/memory/investigation context; "
+        "approved browser-form tasks use a separate visible Playwright profile and never submit forms.",
         ("companion.py", "livingpc/companion/companion.html", "livingpc/companion/brain.py",
          "livingpc/companion/history.py", "livingpc/companion/personas.py", "livingpc/companion/voice.py",
-         "livingpc/companion/ears.py", "livingpc/memory_context.py"),
-        ("tests/test_companion.py", "tests/test_ears.py"),
+         "livingpc/companion/ears.py", "livingpc/memory_context.py",
+         "livingpc/browser_assistant.py", "skills/upwork-profile-draft/SKILL.md"),
+        ("tests/test_companion.py", "tests/test_ears.py", "tests/test_browser_assistant.py"),
     ),
     "filing": Area(
         "brain dump (companion /file or CLI) -> redact -> doc catalog -> LLM -> append-only marked "
