@@ -78,6 +78,11 @@ class Config:
     companion_proposal_scout_backend: str = ""  # '' => companion_backend
     companion_proposal_scout_model: str = "claude-haiku-4-5"
     companion_memory_max_items: int = 20
+    # How many recent chat messages the companion model actually sees each
+    # turn. Proposal cards + approvals eat slots fast — 12 was ~3 real
+    # exchanges, which made the model confidently "forget" this conversation.
+    # History past the window is stored but invisible to the model.
+    companion_history_max_messages: int = 30
     companion_memory_max_chars: int = 6000
     companion_memory_value_max_chars: int = 500
     companion_inference_max_items: int = 10  # confirmed beliefs shown in the chat prompt

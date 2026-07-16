@@ -444,6 +444,9 @@
   .self-xp-count { text-align:right; font-size:11px; color:var(--muted); margin-top:4px; }
   .thread-row { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:12.5px; color:var(--fg); }
   .thread-row i { width:6px; height:6px; border-radius:999px; background:var(--green); flex:0 0 6px; }
+  [data-leaf-link] { cursor:pointer; }
+  span[data-leaf-link]:hover, .thread-row[data-leaf-link]:hover span {
+    color:var(--cyan); text-decoration:underline dashed; text-underline-offset:3px; }
   .self-portrait { height:220px; margin:0; border-radius:4px; overflow:hidden;
     border:1px solid rgba(112,214,158,.28); background-image:
       linear-gradient(180deg,rgba(217,255,221,.18),rgba(2,10,6,.12)),
@@ -669,6 +672,11 @@
   .cc-copy-block code { font:inherit; }
   .cc-inline-code { padding:1px 5px; border:1px solid rgba(83,231,192,.2); border-radius:5px;
     background:rgba(2,12,9,.48); color:var(--cyan); font:inherit; }
+  .chat-note { color:var(--muted); font-style:italic; }
+  .chat-proposed-label { display:inline-block; font-size:10.5px; font-style:normal;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--cyan);
+    border:1px solid rgba(83,231,192,.32); border-radius:999px; padding:1px 10px 2px;
+    margin:4px 0 2px; background:rgba(83,231,192,.06); }
   .node-link { cursor:pointer; border-bottom:1px dashed rgba(83,231,192,.45);
     transition:color .12s ease,border-color .12s ease; }
   .node-link:hover, .node-link:focus-visible { color:var(--cyan);
@@ -3671,7 +3679,10 @@ function nodeLinkFor(escapedTitle){
   return nodeLinkIndex.get(String(escapedTitle||'').replace(/\s+/g,' ').trim().toLowerCase())||null;
 }
 function conversationHtml(value){
-  return esc(value).replace(/\*\*([^*\n]+)\*\*/g,(match,inner)=>{
+  return esc(value)
+    .replace(/_\(([^_\n]+)\)_/g,'<em class="chat-note">($1)</em>')
+    .replace(/^— (proposed|제안) —$/gm,'<span class="chat-proposed-label">$1</span>')
+    .replace(/\*\*([^*\n]+)\*\*/g,(match,inner)=>{
     const target=nodeLinkFor(inner);
     if(!target) return '<strong>'+inner+'</strong>';
     const hint=target.kind==='goal'
@@ -3681,15 +3692,20 @@ function conversationHtml(value){
       '" data-link-id="'+target.id+'" title="'+hint+'">'+inner+'</strong>';
   });
 }
+function openGrowthNodeById(id){
+  id=parseInt(id,10);
+  if(!Number.isFinite(id)) return;
+  selectedGoalId=id;
+  activateView('goals');
+  if(typeof goalState!=='undefined'&&goalState&&goalState.tree&&goalFind(goalState.tree,id)){
+    selectGrowthNode(id);
+  }
+}
 function followNodeLink(link){
   const id=parseInt(link.dataset.linkId,10);
   if(!Number.isFinite(id)) return;
   if(link.dataset.linkKind==='goal'){
-    selectedGoalId=id;
-    activateView('goals');
-    if(typeof goalState!=='undefined'&&goalState&&goalState.tree&&goalFind(goalState.tree,id)){
-      selectGrowthNode(id);
-    }
+    openGrowthNodeById(id);
   }else{
     activeCuriosityId=id;
     activateView('curiosity');
@@ -5586,19 +5602,22 @@ function selfProfileWidgetsHtml(data){
   const questions=(data.goalAi&&data.goalAi.overview&&data.goalAi.overview.open_questions)||0;
   const picks=(data.todayFocus&&data.todayFocus.picks)||[];
   const threadItems=[
-    proposals?proposals+' proposal(s) waiting for approval':'',
-    questions?questions+' question(s) waiting for you':'',
-    blocked?blocked+' blocked node(s) need care':''
-  ].filter(Boolean).concat(picks.slice(0,3).map(p=>p.title||('Leaf #'+p.id)));
+    proposals?{text:proposals+' proposal(s) waiting for approval'}:null,
+    questions?{text:questions+' question(s) waiting for you'}:null,
+    blocked?{text:blocked+' blocked node(s) need care'}:null
+  ].filter(Boolean).concat(picks.slice(0,3).map(p=>(
+    {text:p.title||('Leaf #'+p.id),leafId:p.id})));
   const todayRows=quests.map(t=>'<label class="self-task '+(t.status==='completed'?'done':'')+'">'+
     '<input type="checkbox" class="self-task-toggle" data-id="'+t.id+'" '+(t.status==='completed'?'checked':'')+'>'+
-    '<span>'+esc(t.title)+'</span></label>');
+    '<span data-leaf-link="'+t.id+'" title="Open this Leaf in Growth">'+esc(t.title)+'</span></label>');
   return '<div class="command-widget command-widget-today"><h3>@Today</h3>'+
       (todayRows.length?selfCollapsibleList(todayRows,4):
         '<div class="self-empty">No active Leaves yet. Add a Leaf in Growth to populate today’s quest list.</div>')+
     '</div>'+
     '<div class="command-widget command-widget-threads"><h3>Active Threads</h3>'+
-      (threadItems.length?threadItems.map(x=>'<div class="thread-row"><i></i><span>'+esc(x)+'</span></div>').join(''):
+      (threadItems.length?threadItems.map(x=>'<div class="thread-row"'+
+        (x.leafId!=null?' data-leaf-link="'+x.leafId+'" title="Open this Leaf in Growth"':'')+
+        '><i></i><span>'+esc(x.text)+'</span></div>').join(''):
         '<div class="self-empty">Nothing pressing right now.</div>')+
     '</div>';
 }
@@ -5624,6 +5643,16 @@ function selfSidebarHtml(data){
 
 function bindSelfDashboard(){
   const calBtn=$('self-open-calibration'); if(calBtn) calBtn.onclick=openSoulCalDrawer;
+  // @Today titles and Active Threads leaf rows jump to the Leaf in Growth.
+  // preventDefault stops the surrounding <label> from toggling the checkbox
+  // when the title text (rather than the box itself) is clicked.
+  document.querySelectorAll('[data-leaf-link]').forEach(el=>{
+    el.onclick=event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      openGrowthNodeById(el.dataset.leafLink);
+    };
+  });
   document.querySelectorAll('.self-task-toggle').forEach(box=>{
     box.onchange=()=>{
       if(!api()) return;

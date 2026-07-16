@@ -520,7 +520,7 @@ def test_companion_rejects_upwork_browser_proposals_and_prompts_for_draft_only()
                      memory_db_path=os.path.join(directory, "m.db"))
         companion = Companion(cfg=cfg, chat=ScriptedChat(response))
         assert companion.pending_proposal() is None
-        assert "nothing changed" in companion.reply("Fill my Upwork profile.")
+        assert "couldn't be staged" in companion.reply("Fill my Upwork profile.")
         prompt = companion.system_prompt()
         assert "Never emit browser_task for Upwork" in prompt
         assert "upwork-profile-draft" in prompt
@@ -741,7 +741,7 @@ def test_invalid_investigation_context_block_never_leaves_an_empty_chat_bubble()
         cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
         c = Companion(cfg=cfg, chat=ScriptedChat(response))
         rendered = c.reply("Add this to the missing Investigation.")
-        assert "couldn't match that proposal" in rendered
+        assert "couldn't be staged" in rendered
         assert c.pending_proposals() == []
         c.close()
 
@@ -1246,7 +1246,7 @@ def test_create_leaf_targeting_a_leaf_is_rejected_before_apply():
         companion = Companion(cfg=cfg, chat=ScriptedChat(response))
         rendered = companion.reply("File the rate guidance as a leaf.")
         assert companion.pending_proposals() == []
-        assert "couldn't match that proposal" in rendered
+        assert "couldn't be staged" in rendered
         companion.close()
 
 
@@ -1321,10 +1321,13 @@ def test_leaf_horizon_caps_create_leaf_proposals_at_open_leaf_limit():
             f'"confidence":0.9,"target_node_id":{project}}}\nfaerie_proposal>>>'
         )
         companion = Companion(cfg=cfg, chat=ScriptedChat(response))
-        companion.reply("Queue up the project search too.")
+        rendered = companion.reply("Queue up the project search too.")
         # Two Leaves are already open (committed + provisional): a third must
-        # not stack — the plan should bend via replan instead.
+        # not stack — the plan should bend via replan instead. And the drop
+        # must be visible, not a silent disappearance.
         assert companion.pending_proposals() == []
+        assert "couldn't be staged" in rendered
+        assert "leaf horizon" in rendered
         companion.close()
 
 
@@ -1560,6 +1563,92 @@ def test_prompt_knows_explorations_and_lists_open_threads():
         companion.close()
 
 
+def test_replan_can_mark_finished_work_complete():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        brainstorm = goals.create("task", "Brainstorm automation wins",
+                                  parent_id=project)
+        evaluate = goals.create("task", "Evaluate and choose one automation task",
+                                parent_id=project)
+        goals.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"replan_project","label":"Debrief replan",'
+            '"directive":"Brainstorm finished with four proven candidates.",'
+            f'"confidence":0.9,"target_node_id":{project},"steps":['
+            f'{{"op":"complete","leaf_id":{brainstorm}}},'
+            f'{{"op":"keep","leaf_id":{evaluate}}}]}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply(
+            "The brainstorm is done — four candidates with proof.")
+        assert "✓ Brainstorm automation wins *(mark complete)*" in rendered
+
+        result = companion.approve_proposal(0)
+        assert "1 marked complete" in result
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            assert goals.get(brainstorm)["status"] == "completed"
+            assert goals.get(evaluate)["status"] == "active"
+            # Completed work stops counting against the horizon.
+            assert goals.open_leaf_count(project) == 1
+        finally:
+            goals.close()
+        companion.close()
+
+
+def test_model_window_is_configurable_and_never_starts_on_assistant():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg.companion_history_max_messages = 6
+        chat = CapturingChat()
+        companion = Companion(cfg=cfg, chat=chat)
+        # Seed an odd-shaped history: a stray assistant message means a fixed
+        # even slice would start on role=assistant (the BadRequestError case).
+        companion.history = [{"role": "assistant", "content": "orphaned"}]
+        for turn in range(4):
+            companion.reply(f"turn {turn}")
+        for messages in chat.calls:
+            assert messages[0]["role"] == "user"
+        # The window carries more than the old 12-message slice would imply:
+        # with the cap at 6 the model still sees multiple prior exchanges.
+        assert len(chat.calls[-1]) >= 5
+        companion.close()
+
+
+def test_out_of_credits_error_is_named_not_opaque():
+    class Boom:
+        def reply(self, *args, **kwargs):
+            raise RuntimeError(
+                "Your credit balance is too low to access the Anthropic API.")
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=Boom())
+        out = c.reply("hello")
+        assert "out of API credits" in out
+        assert "BadRequestError" not in out
+        c.close()
+
+
+def test_prompt_is_honest_about_its_conversation_window():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        prompt = c.system_prompt()
+        assert "WHAT YOU CAN SEE OF THIS CONVERSATION" in prompt
+        assert "Never claim to have read back" in prompt
+        c.close()
+
+
 def test_prompt_instructs_proactive_replanning_over_clarifying_menus():
     with tempfile.TemporaryDirectory() as d:
         cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
@@ -1572,6 +1661,8 @@ def test_prompt_instructs_proactive_replanning_over_clarifying_menus():
         assert "create_leaf never targets a Leaf" in prompt
         assert "in the SAME reply, never as a follow-up" in prompt
         assert "the card itself is the permission step" in prompt
+        assert "PROSE IS NOT A PROPOSAL" in prompt
+        assert "rides alongside" in prompt
         c.close()
 
 
