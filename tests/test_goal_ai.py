@@ -757,6 +757,20 @@ def test_proposal_cap_and_deduplication(world):
     assert len(agents.proposals(ids["sub_a"])) == 3
 
 
+def test_create_child_task_respects_the_leaf_horizon(world):
+    cfg, goals, agents, _, ids = world
+    cfg.goal_ai_leaf_horizon = 2
+    # sub_a already holds task_a; one more brings it to the horizon.
+    goals.create("task", "Provisional next drill", parent_id=ids["sub_a"])
+    proposal_id = agents.add_proposal(ids["sub_a"], AgentProposal(
+        "create_child", ids["sub_a"],
+        {"type": "task", "title": "A third queued step"}, "Stacks the queue"))
+    with pytest.raises(ValueError, match="horizon"):
+        decide_proposal(cfg, proposal_id, "approve")
+    assert agents.get_proposal(proposal_id)["status"] == "stale"
+    assert goals.open_leaf_count(ids["sub_a"]) == 2
+
+
 def test_agent_cannot_propose_into_unrelated_branch(world):
     _, _, agents, _, ids = world
     created = agents.add_proposal(ids["sub_a"], AgentProposal(

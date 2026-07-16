@@ -364,6 +364,87 @@ class TestGeneration(unittest.TestCase):
         self.store.close()
         self.tmp.cleanup()
 
+    def test_stale_open_questions_are_retired_by_review(self):
+        cid = self.store.add_curiosity("work tension", "Agency")
+        stale = self.store.add_item(cid, "question",
+                                    "Do you check your computer after work?",
+                                    confidence=0.8)
+        kept = self.store.add_item(cid, "question",
+                                   "What would satisfy the threat detector?",
+                                   confidence=0.9)
+        answered = self.store.add_item(cid, "question", "seed", confidence=0.9)
+        self.store.mark_answered(answered, "Yes — checking just delays the anxiety.", 1)
+
+        class Reviewer(_FakeModel):
+            def review_questions(self, curiosity, context, questions):
+                verdicts = []
+                for item in questions:
+                    if item["id"] == stale:
+                        verdicts.append({"item_id": item["id"],
+                                         "status": "retired_stale",
+                                         "confidence": 0.9,
+                                         "rationale": "Already answered directly."})
+                    else:
+                        verdicts.append({"item_id": item["id"],
+                                         "status": "still_relevant",
+                                         "confidence": 0.8,
+                                         "rationale": "Still open."})
+                return verdicts
+
+        generate_items(self.mem, self.inf, self.store, cid, Reviewer([]))
+        retired = self.store.get_item(stale)
+        surviving = self.store.get_item(kept)
+        self.assertEqual(retired["status"], "dismissed")
+        self.assertEqual(retired["relevance_status"], "retired_stale")
+        self.assertIn("Already answered", retired["relevance_rationale"])
+        self.assertEqual(surviving["status"], "open")
+        self.assertEqual(surviving["relevance_status"], "still_relevant")
+        # Kept questions record a watermark: the same review doesn't rerun.
+        self.assertEqual(surviving["relevance_based_on_item_id"], answered)
+
+    def test_low_confidence_retirement_is_downgraded_to_keep(self):
+        cid = self.store.add_curiosity("work tension", "Agency")
+        question = self.store.add_item(cid, "question", "Edge case?", confidence=0.8)
+        answered = self.store.add_item(cid, "question", "seed", confidence=0.9)
+        self.store.mark_answered(answered, "some answer", 1)
+
+        class TimidReviewer(_FakeModel):
+            def review_questions(self, curiosity, context, questions):
+                return [{"item_id": item["id"], "status": "retired_stale",
+                         "confidence": 0.5, "rationale": "Maybe stale?"}
+                        for item in questions]
+
+        generate_items(self.mem, self.inf, self.store, cid, TimidReviewer([]))
+        current = self.store.get_item(question)
+        self.assertEqual(current["status"], "open")
+        self.assertEqual(current["relevance_status"], "still_relevant")
+
+    def test_fresh_context_round_makes_room_in_a_full_queue(self):
+        cid = self.store.add_curiosity("work tension", "Agency")
+        weakest = self.store.add_item(cid, "question", "weakest", confidence=0.71)
+        self.store.add_item(cid, "question", "stronger", confidence=0.9)
+        self.store.add_item(cid, "question", "strongest", confidence=0.95)
+        self.store.add_context(cid, "Threat detector does not clock out.",
+                               source_kind="chat")
+        model = _FakeModel([GeneratedItem(
+            "question", "What would let you trust that you're done?", 0.9)])
+
+        # Without the fresh-context flag a full queue still blocks generation.
+        created = generate_items(self.mem, self.inf, self.store, cid, model,
+                                 max_open=3)
+        self.assertEqual(created, 0)
+        self.assertEqual(self.store.get_item(weakest)["status"], "open")
+
+        created = generate_items(self.mem, self.inf, self.store, cid, model,
+                                 max_open=3, fresh_context=True)
+        self.assertEqual(created, 1)
+        evicted = self.store.get_item(weakest)
+        self.assertEqual(evicted["status"], "dismissed")
+        self.assertIn("make room", evicted["relevance_rationale"])
+        open_texts = [item["text"] for item in self.store.open_items(cid)]
+        self.assertIn("What would let you trust that you're done?", open_texts)
+        self.assertEqual(len(open_texts), 3)
+
     def test_question_gate_boundary(self):
         cid = self.store.add_curiosity("fitness goals", "fitness")
         model = _FakeModel([

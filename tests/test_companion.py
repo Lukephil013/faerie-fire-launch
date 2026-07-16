@@ -1136,6 +1136,445 @@ def test_companion_retries_history_restore_if_ready_event_was_missed():
     assert "pywebview.api.chat_state" in html
 
 
+def test_replan_project_restructures_a_projects_leaves_in_one_approval():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore  # noqa: F811
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        # This legacy-shaped restructure lands on 3 open Leaves; the horizon
+        # cap (see test_replan_that_would_exceed_the_horizon_is_rejected) is
+        # relaxed here so the test exercises the mechanics, not the cap.
+        cfg.goal_ai_leaf_horizon = 3
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Run Upwork automation micro-test",
+                               parent_id=root)
+        choose = goals.create("task", "Choose automation niche", parent_id=project)
+        listing = goals.create("task", "Write & post Upwork listing", parent_id=project)
+        rate = goals.create("task", "Draft rate guidance for profile", parent_id=project)
+        goals.close()
+        response = (
+            "Your rate decision reshapes this plan.\n"
+            '<<<faerie_proposal\n{"action":"replan_project","label":"New micro-test plan",'
+            '"directive":"Start from the profile update already underway.",'
+            '"reasoning":"The $50/hr decision and profile work make the old order stale.",'
+            f'"confidence":0.9,"target_node_id":{project},"steps":['
+            '{"op":"create","title":"Update Upwork profile",'
+            '"description":"Refresh profile; note $50/hr starting rate."},'
+            f'{{"op":"rename","leaf_id":{listing},"new_title":"Post listing at $50/hr"}},'
+            f'{{"op":"update","leaf_id":{choose},'
+            '"description":"Only projects passing the AI/novelty filter."},'
+            f'{{"op":"archive","leaf_id":{rate}}}]}}\n'
+            'faerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply(
+            "Can you update the micro-test leaves based on this context?")
+        assert "restructure the plan under" in rendered
+        assert "1. Update Upwork profile *(new)*" in rendered
+        assert "2. Post listing at $50/hr *(was: Write & post Upwork listing)*" in rendered
+        assert "~~Draft rate guidance for profile~~" in rendered
+
+        result = companion.approve_proposal(0)
+        assert "Replanned" in result and "3 ordered steps" in result
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            rows = goals.conn.execute(
+                "SELECT id,status FROM goal_node WHERE parent_id=? "
+                "ORDER BY position,id", (project,)).fetchall()
+            active = [int(r["id"]) for r in rows if r["status"] != "archived"]
+            titles = [goals.get(i)["title"] for i in active]
+            assert titles == ["Update Upwork profile", "Post listing at $50/hr",
+                              "Choose automation niche"]
+            assert goals.get(choose)["description"] == (
+                "Only projects passing the AI/novelty filter.")
+            assert goals.get(rate)["status"] == "archived"
+        finally:
+            goals.close()
+        companion.close()
+
+
+def test_replan_project_requires_a_project_target_and_real_leaves():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        leaf = goals.create("task", "Choose automation niche", parent_id=root)
+        goals.close()
+        bad_target = (
+            '<<<faerie_proposal\n{"action":"replan_project","label":"Plan",'
+            f'"confidence":0.9,"target_node_id":{leaf},"steps":['
+            '{"op":"create","title":"Something"}]}\nfaerie_proposal>>>'
+        )
+        bad_leaf = (
+            '<<<faerie_proposal\n{"action":"replan_project","label":"Plan",'
+            f'"confidence":0.9,"target_node_id":{root},"steps":['
+            '{"op":"rename","leaf_id":99999,"new_title":"Ghost"}]}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(bad_target, bad_leaf))
+        companion.reply("Replan it.")
+        assert companion.pending_proposals() == []
+        companion.reply("Try again.")
+        assert companion.pending_proposals() == []
+        companion.close()
+
+
+def test_create_leaf_targeting_a_leaf_is_rejected_before_apply():
+    # Regression: this used to validate, then blow up with ValueError at
+    # approve time because a Leaf can't parent another Leaf.
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        branch = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        leaf = goals.create("task", "Write & post Upwork listing", parent_id=branch)
+        goals.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"create_leaf",'
+            '"label":"Draft rate guidance for profile",'
+            '"directive":"Research comparable listings.",'
+            f'"confidence":0.82,"target_node_id":{leaf}}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply("File the rate guidance as a leaf.")
+        assert companion.pending_proposals() == []
+        assert "couldn't match that proposal" in rendered
+        companion.close()
+
+
+def test_truncated_proposal_block_never_renders_raw_json():
+    # A reply cut off at the completion cap leaves an unterminated
+    # <<<faerie_proposal tail; the chat must show a retry note, not raw JSON.
+    response = (
+        "Here's the restructure I'd propose.\n"
+        '<<<faerie_proposal\n{"action": "replan_project", "label": "Replan", '
+        '"confidence": 0.9, "target_node_id": 8, "steps": [{"op": "keep", "'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply("Update the leaves based on this context.")
+        assert "<<<faerie_proposal" not in rendered
+        assert '"target_node_id"' not in rendered
+        assert "cut off" in rendered
+        assert "Here's the restructure I'd propose." in rendered
+        assert companion.pending_proposals() == []
+        companion.close()
+
+
+def test_companion_chat_default_completion_window_fits_a_replan_block():
+    from livingpc.companion.brain import ClaudeChat
+    assert ClaudeChat.DEFAULT_MAX_TOKENS >= 1000
+
+
+def test_gui_goal_catalog_bridge_lists_nodes_and_investigations():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        goals.create("task", "Write & post Upwork listing", parent_id=root)
+        goals.close()
+        store = CuriosityStore(cfg.memory_db_path)
+        store.add_curiosity("What filter keeps work interesting?",
+                            "Upwork Project Selection Filter")
+        store.close()
+
+        import gui
+        result = gui.GuiApi(cfg=cfg).goal_catalog()
+        assert result["ok"] is True
+        titles = {node["title"] for node in result["nodes"]}
+        assert {"Money & Resources", "Write & post Upwork listing"} <= titles
+        assert all({"id", "type", "title"} <= set(node) for node in result["nodes"])
+        labels = [item["label"] for item in result["investigations"]]
+        assert labels == ["Upwork Project Selection Filter"]
+
+
+def test_leaf_horizon_caps_create_leaf_proposals_at_open_leaf_limit():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        goals.create("task", "Update Upwork profile", parent_id=project)
+        goals.create("task", "Post listing at $50/hr", parent_id=project)
+        goals.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"create_leaf","label":"Find 3 projects",'
+            '"directive":"Browse and shortlist.",'
+            f'"confidence":0.9,"target_node_id":{project}}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        companion.reply("Queue up the project search too.")
+        # Two Leaves are already open (committed + provisional): a third must
+        # not stack — the plan should bend via replan instead.
+        assert companion.pending_proposals() == []
+        companion.close()
+
+
+def test_replan_that_would_exceed_the_horizon_is_rejected():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        keep_id = goals.create("task", "Update Upwork profile", parent_id=project)
+        done_id = goals.create("task", "Brainstorm automation wins",
+                               parent_id=project, status="completed")
+        goals.close()
+        too_many = (
+            '<<<faerie_proposal\n{"action":"replan_project","label":"Overfull plan",'
+            f'"confidence":0.9,"target_node_id":{project},"steps":['
+            f'{{"op":"keep","leaf_id":{keep_id}}},'
+            '{"op":"create","title":"Post listing"},'
+            '{"op":"create","title":"Find 3 projects"}]}\nfaerie_proposal>>>'
+        )
+        within = (
+            '<<<faerie_proposal\n{"action":"replan_project","label":"Bent plan",'
+            f'"confidence":0.9,"target_node_id":{project},"steps":['
+            f'{{"op":"keep","leaf_id":{done_id}}},'
+            f'{{"op":"keep","leaf_id":{keep_id}}},'
+            '{"op":"create","title":"Post listing"}]}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(too_many, within))
+        companion.reply("Replan it with everything.")
+        assert companion.pending_proposals() == []
+        # Completed Leaves kept as record don't count against the horizon.
+        companion.reply("Okay, bend the plan instead.")
+        assert [p["label"] for p in companion.pending_proposals()] == ["Bent plan"]
+        companion.close()
+
+
+def test_prompt_carries_project_horizons_and_just_in_time_rules():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        goals.create("task", "Update Upwork profile", parent_id=project,
+                     description="Anchor the $50/hr starting rate.")
+        goals.create("task", "Post listing", parent_id=project)
+        goals.close()
+        companion = Companion(cfg=cfg, chat=StubChat())
+        prompt = companion.system_prompt()
+        assert "JUST-IN-TIME LEAVES" in prompt
+        assert "ACTIVE PROJECT HORIZONS" in prompt
+        assert "open[NOW]" in prompt and "open[PROVISIONAL]" in prompt
+        assert "Anchor the $50/hr starting rate." in prompt
+        assert "THE DEBRIEF MOMENT" in prompt
+        companion.close()
+
+
+def test_goalstore_leaf_horizon_reports_open_and_recent_done_leaves():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        now_leaf = goals.create("task", "Update Upwork profile", parent_id=project)
+        next_leaf = goals.create("task", "Post listing", parent_id=project)
+        done = goals.create("task", "Brainstorm wins", parent_id=project,
+                            status="completed")
+        old_done = goals.create("task", "Ancient history", parent_id=project,
+                                status="completed")
+        goals.conn.execute(
+            "UPDATE goal_node SET completed_at='2020-01-01T00:00:00+00:00' WHERE id=?",
+            (old_done,))
+        goals.conn.commit()
+
+        horizon = goals.leaf_horizon()
+        assert goals.open_leaf_count(project) == 2
+        entry = next(p for p in horizon if p["project_id"] == project)
+        assert [leaf["id"] for leaf in entry["open"]] == [now_leaf, next_leaf]
+        assert [leaf["id"] for leaf in entry["recent_done"]] == [done]
+        assert "Upwork micro-test" in entry["path"]
+        goals.close()
+
+
+def test_start_exploration_branches_a_thread_inside_the_investigation():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        store = CuriosityStore(cfg.memory_db_path)
+        cid = store.add_curiosity(
+            "When did the trapped-feeling wire get laid and how does it shape decisions?",
+            "Agency as a Physiological Signal")
+        store.close()
+        response = (
+            "Same story, new route — this fits as an Exploration Thread.\n"
+            '<<<faerie_proposal\n{"action":"start_exploration",'
+            '"label":"Threat Monitoring vs. Task Completion",'
+            '"directive":"After finishing work he still checks the computer; the '
+            'checking delays anxiety rather than resolving it. What would satisfy '
+            'the threat detector?",'
+            f'"confidence":0.85,"investigation_id":{cid}}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply(
+            "Should this be part of the same investigation, just a new route?")
+        assert "Exploration Thread" in rendered
+        # The thread title must survive normalization, not be overwritten by
+        # the investigation's own label.
+        assert "Threat Monitoring vs. Task Completion" in rendered
+
+        result = companion.approve_proposal(0)
+        assert "Branched" in result
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            threads = store.threads(cid)
+            assert [t["title"] for t in threads] == [
+                "Threat Monitoring vs. Task Completion"]
+            assert "threat detector" in threads[0]["directive"]
+        finally:
+            store.close()
+        companion.close()
+
+
+def test_chat_can_rename_merge_and_archive_investigations():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        store = CuriosityStore(cfg.memory_db_path)
+        agency = store.add_curiosity("Trapped-feeling wiring.", "Agency as a Signal")
+        fear = store.add_curiosity("Post-work checking.", "Fear-Based Pressure Cycle")
+        spare = store.add_curiosity("Stale question.", "Old Thread")
+        store.close()
+        rename = (
+            '<<<faerie_proposal\n{"action":"rename_investigation",'
+            f'"label":"Agency as a Signal","investigation_id":{agency},'
+            '"new_title":"Agency as a Physiological Signal","confidence":0.9}\n'
+            'faerie_proposal>>>')
+        merge = (
+            '<<<faerie_proposal\n{"action":"merge_investigations",'
+            f'"label":"Fear-Based Pressure Cycle","investigation_id":{fear},'
+            f'"target_investigation_id":{agency},"confidence":0.9}}\n'
+            'faerie_proposal>>>')
+        archive = (
+            '<<<faerie_proposal\n{"action":"archive_investigation",'
+            f'"label":"Old Thread","investigation_id":{spare},"confidence":0.9}}\n'
+            'faerie_proposal>>>')
+        companion = Companion(cfg=cfg, chat=ScriptedChat(rename, merge, archive))
+        companion.reply("Rename it to the full name.")
+        assert "Agency as a Physiological Signal" in companion.approve_proposal(0)
+        companion.reply("These are one story — merge them.")
+        assert "Merged" in companion.approve_proposal(0)
+        companion.reply("Archive the old one.")
+        assert "Archived" in companion.approve_proposal(0)
+
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            by_id = {c["id"]: c for c in store.list_curiosities()}
+            assert by_id[agency]["label"] == "Agency as a Physiological Signal"
+            assert by_id[agency]["status"] == "active"
+            assert by_id[fear]["status"] == "archived"
+            assert by_id[spare]["status"] == "archived"
+        finally:
+            store.close()
+        companion.close()
+
+
+def test_approving_context_runs_an_immediate_fresh_round():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg.curiosity_backend = "stub"
+        store = CuriosityStore(cfg.memory_db_path)
+        cid = store.add_curiosity("Trapped-feeling wiring.",
+                                  "Agency as a Physiological Signal")
+        store.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"add_investigation_context",'
+            '"label":"Agency as a Physiological Signal",'
+            '"directive":"The threat detector does not clock out with work.",'
+            f'"confidence":0.9,"investigation_id":{cid}}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        companion.reply("Add that to the investigation.")
+        result = companion.approve_proposal(0)
+        assert "Added — this is now approved context" in result
+        assert "fresh round" in result and "queued" in result
+
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            assert [c["note"] for c in store.contexts(cid)] == [
+                "The threat detector does not clock out with work."]
+            # The stub model's round queued items immediately — the context
+            # did not wait for the daily pass.
+            assert len(store.open_items(cid)) >= 1
+        finally:
+            store.close()
+        companion.close()
+
+
+def test_prompt_knows_explorations_and_lists_open_threads():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        store = CuriosityStore(cfg.memory_db_path)
+        cid = store.add_curiosity("Trapped-feeling wiring.",
+                                  "Agency as a Physiological Signal")
+        store.add_thread(cid, "Threat Monitoring",
+                         "What would satisfy the threat detector?")
+        store.close()
+        companion = Companion(cfg=cfg, chat=StubChat())
+        prompt = companion.system_prompt()
+        assert "EXPLORATION THREADS — A REAL FEATURE YOU KNOW ABOUT" in prompt
+        assert "start_exploration" in prompt
+        assert "merge_investigations" in prompt
+        assert "exploration thread: Threat Monitoring" in prompt
+        assert "same restructuring authority over Investigations" in prompt
+        companion.close()
+
+
+def test_prompt_instructs_proactive_replanning_over_clarifying_menus():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        prompt = c.system_prompt()
+        assert "REPLANNING A PROJECT WHEN ITS PLAN GOES STALE" in prompt
+        assert "replan_project" in prompt
+        assert "without being asked" in prompt
+        assert "never answer with a menu of clarifying options" in prompt
+        assert "create_leaf never targets a Leaf" in prompt
+        assert "in the SAME reply, never as a follow-up" in prompt
+        assert "the card itself is the permission step" in prompt
+        c.close()
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

@@ -38,6 +38,11 @@ class ClaudeChat:
     # this turns that into a normal, catchable error within a bounded time.
     _REQUEST_TIMEOUT_SECONDS = 45.0
 
+    #: Proposal blocks (especially replan_project with several steps) do not
+    #: fit in a small completion window; a truncated block renders as raw
+    #: JSON in the chat instead of a card. Keep this comfortably large.
+    DEFAULT_MAX_TOKENS = 1200
+
     def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None):
         from anthropic import Anthropic  # lazy
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -46,7 +51,8 @@ class ClaudeChat:
         self._client = Anthropic(api_key=key, timeout=self._REQUEST_TIMEOUT_SECONDS)
         self.model = model
 
-    def reply(self, system, messages: list[dict], max_tokens: int = 400) -> str:
+    def reply(self, system, messages: list[dict], max_tokens: int | None = None) -> str:
+        max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
         # A list means [static, dynamic] blocks: the static prefix (persona,
         # architecture, filing/skills instructions) is marked cacheable, so
         # the API bills it at ~10% on every turn after the first. This is a
@@ -82,6 +88,8 @@ class ClaudeChat:
                               f"elapsed={time.monotonic() - started:.1f}s")
             raise
         log_diag("chat", f"api call ok elapsed={time.monotonic() - started:.1f}s")
+        if getattr(msg, "stop_reason", "") == "max_tokens":
+            log_diag("chat", f"reply truncated at max_tokens={max_tokens}")
         from ..llm_usage import record_response
         record_response("companion", self.model, msg, time.monotonic() - started)
         return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
@@ -339,6 +347,15 @@ class Companion:
                         line += f"\n  open question: {question}"
                     if suggestion:
                         line += f"\n  open suggestion: {suggestion}"
+                    try:
+                        threads = store.threads(row["id"])
+                    except Exception:
+                        threads = []
+                    for thread in threads[:4]:
+                        status = ("" if thread["status"] == "active"
+                                  else f" [{thread['status']}]")
+                        line += (f"\n  exploration thread: {thread['title']}"
+                                 f"{status} — {thread['directive'][:160]}")
                     lines.append(line)
             finally:
                 store.close()
@@ -515,21 +532,34 @@ class Companion:
             "<<<faerie_proposal\n"
             "{\"action\": one of \"attach_existing\" | \"create_branch\" | "
             "\"create_root_branch\" | \"create_leaf\" | \"rename_node\" | "
-            "\"delete_node\" | \"move_node\" | \"start_investigation\" | "
-            "\"add_investigation_context\" | \"record_goal_progress\" | \"browser_task\",\n"
+            "\"delete_node\" | \"move_node\" | \"replan_project\" | \"start_investigation\" | "
+            "\"add_investigation_context\" | \"start_exploration\" | "
+            "\"rename_investigation\" | \"merge_investigations\" | "
+            "\"archive_investigation\" | \"record_goal_progress\" | \"browser_task\",\n"
             " \"label\": \"short name\",\n"
             " \"directive\": \"the underlying question, note, or current-state dump, in their words\",\n"
             " \"reasoning\": \"one sentence on why it fits there\",\n"
             " \"confidence\": a number 0-1 (REQUIRED for every action except start_investigation),\n"
-            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node),\n"
-            " \"investigation_id\": the id from the current Investigations list (REQUIRED for add_investigation_context),\n"
+            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/replan_project),\n"
+            " \"steps\": the complete new ordered plan (REQUIRED for replan_project, max 12): a list of "
+            "{\"op\": \"create\"|\"keep\"|\"rename\"|\"update\"|\"archive\", \"leaf_id\": existing Leaf id "
+            "(every op except create), \"title\": (create), \"new_title\": (rename), "
+            "\"description\": (create/update; optional refresh on rename), \"priority\": optional (create)} "
+            "— list order becomes the new Leaf order; every current Leaf of the target must appear "
+            "exactly once (keep/rename/update it, or archive it),\n"
+            " \"investigation_id\": the id from the current Investigations list (REQUIRED for "
+            "add_investigation_context/start_exploration/rename_investigation/"
+            "merge_investigations/archive_investigation; for merge_investigations it is the "
+            "investigation being absorbed),\n"
+            " \"target_investigation_id\": the id of the investigation that absorbs the other "
+            "(REQUIRED for merge_investigations),\n"
             " \"url\": the complete HTTPS page URL (REQUIRED for browser_task),\n"
             " \"source_context\": only the user-provided facts to map into fields (REQUIRED for browser_task),\n"
             " \"priority\": \"low\"|\"normal\"|\"high\" (optional, create_leaf only),\n"
             " \"semantic_role\": \"area\"|\"project\"|\"stage\" (optional, create_branch only),\n"
             " \"root_title\"/\"root_description\": (create_root_branch only),\n"
             " \"branch_title\"/\"branch_description\": (create_root_branch only, optional — a Branch under the new Root),\n"
-            " \"new_title\": the replacement title (REQUIRED for rename_node),\n"
+            " \"new_title\": the replacement title (REQUIRED for rename_node/rename_investigation),\n"
             " \"new_parent_id\": the id of the new parent node from the tree list above (REQUIRED for move_node)}\n"
             "faerie_proposal>>>\n"
             "You also have full authority to restructure the tree itself when the user "
@@ -539,14 +569,77 @@ class Companion:
             "the user is directly asking you to reorganize, rename, or remove "
             "something — you are their only interface for these changes; there is no "
             "manual edit UI for them to fall back on.\n"
+            "REPLANNING A PROJECT WHEN ITS PLAN GOES STALE: replan_project restructures "
+            "all the Leaves under one project node in a single approval — its steps "
+            "list is the complete new ordered plan (keep/rename/update existing Leaves "
+            "by id, create new ones, archive whatever no longer belongs). Reach for it "
+            "proactively, without being asked: whenever the conversation makes a "
+            "project's current Leaves stale, mis-ordered, or wrongly framed — a "
+            "decision just made or approved, a priority that shifted, work the user "
+            "describes as already underway — say so and propose the new plan in that "
+            "same reply. Lead with a short numbered plan in prose that starts from "
+            "where they actually are right now (if they're mid-way through something, "
+            "that is step 1, not the step the old plan predicted), then emit one "
+            "replan_project block that matches it — in the SAME reply, never as a "
+            "follow-up. Do not ask \"want me to emit the replan?\" or otherwise seek "
+            "permission to stage it: the card itself is the permission step, and "
+            "describing a plan without emitting the block leaves nothing to approve. "
+            "Keep each step's description to one tight sentence (or omit it) so the "
+            "whole block stays compact. When the user asks you to update or "
+            "restructure a project's leaves based on context you already have, never "
+            "answer with a menu of clarifying options — read the current Leaves from "
+            "the tree list and propose the restructure directly; a concrete draft they "
+            "can push back on beats a questionnaire. Prefer one replan_project card "
+            "over several individual create/rename/delete cards whenever more than one "
+            "Leaf of the same project is changing. Related: create_leaf never targets "
+            "a Leaf — a follow-up action belongs under the project node itself.\n"
+            f"JUST-IN-TIME LEAVES (the horizon rule): a project holds at most "
+            f"{max(1, int(getattr(self.cfg, 'goal_ai_leaf_horizon', 2)))} open Leaves "
+            "— the step being worked now, plus at most one PROVISIONAL next step. "
+            "Never queue more: pre-built leaf sequences go stale the moment the "
+            "first one finishes (the user's own words: they want to follow the "
+            "river — structure that responds to where they went, not structure "
+            "that predicts where they'll go). The app enforces this cap, so a "
+            "create_leaf or replan that would exceed it is dropped. Treat the "
+            "second open Leaf as a cheap-to-rewrite guess, and rewrite it freely "
+            "via replan_project when reality turns. THE DEBRIEF MOMENT: when the "
+            "user arrives saying they completed a Leaf, that conversation is the "
+            "planning step — first capture what happened and what it changed "
+            "(record_goal_progress on the project when it's real progress), then "
+            "decide the next step together and stage it (create_leaf, or "
+            "replan_project if the provisional step no longer fits), and sanity-"
+            "check the chain above it: does the project, its Branch, and its Root "
+            "still point at what they actually want? Say so plainly if not.\n"
+            "EXPLORATION THREADS — A REAL FEATURE YOU KNOW ABOUT: every Investigation "
+            "can hold Exploration Threads: named routes inside the same investigation "
+            "(same story, new direction), each steering its own questions. The current "
+            "Investigations list shows each investigation's open threads. When a "
+            "distinct angle or mechanism surfaces INSIDE a story an Investigation "
+            "already owns, the right-sized move is usually start_exploration on that "
+            "investigation — not a new start_investigation (over-splitting one "
+            "coherent story) and not only flat context. Rough guide: new "
+            "self-contained pattern → start_investigation; new angle on an existing "
+            "pattern worth its own question line → start_exploration; plain evidence "
+            "or a decision → add_investigation_context. Offer the exploration option "
+            "explicitly when the user is weighing where something belongs.\n"
+            "You have the same restructuring authority over Investigations as over "
+            "the tree: rename_investigation renames one, merge_investigations folds "
+            "one into another when they turn out to be the same story (questions, "
+            "answers, threads, and history all move — nothing is lost), and "
+            "archive_investigation closes one reversibly. If you notice you or the "
+            "user over-split earlier, say so and propose the merge yourself.\n"
             f"HARD CONFIDENCE GATE: only emit attach_existing/create_branch/"
             f"create_root_branch/create_leaf/rename_node/delete_node/move_node/"
-            f"add_investigation_context/record_goal_progress/browser_task at "
+            f"replan_project/add_investigation_context/start_exploration/"
+            f"rename_investigation/merge_investigations/archive_investigation/"
+            f"record_goal_progress/browser_task at "
             f"confidence {self.PROPOSAL_CONFIDENCE_GATE} or above, and only with a "
             "target_node_id (and new_parent_id, for move_node) that actually appears "
             "in the tree list above (except create_root_branch, which has no target); "
-            "add_investigation_context instead requires an investigation_id that "
-            "appears in the current Investigations list. browser_task requires an "
+            "the investigation actions (add_investigation_context/start_exploration/"
+            "rename_investigation/merge_investigations/archive_investigation) instead "
+            "require an investigation_id that appears in the current Investigations "
+            "list (and merge_investigations a target_investigation_id from that list too). browser_task requires an "
             "explicit user request, a complete permitted HTTPS URL, source_context, "
             "and confidence 1.0; it never targets Upwork. "
             "Below that threshold, do not emit the block — instead ask a clarifying "
@@ -584,6 +677,11 @@ class Companion:
             + "\n\nTHEIR CURRENT GOALS / CURIOSITIES (things they're actively "
               "working toward, with any open question or suggestion still "
               "sitting with them):\n" + self._curiosities_block()
+            + "\n\nACTIVE PROJECT HORIZONS (open Leaves with descriptions, plus "
+              "what just finished — your live view for judging whether each "
+              "plan still fits; when one of these projects comes up, check the "
+              "chain above it still makes sense and propose a replan if not):\n"
+            + self._horizon_block()
             + self._workflow_bodies_block()
         )
         if self.proposals_enabled:
@@ -1349,16 +1447,23 @@ class Companion:
     }
     _PLACEMENT_ACTIONS = {"attach_existing", "create_branch", "create_root_branch", "create_leaf"}
     _STRUCTURAL_ACTIONS = {"rename_node", "delete_node", "move_node"}
-    _INVESTIGATION_ACTIONS = {"add_investigation_context"}
+    _REPLAN_ACTIONS = {"replan_project"}
+    _INVESTIGATION_ACTIONS = {
+        "add_investigation_context", "start_exploration",
+        "rename_investigation", "merge_investigations",
+        "archive_investigation"}
     _PROGRESS_ACTIONS = {"record_goal_progress"}
     _BROWSER_ACTIONS = {"browser_task"}
     # Every gated action except create_root_branch names a real existing
     # node via target_node_id, verified against the catalog before acting.
-    _TARGETED_ACTIONS = ((_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS | _PROGRESS_ACTIONS)
+    _TARGETED_ACTIONS = ((_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS |
+                          _REPLAN_ACTIONS | _PROGRESS_ACTIONS)
                          - {"create_root_branch"})
-    _ALL_ACTIONS = (_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS |
+    _ALL_ACTIONS = (_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS | _REPLAN_ACTIONS |
                     _INVESTIGATION_ACTIONS | _PROGRESS_ACTIONS | _BROWSER_ACTIONS |
                     {"start_investigation"})
+    _REPLAN_STEP_OPS = {"create", "keep", "rename", "update", "archive"}
+    _REPLAN_MAX_STEPS = 12
     _SCOUT_ACTIONS = {"create_branch", "create_root_branch", "create_leaf",
                       "record_goal_progress", "start_investigation",
                       "add_investigation_context"}
@@ -1416,6 +1521,64 @@ class Companion:
         except (TypeError, ValueError):
             return None
         return next((n for n in self._goal_catalog() if n["id"] == node_id), None)
+
+    def _leaf_horizon_limit(self) -> int:
+        return max(1, int(getattr(self.cfg, "goal_ai_leaf_horizon", 2)))
+
+    def _open_leaf_count(self, node_id) -> int:
+        try:
+            from ..goals import GoalStore
+            store = GoalStore(self.cfg.memory_db_path)
+            try:
+                return store.open_leaf_count(int(node_id))
+            finally:
+                store.close()
+        except Exception:
+            return 0
+
+    def _replan_open_step_count(self, proposal: dict) -> int:
+        """How many OPEN Leaves the plan would hold after this replan."""
+        count = 0
+        for step in list(proposal.get("steps") or []):
+            op = step.get("op")
+            if op == "create":
+                count += 1
+            elif op in {"keep", "rename", "update"}:
+                node = self._catalog_lookup(step.get("leaf_id"))
+                if node and node.get("status") in {"active", "paused"}:
+                    count += 1
+        return count
+
+    def _horizon_block(self) -> str:
+        """Open Leaves + recent completions per project — the just-in-time
+        planning context. This is what lets the chat notice a stale plan the
+        moment a project comes up, instead of only knowing node titles."""
+        try:
+            from ..goals import GoalStore
+            store = GoalStore(self.cfg.memory_db_path)
+            try:
+                projects = store.leaf_horizon()
+            finally:
+                store.close()
+        except Exception:
+            return "(project horizons unavailable)"
+        if not projects:
+            return "(no projects with Leaves yet)"
+        lines = []
+        for project in projects:
+            lines.append(f"- {project['path'] or project['project_title']} "
+                         f"(id={project['project_id']})")
+            for index, leaf in enumerate(project["open"]):
+                marker = "NOW" if index == 0 else "PROVISIONAL"
+                description = f" — {leaf['description']}" if leaf["description"] else ""
+                lines.append(f"    open[{marker}] id={leaf['id']} "
+                             f"{leaf['title']}{description}")
+            if not project["open"]:
+                lines.append("    (no open Leaf — next step undecided; "
+                             "waiting on a completion debrief)")
+            for leaf in project["recent_done"]:
+                lines.append(f"    done id={leaf['id']} {leaf['title']}")
+        return "\n".join(lines)
 
     def _proposal_signals(self, user_text: str) -> dict:
         text = " ".join(str(user_text or "").split())[:4000]
@@ -1639,8 +1802,28 @@ class Companion:
             "add_goal_evidence": "record_goal_progress",
             "fill_browser_form": "browser_task",
             "browser_form": "browser_task",
+            "restructure_project": "replan_project",
+            "replan": "replan_project",
+            "update_plan": "replan_project",
+            "replan_leaves": "replan_project",
+            "update_leaves": "replan_project",
+            "start_exploration_thread": "start_exploration",
+            "add_exploration": "start_exploration",
+            "add_exploration_thread": "start_exploration",
+            "add_thread": "start_exploration",
+            "start_thread": "start_exploration",
+            "merge_investigation": "merge_investigations",
+            "rename_curiosity": "rename_investigation",
+            "archive_curiosity": "archive_investigation",
+            "delete_investigation": "archive_investigation",
         }.get(action, action)
         normalized["action"] = action
+        if action == "replan_project":
+            raw_steps = next((normalized.get(key) for key in (
+                "steps", "leaves", "plan", "operations")
+                if isinstance(normalized.get(key), list)), [])
+            normalized["steps"] = [self._normalize_replan_step(step)
+                                   for step in raw_steps]
         if not str(normalized.get("directive") or "").strip():
             normalized["directive"] = next((str(normalized.get(key) or "").strip()
                                             for key in ("context", "note", "description", "content")
@@ -1656,15 +1839,22 @@ class Companion:
                 normalized["confidence"] = numeric / 100 if "%" in confidence else numeric
             except ValueError:
                 pass
-        if action == "add_investigation_context":
-            target_value = next((normalized.get(key) for key in (
-                "investigation_id", "target_investigation_id", "curiosity_id",
-                "target_curiosity_id") if normalized.get(key) not in (None, "")), None)
+        if action in self._INVESTIGATION_ACTIONS:
+            id_keys = (("investigation_id", "curiosity_id")
+                       if action == "merge_investigations" else
+                       ("investigation_id", "target_investigation_id",
+                        "curiosity_id", "target_curiosity_id"))
+            target_value = next((normalized.get(key) for key in id_keys
+                                 if normalized.get(key) not in (None, "")), None)
             target = self._investigation_lookup(target_value)
             raw_investigation = normalized.get("investigation")
-            label = next((str(normalized.get(key) or "").strip() for key in (
-                "label", "investigation_label", "target_label")
-                if str(normalized.get(key) or "").strip()), "")
+            # For start_exploration the card label is the THREAD title, not
+            # the Investigation name — never use it for lookup or overwrite it.
+            label_keys = (("investigation_label", "target_label")
+                          if action == "start_exploration" else
+                          ("label", "investigation_label", "target_label"))
+            label = next((str(normalized.get(key) or "").strip() for key in label_keys
+                          if str(normalized.get(key) or "").strip()), "")
             if not label and isinstance(raw_investigation, str):
                 label = raw_investigation.strip()
             if not target and isinstance(target_value, str):
@@ -1673,9 +1863,25 @@ class Companion:
                 target = self._investigation_label_lookup(label)
             if target:
                 normalized["investigation_id"] = int(target["id"])
-                normalized["label"] = target["label"]
+                if action != "start_exploration":
+                    normalized["label"] = target["label"]
                 if normalized.get("confidence") in (None, ""):
                     normalized["confidence"] = self.PROPOSAL_CONFIDENCE_GATE
+            if action == "merge_investigations":
+                merge_value = next((normalized.get(key) for key in (
+                    "target_investigation_id", "merge_into_id",
+                    "into_investigation_id", "target_id")
+                    if normalized.get(key) not in (None, "")), None)
+                merge_target = self._investigation_lookup(merge_value)
+                if not merge_target and isinstance(merge_value, str):
+                    merge_target = self._investigation_label_lookup(merge_value)
+                if merge_target:
+                    normalized["target_investigation_id"] = int(merge_target["id"])
+            if action == "rename_investigation" and not str(
+                    normalized.get("new_title") or "").strip():
+                normalized["new_title"] = next((str(normalized.get(key) or "").strip()
+                                                for key in ("new_label", "rename_to")
+                                                if str(normalized.get(key) or "").strip()), "")
         if action == "browser_task":
             normalized["url"] = next((str(normalized.get(key) or "").strip()
                                       for key in ("url", "target_url", "website")
@@ -1685,6 +1891,48 @@ class Companion:
                 for key in ("source_context", "form_context", "source_information")
                 if str(normalized.get(key) or "").strip()), "")
         return normalized
+
+    @staticmethod
+    def _normalize_replan_step(step) -> dict:
+        """Normalize harmless model schema variations in one replan step."""
+        if not isinstance(step, dict):
+            return {}
+        normalized = dict(step)
+        op = str(normalized.get("op") or normalized.get("action")
+                 or normalized.get("operation") or "").strip().lower()
+        op = {"add": "create", "new": "create", "retitle": "rename",
+              "retitle_leaf": "rename", "edit": "update", "revise": "update",
+              "describe": "update", "delete": "archive", "remove": "archive",
+              "drop": "archive", "unchanged": "keep", "reorder": "keep",
+              "move": "keep"}.get(op, op)
+        normalized["op"] = op
+        if normalized.get("leaf_id") in (None, ""):
+            normalized["leaf_id"] = next((normalized.get(key) for key in (
+                "node_id", "target_node_id", "id")
+                if normalized.get(key) not in (None, "")), None)
+        if not str(normalized.get("title") or "").strip():
+            normalized["title"] = str(normalized.get("label") or "").strip()
+        if not str(normalized.get("new_title") or "").strip():
+            normalized["new_title"] = str(normalized.get("rename_to") or "").strip()
+        if not str(normalized.get("description") or "").strip():
+            normalized["description"] = next((str(normalized.get(key) or "").strip()
+                                              for key in ("directive", "note", "content")
+                                              if str(normalized.get(key) or "").strip()), "")
+        return normalized
+
+    def _valid_replan_step(self, step) -> bool:
+        if not isinstance(step, dict) or step.get("op") not in self._REPLAN_STEP_OPS:
+            return False
+        if step["op"] == "create":
+            return bool(str(step.get("title") or "").strip())
+        node = self._catalog_lookup(step.get("leaf_id"))
+        if not node or node["type"] != "Leaf":
+            return False
+        if step["op"] == "rename":
+            return bool(str(step.get("new_title") or "").strip())
+        if step["op"] == "update":
+            return bool(str(step.get("description") or "").strip())
+        return True
 
     def _describe_target(self, proposal: dict) -> str:
         # Root/Branch/Leaf/Soul stay English loanwords in Korean too (house
@@ -1729,6 +1977,38 @@ class Companion:
                 f"**{new_parent['title']}** ({new_parent['type']}) 아래로 이동해요")
         return ""
 
+    def _render_replan_steps(self, proposal: dict) -> list[str]:
+        """Numbered new plan for the replan card; archives listed last."""
+        lines = [lang_T("New plan:", "새 계획:")]
+        archives: list[str] = []
+        number = 0
+        for step in list(proposal.get("steps") or []):
+            op = step.get("op")
+            node = self._catalog_lookup(step.get("leaf_id"))
+            current = node["title"] if node else lang_T("(missing leaf)", "(없는 Leaf)")
+            if op == "archive":
+                archives.append(lang_T(f"~~{current}~~ *(archive)*",
+                                       f"~~{current}~~ *(보관)*"))
+                continue
+            number += 1
+            description = str(step.get("description") or "").strip()
+            if op == "create":
+                text = lang_T(f"{number}. {str(step.get('title') or '').strip()} *(new)*",
+                              f"{number}. {str(step.get('title') or '').strip()} *(새 항목)*")
+            elif op == "rename":
+                new_title = str(step.get("new_title") or "").strip()
+                text = lang_T(f"{number}. {new_title} *(was: {current})*",
+                              f"{number}. {new_title} *(이전: {current})*")
+            elif op == "update":
+                text = lang_T(f"{number}. {current} *(updated)*",
+                              f"{number}. {current} *(수정)*")
+            else:
+                text = f"{number}. {current}"
+            if description and op in {"create", "update", "rename"}:
+                text += f" — {description}"
+            lines.append(text)
+        return lines + archives
+
     def _render_proposal(self, proposal: dict) -> str:
         ko = lang_is_ko()
         label = str(proposal.get("label") or lang_T("(untitled)", "(제목 없음)"))
@@ -1751,6 +2031,42 @@ class Companion:
             lines.append(lang_T(
                 f"Add this context to the **{target_label}** Investigation",
                 f"이 맥락을 **{target_label}** 탐구에 추가해요"))
+        elif action == "start_exploration":
+            investigation = self._investigation_lookup(proposal.get("investigation_id"))
+            target_label = investigation["label"] if investigation else "?"
+            lines.append(lang_T(
+                f"{conf_text}branch a new Exploration Thread inside "
+                f"**{target_label}**: **{label}**",
+                f"{conf_text}**{target_label}** 탐구 안에 새로운 Exploration "
+                f"Thread를 만들어요: **{label}**"))
+        elif action == "rename_investigation":
+            investigation = self._investigation_lookup(proposal.get("investigation_id"))
+            target_label = investigation["label"] if investigation else label
+            new_title = str(proposal.get("new_title") or "").strip()
+            lines.append(lang_T(
+                f"{conf_text}rename the **{target_label}** Investigation "
+                f"to **{new_title}**",
+                f"{conf_text}**{target_label}** 탐구의 이름을 "
+                f"**{new_title}**(으)로 바꿔요"))
+        elif action == "merge_investigations":
+            source = self._investigation_lookup(proposal.get("investigation_id"))
+            merge_target = self._investigation_lookup(
+                proposal.get("target_investigation_id"))
+            source_label = source["label"] if source else "?"
+            target_label = merge_target["label"] if merge_target else "?"
+            lines.append(lang_T(
+                f"{conf_text}merge **{source_label}** into **{target_label}** — "
+                "its questions, answers, threads, and history continue there",
+                f"{conf_text}**{source_label}** 탐구를 **{target_label}**에 합쳐요 — "
+                "질문, 답변, 스레드, 기록이 그쪽에서 이어져요"))
+        elif action == "archive_investigation":
+            investigation = self._investigation_lookup(proposal.get("investigation_id"))
+            target_label = investigation["label"] if investigation else label
+            lines.append(lang_T(
+                f"{conf_text}archive the **{target_label}** Investigation "
+                "(reversible from the Investigations tab)",
+                f"{conf_text}**{target_label}** 탐구를 보관해요 "
+                "(Investigations 탭에서 되돌릴 수 있어요)"))
         elif action == "record_goal_progress":
             target = self._catalog_lookup(proposal.get("target_node_id"))
             target_label = target["title"] if target else label
@@ -1762,6 +2078,13 @@ class Companion:
                 f"Prepare a visible browser form task for **{label}**",
                 f"**{label}**을(를) 위한 브라우저 양식 작업을 준비해요"))
             lines.append(str(proposal.get("url") or ""))
+        elif action == "replan_project":
+            target = self._catalog_lookup(proposal.get("target_node_id"))
+            target_label = target["title"] if target else label
+            lines.append(lang_T(
+                f"{conf_text}restructure the plan under **{target_label}**",
+                f"{conf_text}**{target_label}**의 계획을 재구성해요"))
+            lines.extend(self._render_replan_steps(proposal))
         elif action in self._STRUCTURAL_ACTIONS:
             lines.append(f"{conf_text}{self._describe_target(proposal)}")
         else:
@@ -1792,13 +2115,53 @@ class Companion:
             if valid and proposal["action"] == "add_investigation_context":
                 valid = (self._investigation_lookup(proposal.get("investigation_id")) is not None
                          and bool(str(proposal.get("directive") or "").strip()))
+            if valid and proposal["action"] == "start_exploration":
+                valid = (self._investigation_lookup(proposal.get("investigation_id")) is not None
+                         and bool(str(proposal.get("label") or "").strip())
+                         and bool(str(proposal.get("directive") or "").strip()))
+            if valid and proposal["action"] in {"rename_investigation",
+                                                "archive_investigation"}:
+                valid = self._investigation_lookup(
+                    proposal.get("investigation_id")) is not None
+                if valid and proposal["action"] == "rename_investigation":
+                    valid = bool(str(proposal.get("new_title") or "").strip())
+            if valid and proposal["action"] == "merge_investigations":
+                source = self._investigation_lookup(proposal.get("investigation_id"))
+                merge_target = self._investigation_lookup(
+                    proposal.get("target_investigation_id"))
+                valid = (source is not None and merge_target is not None
+                         and int(source["id"]) != int(merge_target["id"]))
             if valid and proposal["action"] == "move_node":
                 valid = self._catalog_lookup(proposal.get("new_parent_id")) is not None
             if valid and proposal["action"] == "rename_node":
                 valid = bool(str(proposal.get("new_title") or "").strip())
+            if valid and proposal["action"] == "create_leaf":
+                # A Leaf can never parent another Leaf; catching it here keeps
+                # a doomed card from reaching approve and raising ValueError.
+                target = self._catalog_lookup(proposal.get("target_node_id"))
+                valid = bool(target) and target["type"] in {"Root", "Branch"}
+                # Just-in-time horizon: one committed Leaf plus one provisional
+                # next. Beyond that, the plan should bend (replan_project) —
+                # not grow a stale queue of predicted steps.
+                valid = valid and (self._open_leaf_count(
+                    proposal.get("target_node_id")) < self._leaf_horizon_limit())
             if valid and proposal["action"] == "create_branch":
+                target = self._catalog_lookup(proposal.get("target_node_id"))
+                valid = bool(target) and target["type"] in {"Soul", "Root", "Branch"}
                 role = str(proposal.get("semantic_role") or "").strip().lower()
-                valid = not role or role in {"area", "project", "stage"}
+                valid = valid and (not role or role in {"area", "project", "stage"})
+            if valid and proposal["action"] == "replan_project":
+                target = self._catalog_lookup(proposal.get("target_node_id"))
+                steps = proposal.get("steps")
+                valid = (bool(target) and target["type"] in {"Root", "Branch"}
+                         and isinstance(steps, list)
+                         and 0 < len(steps) <= self._REPLAN_MAX_STEPS
+                         and all(self._valid_replan_step(step) for step in steps)
+                         and any(step.get("op") != "archive" for step in steps)
+                         # A replan is the just-in-time reset: it must land
+                         # within the horizon, not rebuild a long stale queue.
+                         and self._replan_open_step_count(proposal)
+                         <= self._leaf_horizon_limit())
             if valid and proposal["action"] == "record_goal_progress":
                 valid = bool(str(proposal.get("directive") or "").strip())
             if valid and proposal["action"] == "browser_task":
@@ -1819,6 +2182,18 @@ class Companion:
         Exact action/label duplicates are discarded so one intended second
         Investigation cannot accidentally become a copy of the first.
         """
+        # A reply cut off mid-block (e.g. at the completion cap) leaves an
+        # unterminated "<<<faerie_proposal" tail that the block regex can't
+        # match; without this it would render as raw JSON in the chat.
+        opens = text.count("<<<faerie_proposal")
+        closes = text.count("faerie_proposal>>>")
+        if opens > closes:
+            cut = text.rfind("<<<faerie_proposal")
+            text = text[:cut].rstrip()
+            text += ("\n\n" if text else "") + lang_T(
+                "_(My proposal got cut off mid-draft — say “try again” and I'll "
+                "re-emit it in full.)_",
+                "_(제안이 중간에 잘렸어요 — “다시 시도”라고 하면 전체를 다시 만들게요.)_")
         matches = list(self._PROPOSAL_BLOCK_RE.finditer(text))
         if not matches:
             return text
@@ -1969,19 +2344,134 @@ class Companion:
                         saved = store.add_context(
                             investigation_id, directive, source_kind="chat",
                             source_ref=self.chat_id)
+                        if not saved.get("created"):
+                            return lang_T(
+                                f"Already attached — **{investigation['label']}** already has "
+                                "this context, so I kept the existing copy.",
+                                f"이미 연결되어 있어요 — **{investigation['label']}** 탐구에 "
+                                "이 맥락이 있어 기존 내용을 유지했어요.")
+                        # Make "will inform its next questions" literal: run a
+                        # small fresh-context round now instead of waiting for
+                        # the daily pass. Best-effort — the approval itself
+                        # already succeeded, so absorption failure only means
+                        # the context waits for the next scheduled round.
+                        absorbed = 0
+                        if investigation["status"] == "active":
+                            try:
+                                from ..curiosity import (generate_items,
+                                                         get_curiosity_model)
+                                from ..inference import InferenceStore
+                                mem = MemoryStore(self.cfg.memory_db_path)
+                                inference = InferenceStore(self.cfg.memory_db_path)
+                                try:
+                                    absorbed = generate_items(
+                                        mem, inference, store, investigation_id,
+                                        get_curiosity_model(
+                                            self.cfg, usage_category="manual"),
+                                        limit=2, fresh_context=True)
+                                finally:
+                                    inference.close()
+                                    mem.close()
+                            except Exception as error:
+                                log_diag("companion", "context absorption skipped "
+                                         f"error={type(error).__name__}")
                     finally:
                         store.close()
-                    if not saved.get("created"):
-                        return lang_T(
-                            f"Already attached — **{investigation['label']}** already has "
-                            "this context, so I kept the existing copy.",
-                            f"이미 연결되어 있어요 — **{investigation['label']}** 탐구에 "
-                            "이 맥락이 있어 기존 내용을 유지했어요.")
-                    return lang_T(
+                    base = lang_T(
                         f"Added — this is now approved context for **{investigation['label']}** "
                         "and will inform its next questions and synthesis.",
                         f"추가했어요 — 이 내용은 이제 **{investigation['label']}** 탐구의 "
                         "승인된 맥락으로 다음 질문과 종합에 반영돼요.")
+                    if absorbed:
+                        base += lang_T(
+                            f" I ran a fresh round against it just now — {absorbed} new "
+                            f"item{'s' if absorbed != 1 else ''} queued in the Investigation.",
+                            f" 방금 이 맥락으로 새 라운드를 돌려 {absorbed}개 항목을 "
+                            "탐구에 추가했어요.")
+                    return base
+
+                if action == "start_exploration":
+                    store = CuriosityStore(self.cfg.memory_db_path)
+                    try:
+                        investigation = store.get_curiosity(
+                            int(proposal.get("investigation_id")))
+                        if not investigation or investigation["status"] == "archived":
+                            return lang_T(
+                                "That Investigation is no longer open, so no thread was started.",
+                                "그 탐구가 더 이상 열려 있지 않아 스레드를 시작하지 않았어요.")
+                        thread = store.add_thread(
+                            int(investigation["id"]), label, directive)
+                    finally:
+                        store.close()
+                    return lang_T(
+                        f"Branched — **{thread['title']}** is now an Exploration Thread "
+                        f"inside **{investigation['label']}**: same investigation, "
+                        "new route. Its questions will carry this direction.",
+                        f"분기했어요 — **{thread['title']}**이(가) **{investigation['label']}** "
+                        "탐구 안의 Exploration Thread가 되었어요. 같은 탐구의 새로운 "
+                        "경로로, 질문이 이 방향을 따라가요.")
+
+                if action == "rename_investigation":
+                    store = CuriosityStore(self.cfg.memory_db_path)
+                    try:
+                        investigation = store.get_curiosity(
+                            int(proposal.get("investigation_id")))
+                        if not investigation or investigation["status"] == "archived":
+                            return lang_T(
+                                "That Investigation is no longer open, so nothing was renamed.",
+                                "그 탐구가 더 이상 열려 있지 않아 이름을 바꾸지 않았어요.")
+                        old_label = investigation["label"]
+                        new_title = str(proposal.get("new_title") or "").strip()
+                        store.rename(int(investigation["id"]), new_title)
+                    finally:
+                        store.close()
+                    return lang_T(
+                        f"Renamed — the **{old_label}** Investigation is now **{new_title}**.",
+                        f"이름을 바꿨어요 — **{old_label}** 탐구가 이제 **{new_title}**이에요.")
+
+                if action == "merge_investigations":
+                    from ..curiosity import merge_investigations
+                    store = CuriosityStore(self.cfg.memory_db_path)
+                    try:
+                        source = store.get_curiosity(
+                            int(proposal.get("investigation_id")))
+                        merge_target = store.get_curiosity(
+                            int(proposal.get("target_investigation_id")))
+                        if (not source or source["status"] == "archived"
+                                or not merge_target
+                                or merge_target["status"] == "archived"):
+                            return lang_T(
+                                "One of those Investigations is no longer open — nothing merged.",
+                                "그 탐구들 중 하나가 더 이상 열려 있지 않아 합치지 않았어요.")
+                        merge_investigations(store, int(merge_target["id"]),
+                                             [int(source["id"])])
+                    finally:
+                        store.close()
+                    return lang_T(
+                        f"Merged — **{source['label']}** now continues inside "
+                        f"**{merge_target['label']}**: one investigation, one story. "
+                        "Its questions, answers, threads, and history moved over.",
+                        f"합쳤어요 — **{source['label']}** 탐구가 이제 "
+                        f"**{merge_target['label']}** 안에서 이어져요. 질문, 답변, "
+                        "스레드, 기록이 모두 옮겨졌어요.")
+
+                if action == "archive_investigation":
+                    store = CuriosityStore(self.cfg.memory_db_path)
+                    try:
+                        investigation = store.get_curiosity(
+                            int(proposal.get("investigation_id")))
+                        if not investigation or investigation["status"] == "archived":
+                            return lang_T(
+                                "That Investigation is already closed — nothing to archive.",
+                                "그 탐구는 이미 닫혀 있어요 — 보관할 것이 없어요.")
+                        store.set_status(int(investigation["id"]), "archived")
+                    finally:
+                        store.close()
+                    return lang_T(
+                        f"Archived — **{investigation['label']}** is closed but kept. "
+                        "You can reopen it any time from the Investigations tab.",
+                        f"보관했어요 — **{investigation['label']}** 탐구를 닫았지만 "
+                        "기록은 남아 있어요. Investigations 탭에서 언제든 다시 열 수 있어요.")
 
                 if action == "record_goal_progress":
                     target = goals.get(int(proposal.get("target_node_id")))
@@ -2072,6 +2562,76 @@ class Companion:
                     return (f"Created — a new Root **{root_title}**"
                             + (f" with Branch **{branch_title}**" if branch_title else "")
                             + " for this.")
+
+                if action == "replan_project":
+                    target = goals.get(int(proposal.get("target_node_id")))
+                    if (not target or target.get("status") == "archived"
+                            or target["type"] not in {"overgoal", "subgoal"}):
+                        return gone
+                    ordered: list[int] = []
+                    counts = {"create": 0, "rename": 0, "update": 0,
+                              "archive": 0, "keep": 0}
+                    for step in list(proposal.get("steps") or []):
+                        op = step.get("op")
+                        if op == "create":
+                            title = str(step.get("title") or "").strip()
+                            priority = str(step.get("priority") or "normal")
+                            if priority not in {"low", "normal", "high"}:
+                                priority = "normal"
+                            step_description = str(step.get("description") or "").strip()
+                            new_id = goals.create(
+                                "task", title, parent_id=target["id"],
+                                description=step_description, priority=priority)
+                            goals.set_origin(
+                                new_id, source_kind="chat", source_label=title,
+                                summary=step_description or directive, detail=reasoning)
+                            ordered.append(new_id)
+                            counts["create"] += 1
+                            continue
+                        try:
+                            node = goals.get(int(step.get("leaf_id")))
+                        except (TypeError, ValueError):
+                            node = None
+                        if not node or node["type"] != "task":
+                            continue
+                        if op == "archive":
+                            if node.get("status") != "archived":
+                                goals.delete_subtree(node["id"])
+                                counts["archive"] += 1
+                            continue
+                        changes = {}
+                        if op == "rename":
+                            new_title = str(step.get("new_title") or "").strip()
+                            if new_title and new_title != node["title"]:
+                                changes["title"] = new_title
+                        if op in {"rename", "update"}:
+                            step_description = str(step.get("description") or "").strip()
+                            if step_description:
+                                changes["description"] = step_description
+                        if changes:
+                            goals.update(node["id"], **changes)
+                            counts["rename" if op == "rename" else "update"] += 1
+                        else:
+                            counts["keep"] += 1 if op == "keep" else 0
+                        ordered.append(node["id"])
+                    for index, node_id in enumerate(ordered):
+                        goals.move(node_id, target["id"], position=index)
+                    if lang_is_ko():
+                        parts = [f"{counts['create']}개 추가" if counts["create"] else "",
+                                 f"{counts['rename']}개 이름 변경" if counts["rename"] else "",
+                                 f"{counts['update']}개 수정" if counts["update"] else "",
+                                 f"{counts['archive']}개 보관" if counts["archive"] else ""]
+                        summary = ", ".join(part for part in parts if part) or "순서만 변경"
+                        return (f"재구성했어요 — **{target['title']}**의 새 계획은 "
+                                f"{len(ordered)}단계예요 ({summary}). 보관은 되돌릴 수 있어요.")
+                    parts = [f"{counts['create']} added" if counts["create"] else "",
+                             f"{counts['rename']} renamed" if counts["rename"] else "",
+                             f"{counts['update']} updated" if counts["update"] else "",
+                             f"{counts['archive']} archived" if counts["archive"] else ""]
+                    summary = ", ".join(part for part in parts if part) or "reordered only"
+                    return (f"Replanned — **{target['title']}** now has "
+                            f"{len(ordered)} ordered step{'s' if len(ordered) != 1 else ''} "
+                            f"({summary}). Archived Leaves are reversible.")
 
                 if action == "rename_node":
                     target = goals.get(int(proposal.get("target_node_id")))

@@ -186,6 +186,10 @@ class Config:
     goal_ai_handoff_model: str = ""
     goal_ai_context_max_chars: int = 14000
     goal_ai_max_open_proposals: int = 3
+    # Just-in-time planning: max open (non-completed) Leaves per project.
+    # 2 = one committed step plus one provisional next; the next real step is
+    # decided in chat at the completion debrief, not pre-generated.
+    goal_ai_leaf_horizon: int = 2
     goal_ai_notifications: bool = True
     goal_relevance_stale_days: int = 30         # gentle check after a month without movement
     # Shared unsolicited-reflection rhythm. Explicit /remind reminders bypass

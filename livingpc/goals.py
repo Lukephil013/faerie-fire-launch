@@ -547,6 +547,69 @@ class GoalStore:
             "status": r["status"],
         } for r in rows]
 
+    def leaf_horizon(self, *, recent_days: int = 7, max_projects: int = 6,
+                     max_leaves: int = 4, max_chars: int = 220) -> list[dict]:
+        """Per-project view of open Leaves plus recent completions.
+
+        This is the just-in-time planning context: which projects have work
+        in flight, what the next (possibly provisional) step is, and what
+        just finished. Unlike catalog(), it carries bounded descriptions so
+        an AI can judge whether the plan still fits — but never evidence,
+        notes, or the whole tree."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=max(0, int(recent_days)))).isoformat()
+        rows = self.conn.execute(
+            "SELECT id,parent_id,title,description,status,priority,position,"
+            "completed_at FROM goal_node WHERE node_type='task' "
+            "AND status!='archived' ORDER BY parent_id,position,id").fetchall()
+        by_parent: dict[int, dict] = {}
+        for row in rows:
+            status = row["status"]
+            completed_at = row["completed_at"] or ""
+            if status == "completed" and completed_at < cutoff:
+                continue
+            parent_id = int(row["parent_id"])
+            group = by_parent.setdefault(parent_id, {"open": [], "recent_done": []})
+            leaf = {
+                "id": int(row["id"]),
+                "title": crypto.dec(row["title"]) or "",
+                "description": (crypto.dec(row["description"]) or "")[:max_chars],
+                "status": status,
+                "priority": row["priority"],
+            }
+            if status == "completed":
+                leaf["completed_at"] = completed_at
+                group["recent_done"].append(leaf)
+            else:
+                group["open"].append(leaf)
+        projects = []
+        for parent_id, group in by_parent.items():
+            parent = self.get(parent_id)
+            if not parent or parent.get("status") == "archived":
+                continue
+            group["recent_done"].sort(key=lambda l: l.get("completed_at") or "",
+                                      reverse=True)
+            projects.append({
+                "project_id": parent_id,
+                "project_title": parent["title"],
+                "path": " › ".join(self._goal_path_titles(parent_id)),
+                "project_status": parent.get("status"),
+                "open": group["open"][:max_leaves],
+                "recent_done": group["recent_done"][:max_leaves],
+            })
+        # Projects with in-flight work first, then those needing a next step.
+        projects.sort(key=lambda p: (not p["open"], not p["recent_done"],
+                                     p["project_id"]))
+        return projects[:max_projects]
+
+    def open_leaf_count(self, parent_id: int) -> int:
+        """Open (active or paused) Leaves directly under one node."""
+        return int(self.conn.execute(
+            "SELECT COUNT(*) FROM goal_node WHERE parent_id=? "
+            "AND node_type='task' AND status IN ('active','paused')",
+            (int(parent_id),)).fetchone()[0])
+
     def starter_root_catalog(self, language: str = "en") -> list[dict]:
         language = "ko" if str(language).lower().startswith("ko") else "en"
         roots = [self._row(row) for row in self.conn.execute(

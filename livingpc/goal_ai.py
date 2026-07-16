@@ -3320,6 +3320,13 @@ request_evidence, start_curiosity, promote_insight. Never propose automatic comp
 For create_child, type must be overgoal/subgoal/task (Root/Branch/Leaf) and
 priority must be low/normal/high. Use "normal", never "medium". update_fields
   may contain title, description, notes, priority, or due_date.
+Just-in-time Leaves: a node keeps at most a small horizon of open Leaves (the
+current step plus one provisional next). Never propose a create_child task for
+a node that already has open Leaves covering that horizon — the next step gets
+decided in chat after the current Leaf's completion debrief, not queued ahead.
+A Root (overgoal) is one distinct life domain, never the person themselves:
+do not propose identity or whole-life catch-alls like "<name>'s Life" — the
+Soul already holds that role.
 Use promote_insight only when confidence is at least 0.8 that a lesson,
 preference, constraint, blocker, method, or decision matters beyond the current
 node. Its target_node_id must be the current node or an ancestor where the
@@ -5167,6 +5174,14 @@ def decide_proposal(config, proposal_id: int, action: str,
         if kind == "create_child":
             child_type = _normalize_node_type(
                 data.get("type"), parent_type=target["type"])
+            if child_type == "task":
+                horizon = max(1, int(getattr(config, "goal_ai_leaf_horizon", 2)))
+                if goals.open_leaf_count(target["id"]) >= horizon:
+                    agents.resolve_proposal(proposal_id, "stale")
+                    raise ValueError(
+                        f"'{target['title']}' already holds its horizon of "
+                        f"{horizon} open Leaves — finish or replan the current "
+                        "step before queueing another")
             semantic_role = str(data.get("semantic_role") or "").strip().lower()
             if child_type == "subgoal" and semantic_role in {"area", "project", "stage"}:
                 goals._validate_semantic_placement(

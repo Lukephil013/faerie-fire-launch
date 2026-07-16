@@ -1884,6 +1884,33 @@ class GuiApi:
             agents.close()
             goals.close()
 
+    def goal_catalog(self) -> dict:
+        """Compact id+title listing of active Growth nodes and Investigations.
+
+        Used by the chat UI to turn bolded node titles in assistant replies
+        into clickable links to the Growth tree / Investigations views. Kept
+        deliberately light (no descriptions, evidence, or subtree data)."""
+        from livingpc.curiosity import CuriosityStore
+        from livingpc.goals import GoalStore
+        try:
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                nodes = goals.catalog(max_nodes=300)
+            finally:
+                goals.close()
+            curiosities = CuriosityStore(self.cfg.memory_db_path)
+            try:
+                investigations = [
+                    {"id": int(item["id"]), "label": item.get("label", ""),
+                     "status": item.get("status")}
+                    for item in curiosities.list_curiosities()
+                    if item.get("status") != "archived"]
+            finally:
+                curiosities.close()
+            return {"ok": True, "nodes": nodes, "investigations": investigations}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def goal_root_starters(self, language="en") -> dict:
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)

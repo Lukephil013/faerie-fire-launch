@@ -543,6 +543,30 @@ class CuriosityStore:
         self.conn.commit()
         return self._item_dict(self.get_item(int(item_id)))
 
+    def set_question_relevance(self, item_id: int, status: str, confidence: float,
+                               rationale: str = "",
+                               based_on_item_id: int | None = None) -> dict:
+        """Record a review verdict on an open question. retired_stale also
+        dismisses it (visible in history with its rationale; never re-asked)."""
+        if status not in {"still_relevant", "retired_stale"}:
+            raise ValueError("invalid question relevance status")
+        row = self.get_item(int(item_id))
+        if not row or row["kind"] != "question" or row["status"] != "open":
+            raise ValueError("only an open question can be reassessed")
+        self.conn.execute(
+            "UPDATE curiosity_item SET relevance_status=?,relevance_confidence=?,"
+            "relevance_rationale=?,relevance_based_on_item_id=?,"
+            "relevance_reviewed_at=? WHERE id=?",
+            (status, max(0.0, min(1.0, float(confidence))),
+             crypto.enc(str(rationale or "")[:1000]), based_on_item_id, _now(),
+             int(item_id)))
+        if status == "retired_stale":
+            self.conn.execute(
+                "UPDATE curiosity_item SET status='dismissed', resolved_at=? WHERE id=?",
+                (_now(), int(item_id)))
+        self.conn.commit()
+        return self._item_dict(self.get_item(int(item_id)))
+
     def items_for_curiosity(self, curiosity_id: int) -> list[dict]:
         rows = self.conn.execute(
             "SELECT * FROM curiosity_item WHERE curiosity_id=? ORDER BY id",
@@ -1468,6 +1492,13 @@ Prefer the smallest fitting proposal:
 5. keep_soul for self-understanding with no current action.
 6. keep_investigating when there is not enough evidence.
 
+A Root is one distinct life domain (health, money, a craft, a relationship
+sphere) — never the person themselves. Never propose a Root that describes
+the user's identity, life as a whole, or general personal context (e.g.
+"<name>'s Life", "Who I Am", "Personal Context"): the Soul at the top of the
+tree already holds that role, so such material is keep_soul. If a proposed
+Root would plausibly contain every other Root, it is not a domain.
+
 Never claim a proposal is applied. These are suggestions for user approval.
 """
 
@@ -1578,6 +1609,40 @@ scope should change, and possibly_stale when newer evidence materially weakens
 its relevance. revised_text is required only for needs_revision. Keep each
 rationale concise. These are review labels, not automatic decisions.
 """
+
+
+QUESTION_RELEVANCE_SYSTEM = """\
+Reassess open Investigation questions against the user's newer answered
+evidence and newly approved context. A question earns its place in a small
+queue; one that the user has effectively already answered, that newer
+evidence contradicts, or that new context has made obsolete wastes their
+attention.
+
+Return STRICT JSON only:
+{"reviews":[{"item_id":int,"status":"still_relevant"|"retired_stale",
+"confidence":0-1,"rationale":str}]}
+
+Review every supplied question. Use retired_stale ONLY when the newer
+material clearly answers it, contradicts its premise, or supersedes its
+framing — mere overlap or reduced urgency is still_relevant. Keep each
+rationale to one concise sentence. Retiring is conservative: when in doubt,
+keep the question.
+"""
+
+
+def build_question_relevance_prompt(curiosity: dict, context: CuriosityContext,
+                                    questions: list[dict]) -> str:
+    return "\n".join([
+        f"INVESTIGATION: {curiosity.get('label', '')}",
+        f"DIRECTIVE: {curiosity.get('directive', '')}\n",
+        "NEWEST ANSWERED EVIDENCE:\n" + context.qa_block + "\n",
+        "EXPLICITLY APPROVED INVESTIGATION CONTEXT:\n"
+        + context.investigation_context_block + "\n",
+        "OPEN QUESTIONS:\n" + json.dumps([
+            {"item_id": item["id"], "text": item.get("text", "")}
+            for item in questions], ensure_ascii=False),
+        "Reassess every question as strict JSON.",
+    ])
 
 
 def build_exploration_thread_prompt(curiosity: dict, context: CuriosityContext,
@@ -1889,6 +1954,13 @@ class StubCuriosityModel:
                  "rationale": "It remains compatible with the newer answered evidence.",
                  "revised_text": ""} for item in suggestions]
 
+    def review_questions(self, curiosity: dict, context: CuriosityContext,
+                         questions: list[dict]) -> list[dict]:
+        return [{"item_id": item["id"], "status": "still_relevant",
+                 "confidence": .75,
+                 "rationale": "The newer material does not settle this question."}
+                for item in questions]
+
     def classify(self, curiosity: dict, context: CuriosityContext,
                  tree_summary: str, attached_summary: str) -> list[ClassificationProposal]:
         directive = (curiosity.get("directive") or "").lower()
@@ -2014,6 +2086,15 @@ class ClaudeCuriosityModel:
         prompt=build_suggestion_relevance_prompt(curiosity, context, suggestions)
         system=SUGGESTION_RELEVANCE_SYSTEM + _language_note()
         log_diag("prompt", f"surface=curiosity-review-suggestions model={self.model} "
+                 f"input_chars={len(system) + len(prompt)}")
+        data=_extract_json(self._call(system, prompt, max_tokens=1600)) or {}
+        return [item for item in data.get("reviews", []) if isinstance(item, dict)]
+
+    def review_questions(self, curiosity: dict, context: CuriosityContext,
+                         questions: list[dict]) -> list[dict]:
+        prompt=build_question_relevance_prompt(curiosity, context, questions)
+        system=QUESTION_RELEVANCE_SYSTEM + _language_note()
+        log_diag("prompt", f"surface=curiosity-review-questions model={self.model} "
                  f"input_chars={len(system) + len(prompt)}")
         data=_extract_json(self._call(system, prompt, max_tokens=1600)) or {}
         return [item for item in data.get("reviews", []) if isinstance(item, dict)]
@@ -3112,15 +3193,68 @@ def reassess_open_suggestions(mem, inf, store: CuriosityStore,
     return saved
 
 
+def reassess_open_questions(mem, inf, store: CuriosityStore,
+                            curiosity_id: int, model, *,
+                            force: bool = False) -> list[dict]:
+    """Review open questions against newer answers (and, when forced by
+    fresh approved context, everything). A question the newer material
+    clearly answers, contradicts, or supersedes is retired with a visible
+    note — mirroring how open suggestions are already re-reviewed. Retiring
+    is confidence-gated and conservative; kept questions record a review
+    watermark so they aren't re-reviewed until newer evidence exists."""
+    reviewer = getattr(model, "review_questions", None)
+    if not callable(reviewer):
+        return []
+    curiosity = store.get_curiosity(int(curiosity_id))
+    if not curiosity:
+        return []
+    answered = [item for item in store.items_for_curiosity(int(curiosity_id))
+                if item["kind"] == "question" and item["status"] == "answered"]
+    newest_answer = max((int(item["id"]) for item in answered), default=0)
+    questions = [item for item in store.open_items(int(curiosity_id))
+                 if item["kind"] == "question" and
+                 (force or (newest_answer and
+                            int(item.get("relevance_based_on_item_id") or 0)
+                            < newest_answer))]
+    if not questions:
+        return []
+    context = _build_context(mem, inf, store, int(curiosity_id))
+    raw = reviewer(curiosity, context, questions)
+    allowed = {int(item["id"]) for item in questions}
+    saved = []
+    for review in raw if isinstance(raw, list) else []:
+        try:
+            item_id = int(review.get("item_id"))
+            confidence = float(review.get("confidence", 0))
+        except (TypeError, ValueError):
+            continue
+        status = str(review.get("status") or "").strip()
+        if item_id not in allowed or status not in {"still_relevant",
+                                                    "retired_stale"}:
+            continue
+        if status == "retired_stale" and confidence < 0.7:
+            status = "still_relevant"  # not sure enough to take it away
+        saved.append(store.set_question_relevance(
+            item_id, status, confidence,
+            str(review.get("rationale") or ""), newest_answer or None))
+    return saved
+
+
 def generate_items(mem, inf, store: CuriosityStore, curiosity_id: int, model, *,
                    thread_id: int | None = None,
                    limit: int | None = None,
                    question_min_confidence: float = 0.70,
                    suggestion_min_confidence: float = 0.80,
-                   max_open: int = 6) -> int:
+                   max_open: int = 6,
+                   fresh_context: bool = False) -> int:
     """One round for one curiosity: ask the model for new items, filter by
     confidence, queue what clears the bar (highest-confidence first, up to
-    `limit`). Returns how many were queued."""
+    `limit`). Returns how many were queued.
+
+    fresh_context=True marks a round triggered by newly approved context:
+    every open question is re-reviewed against it, and if the queue is still
+    full afterwards, the lowest-confidence open question is retired to make
+    one slot — new durable context never bounces off a backed-up queue."""
     row = store.get_curiosity(curiosity_id)
     if row is None or row["status"] != "active":
         return 0
@@ -3134,9 +3268,35 @@ def generate_items(mem, inf, store: CuriosityStore, curiosity_id: int, model, *,
     # question queue itself is currently full. The review only adds a visible
     # status/revision note; it never silently applies or removes a proposal.
     reassess_open_suggestions(mem, inf, store, curiosity_id, model)
-    open_items = store.open_items(curiosity_id)
-    if thread is not None:
-        open_items = [item for item in open_items if item.get("thread_id") == thread["id"]]
+    # Open questions get the same treatment: ones the newer answers (or, on a
+    # fresh-context round, the new context) clearly settle are retired with a
+    # note — freeing queue room the honest way before any forced eviction.
+    reassess_open_questions(mem, inf, store, curiosity_id, model,
+                            force=fresh_context)
+
+    def _current_open_items():
+        items = store.open_items(curiosity_id)
+        if thread is not None:
+            return [item for item in items
+                    if item.get("thread_id") == thread["id"]]
+        return items
+
+    open_items = _current_open_items()
+    if len(open_items) >= max_open and fresh_context:
+        # New durable context should never bounce off a backed-up queue:
+        # retire the single lowest-confidence open question to make one slot.
+        open_questions = [item for item in open_items
+                          if item["kind"] == "question"]
+        if open_questions:
+            from .lang import T as lang_T
+            victim = min(open_questions,
+                         key=lambda item: float(item.get("confidence") or 0))
+            store.set_question_relevance(
+                int(victim["id"]), "retired_stale", 0.6,
+                lang_T("Retired to make room for a question grounded in newly "
+                       "approved context.",
+                       "새로 승인된 맥락에 기반한 질문을 위해 자리를 비웠어요."))
+            open_items = _current_open_items()
     if len(open_items) >= max_open:
         return 0  # queue's backed up — wait for the user to catch up
 

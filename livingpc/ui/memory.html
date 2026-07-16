@@ -669,6 +669,10 @@
   .cc-copy-block code { font:inherit; }
   .cc-inline-code { padding:1px 5px; border:1px solid rgba(83,231,192,.2); border-radius:5px;
     background:rgba(2,12,9,.48); color:var(--cyan); font:inherit; }
+  .node-link { cursor:pointer; border-bottom:1px dashed rgba(83,231,192,.45);
+    transition:color .12s ease,border-color .12s ease; }
+  .node-link:hover, .node-link:focus-visible { color:var(--cyan);
+    border-bottom-color:var(--cyan); border-bottom-style:solid; outline:none; }
   .cc-empty { margin:auto; max-width:520px; text-align:center; color:var(--muted); line-height:1.65; }
   .cc-compose { border-top:1px solid var(--line2); padding:18px 24px 20px; }
   .cc-attachments { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
@@ -810,6 +814,8 @@
   @media(max-width:1080px){ .self-grid{grid-template-columns:1fr}.self-portrait{height:260px} }
 
   .actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .actions + .actions,
+  .goal-lifecycle-actions { margin-top:12px; }
   .actions .yes  { background:rgba(47,227,160,.14); border-color:rgba(47,227,160,.5); color:var(--green); }
   .actions .yes:hover  { background:rgba(47,227,160,.28); }
   .actions .kind { background:rgba(255,209,102,.12); border-color:rgba(255,209,102,.45); color:var(--amber); }
@@ -3636,9 +3642,71 @@ function bindFaerieMascotDrag(){
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ const d=document.createElement('div'); d.textContent=String(s==null?'':s); return d.innerHTML; }
-function conversationHtml(value){
-  return esc(value).replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+/* Bolded node/investigation titles in chat become clickable links into the
+   Growth tree / Investigations views. The index is a light id+title catalog
+   fetched separately from the full goal_state payload. Keys are stored
+   HTML-escaped so they compare cleanly against the escaped chat text. */
+let nodeLinkIndex=null,nodeLinkIndexLoading=null;
+function refreshNodeLinkIndex(){
+  if(!api()||!pywebview.api.goal_catalog) return Promise.resolve();
+  if(nodeLinkIndexLoading) return nodeLinkIndexLoading;
+  nodeLinkIndexLoading=pywebview.api.goal_catalog().then(r=>{
+    nodeLinkIndexLoading=null;
+    if(!r||r.ok===false) return;
+    const index=new Map();
+    const key=value=>esc(String(value==null?'':value)).replace(/\s+/g,' ').trim().toLowerCase();
+    (r.investigations||[]).forEach(item=>{
+      if(item&&item.label) index.set(key(item.label),{kind:'curiosity',id:Number(item.id)});
+    });
+    (r.nodes||[]).forEach(node=>{
+      if(!node||node.type==='Soul'||!node.title) return;
+      index.set(key(node.title),{kind:'goal',id:Number(node.id)});
+    });
+    nodeLinkIndex=index;
+  }).catch(()=>{nodeLinkIndexLoading=null;});
+  return nodeLinkIndexLoading;
 }
+function nodeLinkFor(escapedTitle){
+  if(!nodeLinkIndex) return null;
+  return nodeLinkIndex.get(String(escapedTitle||'').replace(/\s+/g,' ').trim().toLowerCase())||null;
+}
+function conversationHtml(value){
+  return esc(value).replace(/\*\*([^*\n]+)\*\*/g,(match,inner)=>{
+    const target=nodeLinkFor(inner);
+    if(!target) return '<strong>'+inner+'</strong>';
+    const hint=target.kind==='goal'
+      ?curT('Open in Growth','Growth에서 열기')
+      :curT('Open in Investigations','Investigations에서 열기');
+    return '<strong class="node-link" role="link" tabindex="0" data-link-kind="'+target.kind+
+      '" data-link-id="'+target.id+'" title="'+hint+'">'+inner+'</strong>';
+  });
+}
+function followNodeLink(link){
+  const id=parseInt(link.dataset.linkId,10);
+  if(!Number.isFinite(id)) return;
+  if(link.dataset.linkKind==='goal'){
+    selectedGoalId=id;
+    activateView('goals');
+    if(typeof goalState!=='undefined'&&goalState&&goalState.tree&&goalFind(goalState.tree,id)){
+      selectGrowthNode(id);
+    }
+  }else{
+    activeCuriosityId=id;
+    activateView('curiosity');
+    if(typeof currentCuriosityState!=='undefined'&&currentCuriosityState){
+      renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+    }
+  }
+}
+document.addEventListener('click',event=>{
+  const link=event.target&&event.target.closest&&event.target.closest('.node-link');
+  if(link) followNodeLink(link);
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Enter'&&event.key!==' ') return;
+  const link=event.target&&event.target.closest&&event.target.closest('.node-link');
+  if(link){event.preventDefault();followNodeLink(link);}
+});
 function pct(x){ return x==null ? '' : Math.round(x*100) + '%'; }
 function api(){ return window.pywebview && pywebview.api; }
 
@@ -4750,7 +4818,9 @@ function approvePendingProposal(index){
     $('cc-status').textContent='';
     if(!r||r.ok===false){ setFaerieMascotState('error',1100); toast((r&&r.message)||'Command Center failed.',true); return; }
     setFaerieMascotState('reply',1200);
-    renderCommandChat(r);
+    // Approvals can create/rename tree nodes — refresh the title-link index
+    // so the confirmation message (and later replies) link to them.
+    refreshNodeLinkIndex().then(()=>renderCommandChat(r),()=>renderCommandChat(r));
     loadSelf();
   }).catch(e=>{ $('cc-status').textContent=''; setFaerieMascotState('error',1100); toast('Command Center failed: '+e,true); });
 }
@@ -4882,6 +4952,14 @@ function sendCommandMessage(){
   input.value=''; autoGrow(input); hideCommandMenu();
   commandAttachments=[];
   renderCommandAttachments();
+  // Set the thinking status and disable state *before* rendering the chat log,
+  // so the status bar's height is already accounted for when the log scrolls
+  // to its bottom — otherwise the log scrolls first, the status bar then pops
+  // in and shrinks the log's visible height, and the just-sent message ends
+  // up clipped out of view.
+  $('cc-send').disabled=true;
+  $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…');
+  setFaerieMascotState('thinking');
   renderCommandChat({ok:true,
     active_chat_id:commandChatState&&commandChatState.active_chat_id,
     proposals_enabled:commandChatState&&commandChatState.proposals_enabled,
@@ -4892,9 +4970,6 @@ function sendCommandMessage(){
     messages:(commandChatState&&commandChatState.messages||[]).concat([
       {role:'user',content:text}
     ])});
-  $('cc-send').disabled=true;
-  $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…');
-  setFaerieMascotState('thinking');
   pywebview.api.command_send(text, attachmentsForSend).then(r=>{
     $('cc-send').disabled=false;
     $('cc-status').textContent='';
@@ -4913,6 +4988,7 @@ function sendCommandMessage(){
     // keep the sidebar (Soul Calibration checklist, goals) live instead of
     // only refreshing on page load / manual "Refresh dashboard".
     loadSelf();
+    refreshNodeLinkIndex();
   }).catch(e=>{
     $('cc-send').disabled=false;
     $('cc-status').textContent='';
@@ -5294,7 +5370,10 @@ function loadCommandCenter(){
   bindCommandCenter();
   loadSelf();
   loadSelfPortrait();
-  loadCommandChat();
+  // Load the title-link index first so node titles in restored chat history
+  // render as links; re-render is unnecessary for later refreshes.
+  const chat=()=>loadCommandChat();
+  refreshNodeLinkIndex().then(chat,chat);
 }
 
 /* ---------- self dashboard ---------- */
@@ -5593,11 +5672,39 @@ function updateGoalStatusWithUndo(goalId,nextStatus,previousStatus,onDone,onFail
           if(onDone) onDone(u);
         }).catch(e=>toast('Could not undo: '+e,true));
       },7000);
+      startLeafDebrief(r);
     }
   }).catch(e=>{
     if(onFail) onFail();
     toast('Could not update task: '+e,true);
   });
+}
+
+/* Just-in-time planning: completing a Leaf hands you to the Command Center
+   with a debrief drafted — the next step gets decided in that conversation
+   (the companion sees the project's horizon and can bend the plan), instead
+   of a pre-generated queue marching on. Prefilled, never auto-sent: the Undo
+   window stays honest and you choose when (or whether) to talk it through. */
+function startLeafDebrief(result,extra){
+  const goal=result&&result.goal;
+  if(!goal||goal.type!=='task') return;
+  const parent=result.tree?goalFind(result.tree,goal.parent_id):null;
+  const message=curT(
+    'Leaf complete: "'+goal.title+'"'+(parent?' under "'+parent.title+'"':'')+
+    (extra?'.'+extra+' Let’s decide the next step.':
+      '. Debrief: here’s what happened and what it changed — '),
+    'Leaf 완료: "'+goal.title+'"'+(parent?' ("'+parent.title+'" 아래)':'')+
+    (extra?'.'+extra+' 다음 단계를 정해요.':
+      '. 디브리핑: 무슨 일이 있었고 무엇이 바뀌었냐면 — '));
+  activateView('self');
+  setTimeout(()=>{
+    const input=$('cc-input');
+    if(!input) return;
+    if(input.value.trim()&&!input.value.startsWith(curT('Leaf complete:','Leaf 완료:'))) return;
+    input.value=message;
+    input.focus();
+    input.setSelectionRange(message.length,message.length);
+  },120);
 }
 
 function runDatabaseRescue(){
@@ -7777,7 +7884,22 @@ function goalDefinitionStarterHtml(node){
 
 function goalShortText(text,limit=260){
   text=String(text||'').replace(/\s+/g,' ').trim();
-  return text.length>limit?text.slice(0,limit-1).trim()+'…':text;
+  if(text.length<=limit) return text;
+  const cut=text.slice(0,limit-1);
+  const brk=cut.lastIndexOf(' ');
+  // Cut at a word boundary — "Faerie F…" mid-word reads like broken data.
+  return (brk>limit*0.6?cut.slice(0,brk):cut).trim()+'…';
+}
+
+/* Like goalShortText but preserves newlines, so bullet/paragraph structure
+   in stored descriptions survives into goalSplitBullets instead of being
+   flattened into one run-on line before splitting. */
+function goalClipText(text,limit=560){
+  text=String(text||'').replace(/\r/g,'').trim();
+  if(text.length<=limit) return text;
+  const cut=text.slice(0,limit-1);
+  const brk=Math.max(cut.lastIndexOf(' '),cut.lastIndexOf('\n'));
+  return (brk>limit*0.6?cut.slice(0,brk):cut).trim()+'…';
 }
 
 function goalSplitBullets(text,maxItems=4){
@@ -7785,7 +7907,7 @@ function goalSplitBullets(text,maxItems=4){
   if(!text) return [];
   const explicit=text.split(/\n+|(?:^|\s)[•]\s+|(?:^|\s)-\s+/).map(s=>s.trim()).filter(Boolean);
   const parts=(explicit.length>1?explicit:text.split(/(?<=[.!?])\s+(?=[A-Z0-9“"])/))
-    .map(s=>goalShortText(s.replace(/^[•\-\s]+/,''),170))
+    .map(s=>goalShortText(s.replace(/^[•\-\s]+/,''),220))
     .filter(Boolean);
   return parts.slice(0,maxItems);
 }
@@ -7798,11 +7920,14 @@ function goalReadableBlock(text,maxItems=4){
 
 function goalRecapHtml(node,agentState,curiosities,evidence){
   const pieces=[];
-  const description=goalShortText(node.description||'',360);
-  const agentBrief=goalShortText(agentState.brief||'',420);
-  const nextFocus=goalShortText(agentState.next_focus||'',300);
+  // goalClipText (not goalShortText) so stored newlines survive to
+  // goalSplitBullets — flattening first merged separate paragraphs (e.g. an
+  // appended "Refined direction from Investigation:") into one clipped line.
+  const description=goalClipText(node.description||'',560);
+  const agentBrief=goalClipText(agentState.brief||'',420);
+  const nextFocus=goalClipText(agentState.next_focus||'',300);
   const storedOrigin=node.origin||{};
-  const originSummary=goalShortText(storedOrigin.summary||'',520);
+  const originSummary=goalClipText(storedOrigin.summary||'',520);
   const directCur=(curiosities||[]).filter(x=>!x.inherited_from_id);
   const inheritedCur=(curiosities||[]).filter(x=>x.inherited_from_id);
   const curLabels=[...directCur,...inheritedCur].map(x=>x.label).filter(Boolean);
@@ -7839,7 +7964,7 @@ function goalRecapHtml(node,agentState,curiosities,evidence){
       '<div class="goal-recap-item"><b>'+esc(p.label)+'</b>'+goalReadableBlock(p.text)+'</div>').join('')+'</div>'+
     (sourceChips.length?'<div class="goal-recap-sources">'+sourceChips.map(x=>
       '<span class="goal-chip">'+esc(x)+'</span>').join('')+'</div>':'')+
-    (node.description&&node.description.length>360
+    (node.description&&node.description.length>560
       ? '<details><summary>Show full stored description</summary><div class="goal-focus-desc">'+esc(node.description)+'</div></details>'
       : '')+'</div>';
 }
@@ -8137,6 +8262,13 @@ function bindGoalOutcomeControls(node,root){
       clearGoalOutcomeDraft(node.id);
       toast(r.synthesis_drafted?'Outcome saved. A lower-confidence interpretation is ready for review.':'Outcome saved. GoalAI will use it when proposing what comes next.');
       loadGoals();loadCuriosity();
+      // A completed outcome is the debrief moment — hand off to chat with
+      // what was just typed, so the next Leaf gets decided in conversation.
+      if(payload.result==='completed'&&node.type==='task'){
+        const extra=(payload.what_happened?curT(' What happened: ',' 무슨 일이 있었나: ')+payload.what_happened:'')+
+          (payload.next_adjustment?curT(' Next adjustment: ',' 다음 조정: ')+payload.next_adjustment:'');
+        startLeafDebrief({goal:node,tree:goalState&&goalState.tree},extra);
+      }
     }).catch(e=>{save.disabled=false;save.textContent='Save outcome and teach Faerie';toast('Could not save outcome: '+e,true);});
   };
 }
