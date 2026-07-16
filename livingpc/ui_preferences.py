@@ -15,7 +15,10 @@ from .db import connect as db_connect
 
 
 _ALLOWED_SKINS = {"classic", "dark", "cat", "knight", "meditate"}
-_ALLOWED_KEYS = {"mascot_skin", "details_open", "growth_map_layout"}
+_ALLOWED_KEYS = {
+    "mascot_skin", "details_open", "growth_map_layout",
+    "soul_calibration_enabled",
+}
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ui_preference (
     preference_key TEXT PRIMARY KEY,
@@ -37,6 +40,10 @@ def _validated(key: str, value):
         value = str(value or "")
         if value not in _ALLOWED_SKINS:
             raise ValueError("invalid mascot skin")
+        return value
+    if key == "soul_calibration_enabled":
+        if not isinstance(value, bool):
+            raise ValueError("soul_calibration_enabled must be a boolean")
         return value
     if key == "growth_map_layout":
         if not isinstance(value, dict):

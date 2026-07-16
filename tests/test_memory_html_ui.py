@@ -455,7 +455,6 @@ def test_command_center_rail_cards_share_the_portrait_gold_frame():
 
     assert "header > .self-panel.self-identity-card" in html
     assert "#self-profile-widgets > .command-widget" in html
-    assert "#self-dashboard > .command-widget" in html
     assert 'border-image:url("assets/icons/golden-trim.png") 140 155 140 155 fill / 14px' in html
 
 
@@ -467,7 +466,6 @@ def test_command_center_rail_lifts_profile_and_compacts_gold_cards():
     assert "top:15px; right:20px" in html
     assert "gap:0; padding:4px 9px 2px" in html
     assert "#self-rail-dashboard { display:flex; flex-direction:column; gap:4px; margin:6px 0 4px; }" in html
-    assert "#self-dashboard > .command-widget { margin-bottom:4px; }" in html
 
 
 def test_primary_navigation_lives_inside_the_gold_profile_container():
@@ -510,7 +508,7 @@ def test_portrait_customizer_stays_bounded_inside_compact_rail_portrait():
 def test_command_center_rail_uses_large_nav_icons_and_keeps_today_first():
     html = _html()
     start = html.index("function selfProfileWidgetsHtml(data)")
-    end = html.index("function selfSidebarHtml(data)", start)
+    end = html.index("function bindSelfDashboard()", start)
     render = html[start:end]
 
     assert "width:30px; height:30px" in html
@@ -990,8 +988,7 @@ def test_pixel_faerie_mascot_is_code_native_responsive_and_accessible():
     assert "@keyframes mascot-reply" in html
     assert "@keyframes mascot-error" in html
     assert "@media(max-width:1080px){ #faerie-mascot" in html
-    assert "@media(prefers-reduced-motion:reduce)" in html
-    assert "#faerie-mascot,#faerie-mascot * { animation:none !important; }" in html
+    assert "#faerie-mascot,#faerie-mascot * { animation:none !important; }" not in html
 
 
 def test_mascot_giggles_and_sprays_sparks_only_while_hovered():
@@ -1005,7 +1002,7 @@ def test_mascot_giggles_and_sprays_sparks_only_while_hovered():
     assert ':hover .mascot-giggle-drop' in html
     assert "#faerie-mascot.dragging .mascot-giggle-drop" in html
     assert "#faerie-mascot.dragging .mascot-giggle-face" in html
-    assert "prefers-reduced-motion:reduce" in html
+    assert "#faerie-mascot.dragging .mascot-giggle-drop" in html
 
 
 def test_mascot_has_soft_feminine_pixel_details():
@@ -1041,8 +1038,8 @@ def test_dark_fae_mascot_skin_is_no_longer_user_selectable():
 
     assert asset.exists() and asset.stat().st_size > 50_000
     assert asset.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    assert 'id="settings-mascot-skin"' in html
-    assert '<option value="classic">Pixel Faerie</option>' in html
+    assert 'id="settings-mascot-skins"' in html
+    assert '<button type="button" data-mascot-skin="classic">Pixel Faerie</button>' in html
     assert '<option value="dark">' not in html
     assert 'src="assets/dark-fae-mascot.png"' in html
     assert "dark-fae-wing-echo" in html and "dark-fae-flame" in html
@@ -1067,7 +1064,7 @@ def test_pixel_cupid_cat_skin_is_transparent_selectable_and_animated():
 
     assert asset.exists() and asset.stat().st_size > 50_000
     assert asset.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    assert '<option value="cat">Cupid Flower Cat</option>' in html
+    assert '<button type="button" data-mascot-skin="cat">Cupid Flower Cat</button>' in html
     assert 'src="assets/cupid-cat-mascot.png"' in html
     assert "cupid-cat-aura" in html and "cupid-cat-heart" in html
     assert "@keyframes cupid-cat-breathe" in html
@@ -1088,8 +1085,8 @@ def test_knight_and_meditating_pixel_cat_skins_are_transparent_and_selectable():
         raw = asset.read_bytes()
         assert asset.exists() and asset.stat().st_size > 50_000
         assert raw.startswith(b"\x89PNG\r\n\x1a\n") and raw[25] == 6  # RGBA PNG
-    assert '<option value="knight">Knight Star Cat</option>' in html
-    assert '<option value="meditate">Meditating Lotus Cat</option>' in html
+    assert '<button type="button" data-mascot-skin="knight">Knight Star Cat</button>' in html
+    assert '<button type="button" data-mascot-skin="meditate">Meditating Lotus Cat</button>' in html
     assert 'src="assets/knight-cat-mascot.png"' in html
     assert 'src="assets/meditating-cat-mascot.png"' in html
     assert "knight-cat-skin" in html and "meditating-cat-skin" in html
@@ -1282,14 +1279,51 @@ def test_mascot_is_draggable_clamped_and_persists_its_position():
     assert "style.right='auto'" in apply_position
 
 
-def test_mascot_hides_for_overlays_and_drawers():
+def test_mascot_choices_preview_on_hover_and_commit_on_click():
+    html = _html()
+    script = _script()
+    preview = _function_body(script, "previewFaerieMascotSkin")
+
+    assert html.count('data-mascot-skin="') == 4
+    assert "mascot.dataset.skin=skin" in preview
+    assert "button.onpointerenter=()=>previewFaerieMascotSkin" in script
+    assert "button.onclick=()=>setFaerieMascotSkin" in script
+    assert "mascotSkinChoices.onpointerleave=()=>previewFaerieMascotSkin(faerieMascotSkin)" in script
+
+
+def test_mascot_stays_visible_over_overlays_and_drawers():
     html = _html()
 
-    assert "body:has(.planner-drawer.open) #faerie-mascot" in html
-    assert "body:has(.inquiry-drawer.open) #faerie-mascot" in html
-    assert "body:has(.onboard-overlay.open) #faerie-mascot" in html
-    assert "body:has(.growth-map-overlay.open) #faerie-mascot" in html
-    assert "pointer-events:none" in html
+    assert "body:has(.planner-drawer.open) #faerie-mascot" not in html
+    assert "body:has(.inquiry-drawer.open) #faerie-mascot" not in html
+    assert "body:has(.onboard-overlay.open) #faerie-mascot" not in html
+    assert "body:has(.growth-map-overlay.open) #faerie-mascot" not in html
+    assert "#faerie-mascot { position:fixed; left:84px; bottom:61px; z-index:95" in html
+
+
+def test_launch_onboarding_continues_directly_into_soul_calibration():
+    script = _script()
+    success = "if(!r||r.ok===false){ onboardError('onboard-soul-error'"
+    start = script.index(success)
+    continuation = script[start:start + 500]
+
+    assert "closeOnboardingAndEnter();" in continuation
+    assert "openSoulCalDrawer();" in continuation
+    assert continuation.index("closeOnboardingAndEnter();") < continuation.index("openSoulCalDrawer();")
+
+
+def test_skipping_api_key_still_requires_naming_the_soul():
+    script = _script()
+    start = script.index("const skipBtn=$('onboard-skip-btn')")
+    end = script.index("const soulBtn=$('onboard-soul-continue')", start)
+    skip_handler = script[start:end]
+    soul_handler = script[end:end + 1300]
+
+    assert "onboardShowStep('soul')" in skip_handler
+    assert "onboarding_skip" not in skip_handler
+    assert "closeOnboardingAndEnter" not in skip_handler
+    assert "if(!title)" in soul_handler
+    assert "Name your Soul before continuing." in soul_handler
 
 
 def test_outcome_form_fields_stack_at_full_width():
@@ -1655,10 +1689,26 @@ def test_soul_calibration_explains_that_every_path_is_optional():
     assert "Every question here is optional." in render
     assert "Partial, vague, or uncertain answers are welcome" in render
     assert "reach the same understanding over time" in render
-    assert "Talk to the chatbot instead" in render
+    assert "Continue to chat" in render
     assert "이 질문들은 모두 선택 사항이에요." in render
     assert "대신 챗봇과 대화하기" in render
     assert "soul-cal-chat" in bind and "activateView('self')" in bind
+    assert "setSoulCalibrationEnabled(false)" in bind
+    assert "Go to Settings to try it again anytime." in bind
+
+
+def test_soul_calibration_is_settings_only_and_has_a_durable_checkbox():
+    html = _html()
+    script = _script()
+    hydrate = _function_body(script, "hydrateDurableUiPreferences")
+
+    assert 'id="self-dashboard"' not in html
+    assert "function selfSidebarHtml" not in script
+    assert 'id="settings-calibration-enabled" checked' in html
+    assert "ffSoulCalibrationEnabled" in script
+    assert "persistDurableUiPreference('soul_calibration_enabled'" in script
+    assert "preferences,'soul_calibration_enabled'" in hydrate
+    assert "if(e.target.checked)" in script and "openSoulCalDrawer();" in script
 
 
 def test_soul_calibration_plain_enter_remains_multiline():

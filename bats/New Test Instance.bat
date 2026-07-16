@@ -31,6 +31,14 @@ if not exist "%DEST%\gui.py" (
   exit /b 1
 )
 
+REM A disposable launch instance must not inherit the source install's local
+REM profile or language. Launch onboarding is enabled explicitly, and English
+REM is recorded as the initial choice so the first screen is the API-key step.
+(
+  echo profile = "launch"
+  echo language = "en"
+) > "%DEST%\config.toml"
+
 echo.
 echo Done. Fresh instance created at:
 echo   %DEST%

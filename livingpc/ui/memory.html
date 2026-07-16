@@ -74,7 +74,7 @@
   }
 
   /* Small code-native companion: crisp SVG shapes, no image/model dependency. */
-  #faerie-mascot { position:fixed; left:84px; bottom:61px; z-index:34; width:72px; height:78px;
+  #faerie-mascot { position:fixed; left:84px; bottom:61px; z-index:95; width:72px; height:78px;
     padding:0; border:0; background:transparent; box-shadow:none; color:inherit;
     display:grid; place-items:center; transform-origin:50% 100%; animation:mascot-float 3.8s ease-in-out infinite;
     filter:drop-shadow(0 5px 8px rgba(0,0,0,.42)); transition:opacity .18s,transform .18s;
@@ -201,12 +201,7 @@
   #faerie-mascot[data-state="reply"] { animation:mascot-reply .55s ease-out 2; }
   #faerie-mascot[data-state="reply"] .mascot-spark { opacity:1; animation-duration:.55s; }
   #faerie-mascot[data-state="error"] { animation:mascot-error .18s ease-in-out 4 alternate; }
-  body.mascot-disabled #faerie-mascot,
-  body:has(.planner-drawer.open) #faerie-mascot,
-  body:has(.inquiry-drawer.open) #faerie-mascot,
-  body:has(.app-modal-backdrop.open) #faerie-mascot,
-  body:has(.onboard-overlay.open) #faerie-mascot,
-  body:has(.growth-map-overlay.open) #faerie-mascot { opacity:0; pointer-events:none; }
+  body.mascot-disabled #faerie-mascot { opacity:0; pointer-events:none; }
   @keyframes mascot-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
   @keyframes mascot-aura { 0%,100%{opacity:.38;transform:scale(.9)} 50%{opacity:.8;transform:scale(1.05)} }
   @keyframes mascot-wing-left { from{transform:rotate(-9deg) scaleX(.92)} to{transform:rotate(15deg) scaleX(1.05)} }
@@ -255,14 +250,6 @@
     #faerie-mascot .cupid-cat-skin { width:68px; height:64px; }
     #faerie-mascot[data-skin="knight"],#faerie-mascot[data-skin="meditate"] { width:76px; height:74px; }
     #faerie-mascot .knight-cat-skin,#faerie-mascot .meditating-cat-skin { width:72px; height:72px; } }
-  @media(prefers-reduced-motion:reduce){
-    #faerie-mascot,#faerie-mascot * { animation:none !important; }
-    #faerie-mascot:hover { transform:none; }
-    #faerie-mascot[data-state="idle"]:not(.dragging):hover .mascot-giggle-drop,
-    #faerie-mascot.dragging .mascot-giggle-drop {
-      opacity:.85; transform:translateY(-5px); }
-  }
-
   #app { position:relative; z-index:2; display:grid; grid-template-columns:308px minmax(0,1fr);
     grid-template-rows:auto 1fr; height:100vh; }
   header { position:relative; grid-column:1; grid-row:1; display:flex; flex-direction:column; align-items:stretch;
@@ -332,7 +319,7 @@
   body.rail-collapsed #app { grid-template-columns:76px minmax(0,1fr); }
   body.rail-collapsed header,body.rail-collapsed nav { padding-left:7px; padding-right:7px; }
   body.rail-collapsed header .brand .logo,body.rail-collapsed #self-level-widget,
-  body.rail-collapsed #self-profile-widgets,body.rail-collapsed #self-dashboard,
+  body.rail-collapsed #self-profile-widgets,
   body.rail-collapsed nav .nav-group { display:none !important; }
   body.rail-collapsed header .brand { top:12px; right:9px; }
   body.rail-collapsed header .brand img { width:20px; height:20px; }
@@ -408,8 +395,7 @@
   /* Share the portrait's ornament language across the Command Center rail.
      Compact cards use a narrower slice so the frame does not crowd their text. */
   header > .self-panel.self-identity-card,
-  #self-profile-widgets > .command-widget,
-  #self-dashboard > .command-widget {
+  #self-profile-widgets > .command-widget {
     border-width:14px;
     border-style:solid;
     border-color:transparent;
@@ -419,8 +405,7 @@
     background:rgba(4,16,11,.68);
     box-shadow:none;
   }
-  #self-profile-widgets > .command-widget,
-  #self-dashboard > .command-widget { margin-bottom:4px; }
+  #self-profile-widgets > .command-widget { margin-bottom:4px; }
   header > .self-panel.self-identity-card .self-empty { padding:16px 8px; }
   .self-identity-summary { padding:2px 0 0; }
   .self-identity-summary h3 { margin:0 0 8px; font-size:13px; color:var(--green);
@@ -1600,6 +1585,10 @@
     border:1px solid var(--line); border-radius:10px; color:var(--fg); font-size:12px;
     background:rgba(2,12,7,.5); cursor:pointer; }
   .settings-choice.mascot-choice input { width:18px; height:18px; accent-color:var(--green); }
+  .mascot-skin-choices { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .mascot-skin-choices button { min-height:34px; padding:6px 8px; font-size:11px; }
+  .mascot-skin-choices button.active { border-color:var(--green); color:var(--green);
+    box-shadow:0 0 0 1px rgba(83,231,192,.25) inset; }
   .settings-stack { display:grid; gap:12px; }
   .settings-group { display:grid; gap:9px; padding:13px; border:1px solid var(--line);
     border-radius:14px; background:rgba(255,255,255,.025); }
@@ -2074,7 +2063,6 @@
 
     <div id="self-rail-dashboard">
       <div id="self-profile-widgets" class="self-empty">Loading your daily command widgets…</div>
-      <aside id="self-dashboard" class="command-side self-empty">Loading your daily command widgets…</aside>
     </div>
 
     <div class="rail-footer">
@@ -2092,7 +2080,9 @@
         <h3>Soul & Account</h3>
         <div class="actions">
           <button id="settings-edit-soul" data-help-en="Change the name shown for your Soul without changing its memories or Growth tree." data-help-ko="기억이나 성장 지도를 바꾸지 않고 Soul에 표시되는 이름을 변경합니다.">Edit Soul Name</button>
-          <button id="settings-open-calibration" data-help-en="Review or continue the optional questions that give Faerie an earlier understanding of you." data-help-ko="페어리가 당신을 더 빨리 이해하도록 돕는 선택형 질문을 검토하거나 이어갑니다.">Soul Calibration<span id="settings-cal-status" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></button>
+          <label class="settings-choice mascot-choice" for="settings-calibration-enabled" data-help-en="Turn this on to review or continue the optional questions that help Faerie understand you sooner." data-help-ko="페어리가 당신을 더 빨리 이해하도록 돕는 선택형 질문을 다시 시작합니다."><span>Soul Calibration<span id="settings-cal-status" class="hint" style="display:block;font-size:11px;margin-top:2px"></span></span>
+            <input type="checkbox" id="settings-calibration-enabled" checked>
+          </label>
           <button id="settings-change-key" data-help-en="Replace the Anthropic API key used for AI responses." data-help-ko="AI 응답에 사용하는 Anthropic API 키를 교체합니다.">Change API Key</button>
         </div>
       </section>
@@ -2108,14 +2098,14 @@
         <label class="settings-choice mascot-choice" for="settings-mascot-enabled"><span>Show Faerie Mascot</span>
           <input type="checkbox" id="settings-mascot-enabled" checked>
         </label>
-        <label class="settings-choice" for="settings-mascot-skin">Faerie Style
-        <select id="settings-mascot-skin">
-          <option value="classic">Pixel Faerie</option>
-          <option value="cat">Cupid Flower Cat</option>
-          <option value="knight">Knight Star Cat</option>
-          <option value="meditate">Meditating Lotus Cat</option>
-        </select>
-        </label>
+        <div class="settings-choice">Faerie Style
+          <div id="settings-mascot-skins" class="mascot-skin-choices" role="group" aria-label="Faerie Style">
+            <button type="button" data-mascot-skin="classic">Pixel Faerie</button>
+            <button type="button" data-mascot-skin="cat">Cupid Flower Cat</button>
+            <button type="button" data-mascot-skin="knight">Knight Star Cat</button>
+            <button type="button" data-mascot-skin="meditate">Meditating Lotus Cat</button>
+          </div>
+        </div>
       </section>
       <section class="settings-group">
         <h3>Usage & Reports</h3>
@@ -3581,6 +3571,10 @@ let faerieMascotSkin=(function(){
   }
   catch(e){ return 'classic'; }
 })();
+let soulCalibrationEnabled=(function(){
+  try{ return localStorage.getItem('ffSoulCalibrationEnabled')!=='0'; }
+  catch(e){ return true; }
+})();
 let faerieMascotTimer=null;
 let faerieMascotPosition=(function(){
   try{
@@ -3607,12 +3601,21 @@ function setFaerieMascotState(state,duration){
 function refreshFaerieMascotSetting(){
   const toggle=$('settings-mascot-enabled');
   if(toggle) toggle.checked=faerieMascotEnabled;
-  const skin=$('settings-mascot-skin');
-  if(skin) skin.value=faerieMascotSkin;
+  document.querySelectorAll('#settings-mascot-skins [data-mascot-skin]').forEach(button=>{
+    const active=button.dataset.mascotSkin===faerieMascotSkin;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',active?'true':'false');
+  });
   const mascot=$('faerie-mascot');
   if(mascot) mascot.dataset.skin=faerieMascotSkin;
   document.body.classList.toggle('mascot-disabled',!faerieMascotEnabled);
   if(!faerieMascotEnabled) setFaerieMascotState('idle');
+}
+function previewFaerieMascotSkin(skin){
+  if(!['classic','cat','knight','meditate'].includes(skin)) return;
+  const mascot=$('faerie-mascot');
+  if(mascot) mascot.dataset.skin=skin;
+  requestAnimationFrame(applyFaerieMascotPosition);
 }
 function setFaerieMascotEnabled(enabled){
   faerieMascotEnabled=!!enabled;
@@ -3625,6 +3628,20 @@ function setFaerieMascotSkin(skin){
   persistDurableUiPreference('mascot_skin',faerieMascotSkin);
   refreshFaerieMascotSetting();
   requestAnimationFrame(applyFaerieMascotPosition);
+}
+function refreshSoulCalibrationSetting(){
+  const toggle=$('settings-calibration-enabled');
+  if(toggle) toggle.checked=soulCalibrationEnabled;
+}
+function setSoulCalibrationEnabled(enabled){
+  soulCalibrationEnabled=!!enabled;
+  try{ localStorage.setItem('ffSoulCalibrationEnabled',soulCalibrationEnabled?'1':'0'); }catch(e){}
+  persistDurableUiPreference('soul_calibration_enabled',soulCalibrationEnabled);
+  refreshSoulCalibrationSetting();
+  if(!soulCalibrationEnabled){
+    const drawer=$('soul-calibration-drawer');
+    if(drawer) drawer.classList.remove('open');
+  }
 }
 function updateFaerieMascotFacing(targetX){
   const mascot=$('faerie-mascot');
@@ -3980,12 +3997,8 @@ function closeOnboardingAndEnter(){
   };
   const skipBtn=$('onboard-skip-btn');
   if(skipBtn) skipBtn.onclick=()=>{
-    if(!api()) return;
-    skipBtn.disabled=true;
-    bridgeTimeout(pywebview.api.onboarding_skip(),'Skip onboarding',10000).then(()=>{
-      skipBtn.disabled=false;
-      closeOnboardingAndEnter();
-    }).catch(()=>{ skipBtn.disabled=false; closeOnboardingAndEnter(); });
+    onboardShowStep('soul');
+    setTimeout(()=>{ const input=$('onboard-soul-title'); if(input) input.focus(); },30);
   };
   const soulBtn=$('onboard-soul-continue');
   if(soulBtn) soulBtn.onclick=()=>{
@@ -3993,11 +4006,17 @@ function closeOnboardingAndEnter(){
     const title=($('onboard-soul-title')&&$('onboard-soul-title').value||'').trim();
     const purpose=($('onboard-soul-purpose')&&$('onboard-soul-purpose').value||'').trim();
     onboardError('onboard-soul-error','');
+    if(!title){
+      onboardError('onboard-soul-error','Name your Soul before continuing.');
+      if($('onboard-soul-title')) $('onboard-soul-title').focus();
+      return;
+    }
     soulBtn.disabled=true; soulBtn.textContent='Planting…';
     bridgeTimeout(pywebview.api.onboarding_create_soul(title, purpose),'Create Soul',20000).then(r=>{
       soulBtn.disabled=false; soulBtn.textContent='Create my Soul';
       if(!r||r.ok===false){ onboardError('onboard-soul-error',(r&&r.message)||'Could not save that.'); return; }
-      onboardShowStep('done');
+      closeOnboardingAndEnter();
+      if(soulCalibrationEnabled) openSoulCalDrawer();
     }).catch(e=>{
       soulBtn.disabled=false; soulBtn.textContent='Create my Soul';
       onboardError('onboard-soul-error','Could not reach Faerie Fire: '+e);
@@ -4202,6 +4221,7 @@ document.querySelectorAll('nav .nav-group').forEach(group=>{
 });
 if($('settings-cog')) $('settings-cog').onclick=()=>{
   $('settings-drawer').classList.add('open');
+  refreshSoulCalibrationSetting();
   refreshSettingsCalibrationLabel();
   refreshSettingsLanguageLabel();
   refreshSettingsUsageLine();
@@ -4227,8 +4247,27 @@ if($('settings-growth-skin')) $('settings-growth-skin').onchange=e=>setGrowthMap
 refreshGrowthMapSkinSetting();
 if($('settings-mascot-enabled')) $('settings-mascot-enabled').onchange=e=>
   setFaerieMascotEnabled(e.target.checked);
-if($('settings-mascot-skin')) $('settings-mascot-skin').onchange=e=>setFaerieMascotSkin(e.target.value);
+const mascotSkinChoices=$('settings-mascot-skins');
+if(mascotSkinChoices){
+  mascotSkinChoices.querySelectorAll('[data-mascot-skin]').forEach(button=>{
+    button.onpointerenter=()=>previewFaerieMascotSkin(button.dataset.mascotSkin);
+    button.onfocus=()=>previewFaerieMascotSkin(button.dataset.mascotSkin);
+    button.onclick=()=>setFaerieMascotSkin(button.dataset.mascotSkin);
+  });
+  mascotSkinChoices.onpointerleave=()=>previewFaerieMascotSkin(faerieMascotSkin);
+  mascotSkinChoices.onfocusout=event=>{
+    if(!mascotSkinChoices.contains(event.relatedTarget)) previewFaerieMascotSkin(faerieMascotSkin);
+  };
+}
 refreshFaerieMascotSetting();
+if($('settings-calibration-enabled')) $('settings-calibration-enabled').onchange=e=>{
+  setSoulCalibrationEnabled(e.target.checked);
+  if(e.target.checked){
+    $('settings-drawer').classList.remove('open');
+    openSoulCalDrawer();
+  }
+};
+refreshSoulCalibrationSetting();
 function refreshSettingsLanguageLabel(){
   const span=$('settings-language-line'); if(!span) return;
   span.textContent=(APP_LANG==='ko')
@@ -4341,6 +4380,7 @@ document.addEventListener('keydown',event=>{
 });
 function refreshSettingsCalibrationLabel(state){
   const span=$('settings-cal-status'); if(!span) return;
+  if(!soulCalibrationEnabled){ span.textContent='Off — check to try it again'; return; }
   if(state){
     const complete=!!state.complete || ((state.total||0)>0 && calCovered(state)>=(state.total||0));
     span.textContent=complete?'Completed — click to review or adjust':calCovered(state)+'/'+(state.total||0)+' covered so far';
@@ -4443,8 +4483,10 @@ function bindSoulCalDrawer(){
   const skipBtn=$('soul-cal-skip'); if(skipBtn) skipBtn.onclick=()=>submitSoulCalField(true);
   const chatBtn=$('soul-cal-chat');
   if(chatBtn) chatBtn.onclick=()=>{
-    closeSoulCalDrawer();
+    setSoulCalibrationEnabled(false);
+    $('soul-calibration-drawer').classList.remove('open');
     activateView('self');
+    toast('Soul Calibration is off. Go to Settings to try it again anytime.');
     setTimeout(()=>{ const input=$('cc-chat-input'); if(input) input.focus(); },80);
   };
   document.querySelectorAll('#soul-cal-body .calibration-row[data-cal-key]').forEach(row=>{
@@ -4494,7 +4536,7 @@ function renderSoulCalDrawer(){
   }
   const intro=APP_LANG==='ko'
     ?'<div class="soul-calibration-intro"><b>이 질문들은 모두 선택 사항이에요.</b><p>이 과정은 AI가 당신을 더 빨리 이해하도록 맥락을 제공하는 지름길일 뿐이에요. 완전하지 않거나 막연한 답도 괜찮고, 일부 또는 모든 질문에 답하지 않아도 괜찮아요. 바로 챗봇과 대화를 시작하면 대화 속에서 자연스럽게 필요한 질문을 만들고 결국 같은 이해에 도달해요. 지금 아는 만큼 답하면 페어리가 더 빨리 도움을 시작할 수 있을 뿐, 어느 쪽이든 괜찮아요.</p><div class="actions"><button type="button" id="soul-cal-chat">대신 챗봇과 대화하기</button></div></div>'
-    :'<div class="soul-calibration-intro"><b>Every question here is optional.</b><p>This is simply a shortcut for giving the AI useful context. Partial, vague, or uncertain answers are welcome, and you can answer some questions or none at all. You can go straight to the chatbot: it will naturally develop questions from your conversations and reach the same understanding over time. Answering what you can just helps Faerie start helping you sooner. Either path is fine.</p><div class="actions"><button type="button" id="soul-cal-chat">Talk to the chatbot instead</button></div></div>';
+    :'<div class="soul-calibration-intro"><b>Every question here is optional.</b><p>This is simply a shortcut for giving the AI useful context. Partial, vague, or uncertain answers are welcome, and you can answer some questions or none at all. You can go straight to the chatbot: it will naturally develop questions from your conversations and reach the same understanding over time. Answering what you can just helps Faerie start helping you sooner. Either path is fine.</p><div class="actions"><button type="button" id="soul-cal-chat">Continue to chat</button></div></div>';
   body.innerHTML=intro+formHtml+'<div class="soul-facts">'+
     soulCalChecklistHtml(state, active?(active.section+'::'+active.attribute):null)+'</div>';
   bindCollapsePrefs(body);
@@ -4503,7 +4545,6 @@ function renderSoulCalDrawer(){
   if(backBtn) backBtn.onclick=()=>{ soulCalSelectedKey=null; renderSoulCalDrawer(); };
   if(!naturalNext && !soulCalSynthesisFired){
     soulCalSynthesisFired=true;
-    hideCalibrationSidebar();
     if(api()&&pywebview.api.command_calibration_synthesis){
       // The synthesis (plus the post-calibration investigation questions) is
       // appended to the chat DB server-side — refresh the chat and the
@@ -4518,16 +4559,6 @@ function renderSoulCalDrawer(){
 
 function calCovered(state){
   return (state&&state.covered!=null)?state.covered:((state&&state.done)||0);
-}
-
-function hideCalibrationSidebar(){
-  const shell=document.querySelector('.command-center-shell');
-  const sidebar=$('self-dashboard');
-  if(shell) shell.classList.add('no-sidebar');
-  if(sidebar){
-    sidebar.style.display='none';
-    sidebar.innerHTML='';
-  }
 }
 
 function submitSoulCalField(skip){
@@ -4579,10 +4610,6 @@ function openSoulCalDrawer(){
 if($('soul-cal-close')) $('soul-cal-close').onclick=()=>{
   $('soul-calibration-drawer').classList.remove('open');
   loadSelf();
-};
-if($('settings-open-calibration')) $('settings-open-calibration').onclick=()=>{
-  $('settings-drawer').classList.remove('open');
-  openSoulCalDrawer();
 };
 function openEditSoul(){
   if(!api()) return;
@@ -5671,27 +5698,7 @@ function selfProfileWidgetsHtml(data){
     '</div>';
 }
 
-function selfSidebarHtml(data){
-  const calibration=data.calibration&&data.calibration.ok?data.calibration:null;
-  if(!calibration||calibration.complete) return '';
-  return '<div class="command-widget" id="self-soul-calibration"><h3>Soul Calibration</h3>'+
-    '<div class="hint">'+calCovered(calibration)+'/'+(calibration.total||0)+' covered</div>'+
-    (calibration.sections||[]).map(sec=>{
-      const attrs=(sec.attributes||[]);
-      if(!attrs.length) return '';
-      const covered=attrs.filter(a=>a.state==='done'||a.state==='skipped').length;
-      const complete=covered===attrs.length;
-      return '<div class="calibration-row '+(complete?'done':'remaining')+'"><span class="cal-mark">'+
-        (complete?'✓':'○')+'</span><span>'+esc(sec.section)+' · '+covered+'/'+attrs.length+'</span></div>';
-    }).join('')+
-    '<div class="actions" style="margin-top:10px">'+
-      '<button type="button" id="self-open-calibration" class="accent">'+
-      (calCovered(calibration)?'Continue Soul Calibration':'Start Soul Calibration')+'</button></div>'+
-  '</div>';
-}
-
 function bindSelfDashboard(){
-  const calBtn=$('self-open-calibration'); if(calBtn) calBtn.onclick=openSoulCalDrawer;
   // @Today titles and Active Threads leaf rows jump to the Leaf in Growth.
   // preventDefault stops the surrounding <label> from toggling the checkbox
   // when the title text (rather than the box itself) is clicked.
@@ -5816,13 +5823,12 @@ function loadSelf(opts){
     pywebview.api.goal_state().catch(()=>null),
     pywebview.api.curiosity_state().catch(()=>null),
     pywebview.api.goal_ai_state().catch(()=>null),
-    (pywebview.api.command_calibration_status?pywebview.api.command_calibration_status():Promise.resolve(null)).catch(()=>null),
     (pywebview.api.self_today_focus?pywebview.api.self_today_focus(!!opts.forceFocus):Promise.resolve(null)).catch(()=>null),
     loadBackgroundImages()
-  ]),'Command widgets',20000).then(([goals,curiosity,goalAi,calibration,todayFocus,images])=>{
+  ]),'Command widgets',20000).then(([goals,curiosity,goalAi,todayFocus,images])=>{
     $('self-status').textContent='';
     const data={goals:goals||{},curiosity:curiosity||{},goalAi:goalAi||{},
-      calibration:calibration||{},todayFocus:todayFocus||{}};
+      todayFocus:todayFocus||{}};
     const curiosities=(data.curiosity&&data.curiosity.curiosities)||[];
     const checkinHour=data.curiosity&&data.curiosity.checkin_hour;
     if($('self-level-widget')){
@@ -5837,19 +5843,6 @@ function loadSelf(opts){
       $('self-investigations-cards').className='';
       $('self-investigations-cards').innerHTML=selfInvestigationsHtml(curiosities,checkinHour,images);
     }
-    const sidebarHtml=selfSidebarHtml(data);
-    const shell=document.querySelector('.command-center-shell');
-    const sidebar=$('self-dashboard');
-    if(sidebarHtml){
-      if(shell) shell.classList.remove('no-sidebar');
-      sidebar.style.display='';
-      sidebar.className='command-side';
-      sidebar.innerHTML=sidebarHtml;
-    } else {
-      if(shell) shell.classList.add('no-sidebar');
-      sidebar.style.display='none';
-      sidebar.innerHTML='';
-    }
     bindSelfDashboard();
   }).catch(e=>{
     $('self-status').textContent='';
@@ -5857,8 +5850,6 @@ function loadSelf(opts){
       $('self-profile-widgets').className='self-empty';
       $('self-profile-widgets').textContent='Could not load dashboard: '+e;
     }
-    $('self-dashboard').className='command-side self-empty';
-    $('self-dashboard').textContent='Could not load dashboard: '+e;
   });
 }
 
@@ -10395,6 +10386,11 @@ function hydrateDurableUiPreferences(){
     }else{
       persistDurableUiPreference('mascot_skin',faerieMascotSkin);
     }
+    if(Object.prototype.hasOwnProperty.call(preferences,'soul_calibration_enabled')){
+      soulCalibrationEnabled=preferences.soul_calibration_enabled===true;
+    }else{
+      persistDurableUiPreference('soul_calibration_enabled',soulCalibrationEnabled);
+    }
     if(preferences.details_open&&typeof preferences.details_open==='object'){
       Object.keys(detailsOpenPref).forEach(key=>delete detailsOpenPref[key]);
       Object.assign(detailsOpenPref,preferences.details_open);
@@ -10414,10 +10410,12 @@ function hydrateDurableUiPreferences(){
     }
     try{
       localStorage.setItem('ffFaerieMascotSkin',faerieMascotSkin);
+      localStorage.setItem('ffSoulCalibrationEnabled',soulCalibrationEnabled?'1':'0');
       localStorage.setItem('ffDetailsOpen',JSON.stringify(detailsOpenPref));
       localStorage.setItem(GOAL_MAP_POS_KEY,JSON.stringify(goalMapPositions));
     }catch(e){}
     refreshFaerieMascotSetting();
+    refreshSoulCalibrationSetting();
     document.querySelectorAll('details[data-collapse-key]').forEach(d=>{
       const key=d.dataset.collapseKey;
       if(Object.prototype.hasOwnProperty.call(detailsOpenPref,key)) d.open=!!detailsOpenPref[key];

@@ -4,6 +4,7 @@
 # Exit code 1 if anything failed.
 import os
 import re
+import shutil
 import subprocess
 import sys
 import traceback
@@ -90,14 +91,19 @@ def js_check():
     html = open(os.path.join("livingpc", "ui", "memory.html"), encoding="utf-8").read()
     if not html.rstrip().endswith("</html>"):
         return "FILE TRUNCATED"
-    start = html.index("<script>") + len("<script>")
-    end = html.rindex("</script>")
-    js_path = os.path.join(os.environ.get("TEMP", "."), "faerie_syntax_check.js")
-    open(js_path, "w", encoding="utf-8").write(html[start:end])
-    proc = subprocess.run(["node", "--check", js_path], capture_output=True, text=True)
-    if proc.returncode != 0:
-        return "SYNTAX ERROR:\n" + proc.stderr[:2000]
-    return f"node --check passed ({end - start} bytes of JS)"
+    scripts = re.findall(r"<script>\s*(.*?)\s*</script>", html, re.DOTALL)
+    if not scripts:
+        return "NO INLINE SCRIPT FOUND"
+    if shutil.which("node") is None:
+        return "skipped (Node.js is optional and is not installed)"
+    for index, script in enumerate(scripts, start=1):
+        proc = subprocess.run(
+            ["node", "--check", "-"], input=script,
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        if proc.returncode != 0:
+            return f"SYNTAX ERROR in block {index}:\n" + proc.stderr[:2000]
+    return f"node --check passed ({len(scripts)} blocks, {sum(map(len, scripts))} bytes of JS)"
 
 
 check("memory.html JS syntax", js_check)

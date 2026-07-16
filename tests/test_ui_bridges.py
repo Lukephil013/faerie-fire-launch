@@ -65,6 +65,12 @@ class TestGuiApi(unittest.TestCase):
         self.assertEqual(state["initial_view"], "self")
         self.assertEqual(state["profile"], "personal")
 
+    def test_onboarding_requires_an_explicit_soul_name(self):
+        result = self.api.onboarding_create_soul("   ", "A meaningful purpose")
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["message"])
+
     def test_leaf_workspace_bridges_wrap_workspace_views(self):
         opened_view = {"node": {"id": 7}, "phase": "shaping"}
         sent_view = {"node": {"id": 7}, "phase": "doing"}

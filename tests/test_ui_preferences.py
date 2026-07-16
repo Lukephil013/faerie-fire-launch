@@ -12,12 +12,14 @@ def test_visual_preferences_survive_store_reopen(tmp_path):
     store = UiPreferenceStore(db)
     store.set("mascot_skin", "cat")
     store.set("details_open", collapsed)
+    store.set("soul_calibration_enabled", False)
     store.close()
 
     reopened = UiPreferenceStore(db)
     try:
         assert reopened.get_all() == {
-            "mascot_skin": "cat", "details_open": collapsed}
+            "mascot_skin": "cat", "details_open": collapsed,
+            "soul_calibration_enabled": False}
     finally:
         reopened.close()
 
@@ -28,6 +30,7 @@ def test_visual_preferences_reject_unbounded_or_invalid_values(tmp_path):
         for key, value in (("mascot_skin", "unknown"),
                            ("unbounded_key", "value"),
                            ("details_open", []),
+                           ("soul_calibration_enabled", "false"),
                            ("growth_map_layout", [])):
             try:
                 store.set(key, value)
@@ -72,6 +75,7 @@ def test_gui_bridge_reads_preferences_after_restart(tmp_path):
     first = GuiApi(cfg)
     assert first.ui_preference_set("mascot_skin", "knight")["ok"]
     assert first.ui_preference_set("details_open", {"scope::panel::0": False})["ok"]
+    assert first.ui_preference_set("soul_calibration_enabled", False)["ok"]
     assert first.ui_preference_set("growth_map_layout", {
         "positions": {"7": {"x": 10, "y": 20}},
         "views": {"growth-map-tree": {"scale": 1.5, "panX": 2, "panY": 3}},
@@ -82,6 +86,7 @@ def test_gui_bridge_reads_preferences_after_restart(tmp_path):
     assert reopened == {"ok": True, "preferences": {
         "mascot_skin": "knight",
         "details_open": {"scope::panel::0": False},
+        "soul_calibration_enabled": False,
         "growth_map_layout": {
             "positions": {"7": {"x": 10.0, "y": 20.0}},
             "views": {"growth-map-tree": {

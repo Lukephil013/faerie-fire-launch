@@ -226,7 +226,12 @@ class GuiApi:
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)
         try:
-            title = str(title or "").strip() or T("Actualized Self", "실현된 나")
+            title = str(title or "").strip()
+            if not title:
+                return {"ok": False, "message": T(
+                    "Name your Soul before continuing.",
+                    "계속하기 전에 Soul의 이름을 정해 주세요.",
+                )}
             purpose = str(purpose or "").strip()
             store.update(store.root_id, title=title, description=purpose)
             investigation_id = onboarding.seed_example_investigation(
