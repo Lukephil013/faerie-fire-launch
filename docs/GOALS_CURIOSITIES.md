@@ -170,10 +170,12 @@ get a deterministic derived label immediately; an approved AI review persists
 the semantic roles it confirms. These roles are descriptive rather than a
 required ladder: a Root may own an Area, Project, or Leaf directly, and a
 Project may go straight to Leaves when no Stage adds meaning.
-Within that flexible ladder, a **Stage** is still a container for a meaningful
-phase, while a **Leaf** is one terminal outcome or action-and-learning cycle.
-Stages can own Leaves; Leaves cannot own children and are completed through the
-Leaf Agent. Project → Stage and Stage → Leaf are the normal shapes. A nested
+Within that flexible ladder, a **Stage** is an optional container for a distinct
+phase that needs several Leaves, while a **Leaf** is one terminal outcome or
+action-and-learning cycle. Most small Projects should go directly to Leaves;
+Stages are useful for long projects whose research, build, launch, or follow-up
+phases each need their own rollup. Stages can own Leaves; Leaves cannot own
+children and are completed through the Leaf Agent. A nested
 Stage → Stage relationship is accepted only when the proposed child includes
 an explicit macro-stage/substage justification; otherwise intake and restructure
 validation reject it rather than creating two indistinguishable phase levels.
@@ -267,12 +269,22 @@ and approved plan version. It is the durable shared understanding behind
 references such as “those,” “both,” or “the second one.” The user can move back
 to shaping whenever the agreement no longer fits.
 
+Documents can also be attached in the Leaf Agent composer. Supported files are
+extracted locally, and their text is stored encrypted under that Leaf's
+workspace. The model receives only bounded excerpts from the selected Leaf;
+sibling Leaf documents never cross the workspace boundary. Raw files are not
+copied into Faerie, and attachment text is treated as untrusted reference
+material rather than instructions or an automatic memory fact.
+
 Leaf Agent replies follow a reply-first contract. A normal conversational
 message is always the primary result and remains visible even if optional
 structured metadata is unusable. A response may additionally contain:
 
 - suggestion cards with stable IDs, allowing one, several, all, none, or a
   free-form alternative;
+- any number of mixed question blocks—single choice, multi-select, or text—with
+  one shared submission button so related answers arrive as one conversational
+  turn;
 - an editable agreement or plan proposal;
 - a plan-revision proposal with stable step IDs; or
 - a completion or reflection proposal.
@@ -327,6 +339,23 @@ receipt. The interface then opens the nearest next active Leaf. If none remains,
 it returns to the parent and asks GoalAI to review that area for a next-Leaf
 proposal. Reopening is explicit and reversible: it restores the same Leaf ID to
 the active map without deleting its prior outcome, receipt, evidence, or chat.
+
+Direct open Leaves use an adaptive two-step backend horizon. Projects have two
+independent singleton attention signals: **Highest priority** and **Currently
+working**. Each signal can belong to only one active Project globally. Only a
+Project carrying either signal exposes its first canonical Leaf as **NOW** and
+its second as **TENTATIVE NEXT** in the map and detail views; Areas, Stages,
+Roots, and unattended Projects show no execution marker. Priority and due date
+never create or reorder these labels. The Command Center chat can propose
+setting, moving, or clearing either Project signal when the user asks; the
+change remains pending until the user approves its card, just like other Growth
+mutations. Paused Leaves still occupy their backend
+slot, while completed and archived history do not. Pending AI proposals reserve
+capacity alongside stored Leaves. Completing NOW produces one approval-gated
+replan that promotes or rewrites TENTATIVE NEXT and may add one new tentative
+next step. Replans cover every direct live Leaf,
+are revalidated against current versions immediately before approval, and apply
+the project framing plus all Leaf operations atomically.
 
 Completion also prepares a project-local **Leaf handoff** when another active
 Leaf exists in the Project's recommended execution order. A stronger, separately

@@ -4,13 +4,16 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from livingpc.curiosity import (CuriosityContext, CuriosityStore, GeneratedItem,
-                                StubCuriosityModel, answer_item, archive_curiosity,
-                                dismiss_item, generate_items, pause_curiosity,
-                                parse_items, reactivate_curiosity, respond_suggestion,
+from livingpc.curiosity import (ClassificationProposal, CuriosityContext,
+                                CuriosityStore, GeneratedItem, StubCuriosityModel,
+                                answer_item, archive_curiosity, classify_curiosity,
+                                decide_classification_proposal, dismiss_item,
+                                generate_items, pause_curiosity, parse_items,
+                                reactivate_curiosity, respond_suggestion,
                                 reassess_open_suggestions,
                                 reconcile_synthesis, run_all_active, set_curiosity,
                                 set_curiosity_from_journal, set_greatest,
@@ -104,6 +107,14 @@ class _CandidateModel(StubCuriosityModel):
     def suggest_investigations(self, context):
         self.context = context
         return list(self.candidates)
+
+
+class _ClassificationModel(StubCuriosityModel):
+    def __init__(self, proposals):
+        self.proposals = list(proposals)
+
+    def classify(self, curiosity, context, tree_summary, attached_summary):
+        return list(self.proposals)
 
 
 class TestCuriosityStore(unittest.TestCase):
@@ -1053,6 +1064,120 @@ class TestAnswerDismissRespond(unittest.TestCase):
         iid = self.store.add_item(self.cid, "question", "q")
         with self.assertRaises(ValueError):
             respond_suggestion(self.store, iid, "tried")
+
+
+class TestClassificationLeafHorizon(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.tmp.name, "memory.db")
+        self.cfg = SimpleNamespace(
+            memory_db_path=self.db,
+            goal_ai_leaf_horizon=2,
+        )
+        self.mem = MemoryStore(self.db)
+        self.inf = InferenceStore(self.db)
+        self.store = CuriosityStore(self.db)
+        self.goals = GoalStore(self.db)
+        self.project = self.goals.create("overgoal", "Upwork experiment")
+        self.cid = self.store.add_curiosity(
+            "Use this investigation to shape the Upwork experiment.",
+            "Upwork learning",
+        )
+
+    def tearDown(self):
+        self.goals.close()
+        self.store.close()
+        self.inf.close()
+        self.mem.close()
+        self.tmp.cleanup()
+
+    def _leaf(self, title, description=""):
+        return ClassificationProposal(
+            "create_leaf",
+            {"parent_id": self.project, "title": title,
+             "description": description, "priority": "normal"},
+            "The investigation now points to an actionable next step.",
+        )
+
+    def test_staging_rejects_title_overlap_and_reserves_the_two_leaf_horizon(self):
+        self.goals.create(
+            "task", "Draft Upwork profile", parent_id=self.project)
+        model = _ClassificationModel([
+            self._leaf("DRAFT Upwork profile!!"),
+            self._leaf("Draft the Upwork profile"),
+            self._leaf("Publish profile and first posting scan"),
+            self._leaf("Track applications and outcomes"),
+        ])
+
+        result = classify_curiosity(
+            self.cfg, self.mem, self.inf, self.store, self.cid, model)
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(
+            [row["payload"]["title"] for row in result["proposals"]],
+            ["Publish profile and first posting scan"],
+        )
+
+    def test_staging_counts_a_command_center_leaf_card_as_reserved(self):
+        self.goals.create(
+            "task", "Draft Upwork profile", parent_id=self.project)
+        chats = ChatStore(self.db)
+        chat_id = chats.create("Upwork")
+        chats.replace_pending_proposals(chat_id, [{
+            "action": "create_leaf",
+            "target_node_id": self.project,
+            "label": "Publish profile and first posting scan",
+            "directive": "Publish the profile, then scan the first postings.",
+        }])
+
+        result = classify_curiosity(
+            self.cfg, self.mem, self.inf, self.store, self.cid,
+            _ClassificationModel([self._leaf("Track applications and outcomes")]),
+        )
+
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["proposals"], [])
+
+    def test_approved_leaf_is_revalidated_and_records_origin_atomically(self):
+        proposal_id = self.store.add_classification_proposal(
+            self.cid, self._leaf("Draft Upwork profile"))
+
+        result = decide_classification_proposal(
+            self.cfg, proposal_id, "approve")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "approved")
+        leaf = GoalStore(self.db)
+        try:
+            created = leaf.get(result["attached_goal_id"])
+            self.assertEqual(created["title"], "Draft Upwork profile")
+            self.assertEqual(created["origin"]["source_kind"], "investigation")
+            self.assertEqual(created["origin"]["source_proposal_id"], proposal_id)
+        finally:
+            leaf.close()
+
+    def test_stale_leaf_approval_dismisses_card_and_applies_nothing(self):
+        proposal_id = self.store.add_classification_proposal(
+            self.cid, self._leaf("Publish profile"))
+        existing_id = self.goals.create(
+            "task", "Publish profile", parent_id=self.project)
+
+        result = decide_classification_proposal(
+            self.cfg, proposal_id, "approve")
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["stale"])
+        self.assertEqual(result["status"], "dismissed")
+        self.assertIn("Nothing was applied", result["message"])
+        self.assertEqual(
+            self.store.get_classification_proposal(proposal_id)["status"],
+            "dismissed",
+        )
+        leaves = self.goals.conn.execute(
+            "SELECT id FROM goal_node WHERE parent_id=? AND node_type='task' "
+            "AND status!='archived' ORDER BY id", (self.project,)
+        ).fetchall()
+        self.assertEqual([int(node["id"]) for node in leaves], [existing_id])
 
 
 class TestCuriosityLifecycle(unittest.TestCase):

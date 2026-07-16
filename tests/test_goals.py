@@ -2,12 +2,13 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from livingpc import crypto
 from livingpc.config import Config
 from livingpc.curiosity import CuriosityStore
 from livingpc.goals import (
-    GoalStore, StubGoalPlanner, continue_planning, record_experiment_outcome,
+    GoalStore, LeafHorizonError, StubGoalPlanner, continue_planning, record_experiment_outcome,
     propose_goal_intake,
     propose_goal_tree_restructure, propose_suggestion_leaf_update,
     recommend_goal_intake, recommend_goal_restructure, recommend_goal_tree_restructure,
@@ -912,7 +913,8 @@ class TestExperimentOutcomes(GoalTestCase):
             context = build_agent_context(self.goals, agents, leaf)
             self.assertIn("one-line handoff cue", json.dumps(context))
             next_proposal = agents.get_proposal(result["next_proposal_id"])
-            self.assertEqual(next_proposal["type"], "create_child")
+            self.assertEqual(next_proposal["type"], "update_fields")
+            self.assertTrue(next_proposal["payload"]["adaptive_horizon"])
             self.assertIn("one-line handoff cue", next_proposal["payload"]["title"])
             self.assertFalse(any(
                 "one-line handoff cue" in node["title"].lower()
@@ -972,6 +974,79 @@ class TestGoalBridge(unittest.TestCase):
         self.assertTrue(changed["ok"])
         over = next(x for x in changed["tree"]["children"] if x["id"] == made["goal_id"])
         self.assertEqual(over["completion"]["percent"], 100.0)
+
+    def test_goal_state_derives_now_and_provisional_from_direct_leaf_position(self):
+        soul = self.api.goal_state()["tree"]["id"]
+        root = self.api.goal_create("overgoal", "Work", soul)["goal_id"]
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.api.cfg.memory_db_path)
+        project = store.create("subgoal", "Client experiment", parent_id=root)
+        store._set_semantic_role(
+            project, "project", rationale="Produces one client experiment.")
+        unrelated = store.create("subgoal", "Computer systems", parent_id=root)
+        store._set_semantic_role(
+            unrelated, "area", rationale="Owns ongoing computer systems.")
+        unrelated_leaf = store.create("task", "Computer Whiteboard", parent_id=unrelated)
+        store.close()
+        first = self.api.goal_create("task", "Draft the profile", project)["goal_id"]
+        second = self.api.goal_create("task", "Publish and scan", project)["goal_id"]
+        completed = self.api.goal_create("task", "Historical research", project)["goal_id"]
+        self.api.goal_update(first, {
+            "status": "paused", "priority": "low", "due_date": "2099-12-31",
+        })
+        self.api.goal_update(second, {
+            "priority": "high", "due_date": "2000-01-01",
+        })
+        self.api.goal_update(completed, {"status": "completed"})
+        marked = self.api.goal_set_project_signal(
+            project, "currently_working", True)
+        self.assertTrue(marked["ok"])
+
+        tree = self.api.goal_state()["tree"]
+        root_node = next(node for node in tree["children"] if node["id"] == root)
+        project_node = next(node for node in root_node["children"] if node["id"] == project)
+        unrelated_node = next(node for node in root_node["children"]
+                              if node["id"] == unrelated)
+        leaves = {leaf["id"]: leaf for leaf in project_node["children"]}
+
+        self.assertEqual(leaves[first]["planning_role"], "now")
+        self.assertEqual(leaves[second]["planning_role"], "provisional")
+        self.assertIsNone(leaves[completed]["planning_role"])
+        self.assertIsNone(next(leaf for leaf in unrelated_node["children"]
+                               if leaf["id"] == unrelated_leaf)["planning_role"])
+
+    def test_project_attention_signals_are_project_only_and_singleton(self):
+        from livingpc.goals import GoalStore
+
+        soul = self.api.goal_state()["tree"]["id"]
+        root = self.api.goal_create("overgoal", "Work", soul)["goal_id"]
+        store = GoalStore(self.api.cfg.memory_db_path)
+        area = store.create("subgoal", "Tools", parent_id=root)
+        store._set_semantic_role(area, "area", rationale="Owns ongoing tools.")
+        first = store.create("subgoal", "First project", parent_id=area)
+        second = store.create("subgoal", "Second project", parent_id=area)
+        store._set_semantic_role(first, "project", rationale="Finite first result.")
+        store._set_semantic_role(second, "project", rationale="Finite second result.")
+
+        with self.assertRaisesRegex(ValueError, "only an active Project"):
+            store.set_project_signal(area, "highest_priority")
+        self.assertEqual(
+            store.set_project_signal(first, "highest_priority")["highest_priority"],
+            first)
+        signals = store.set_project_signal(second, "highest_priority")
+        self.assertEqual(signals["highest_priority"], second)
+        self.assertEqual(store.project_focus(first)["highest_priority"], False)
+        self.assertEqual(store.project_focus(second)["highest_priority"], True)
+        store.set_project_signal(first, "currently_working")
+        self.assertEqual(store.project_signals(), {
+            "highest_priority": second,
+            "currently_working": first,
+        })
+        store.delete_subtree(second)
+        self.assertEqual(store.project_signals()["highest_priority"], None)
+        store._set_semantic_role(first, "stage", rationale="Now a phase.")
+        self.assertEqual(store.project_signals()["currently_working"], None)
+        store.close()
 
     def test_archive_and_restore_bridges_keep_subtree_reversible(self):
         soul = self.api.goal_state()["tree"]["id"]
@@ -1105,6 +1180,416 @@ class TestGoalBridge(unittest.TestCase):
         self.assertEqual(career_after["type"], "overgoal")
         project_after = next(node for node in career_after["children"] if node["id"] == project)
         self.assertEqual(project_after["semantic_role"], "project")
+
+
+class TestAdaptiveLeafHorizon(GoalTestCase):
+    def test_committed_and_reserved_leaves_share_two_leaf_capacity(self):
+        project = self.goals.create("overgoal", "Client launch")
+        self.goals.create("task", "Draft contract", parent_id=project)
+
+        with self.assertRaises(LeafHorizonError) as raised:
+            self.goals.validate_leaf_candidate(
+                project, "Schedule kickoff",
+                reservations=[{"title": "Review budget"}], horizon=20)
+
+        self.assertEqual(raised.exception.code, "horizon_full")
+        self.assertEqual(self.goals.open_leaf_count(project), 1)
+
+    def test_duplicate_and_semantic_overlap_are_rejected_but_sequence_is_not(self):
+        project = self.goals.create("overgoal", "Upwork profile")
+        draft = self.goals.create("task", "Draft Upwork profile", parent_id=project)
+
+        with self.assertRaises(LeafHorizonError) as exact:
+            self.goals.validate_leaf_candidate(project, " DRAFT--upwork profile ")
+        self.assertEqual(exact.exception.code, "duplicate_title")
+        self.assertEqual(exact.exception.conflicting_leaf_id, draft)
+
+        with self.assertRaises(LeafHorizonError) as overlap:
+            self.goals.validate_leaf_candidate(project, "Draft Upwork freelancer profile")
+        self.assertEqual(overlap.exception.code, "semantic_overlap")
+        self.assertGreaterEqual(overlap.exception.similarity, 0.55)
+
+        valid = self.goals.validate_leaf_candidate(
+            project, "Publish profile and first posting scan")
+        self.assertEqual(valid["open_after_create"], 2)
+
+    def test_create_ai_leaf_revalidates_and_stores_origin_atomically(self):
+        project = self.goals.create("overgoal", "Launch")
+        first = self.goals.create_ai_leaf(
+            "Write copy", parent_id=project,
+            origin={"source_kind": "chat", "source_id": "proposal-1"})
+        second = self.goals.create_ai_leaf("Publish page", parent_id=project)
+
+        self.assertEqual(self.goals.origin(first)["source_kind"], "chat")
+        self.assertIsNone(self.goals.origin(second))
+        with self.assertRaises(LeafHorizonError) as raised:
+            self.goals.create_ai_leaf("Share launch", parent_id=project, horizon=99)
+        self.assertEqual(raised.exception.code, "horizon_full")
+        self.assertEqual(self.goals.open_leaf_count(project), 2)
+
+    def test_plain_language_intake_reserves_open_goal_ai_task_proposals(self):
+        from livingpc.goal_ai import AgentProposal, GoalAgentStore
+
+        project = self.goals.create("overgoal", "Launch")
+        self.goals.create("task", "Write copy", parent_id=project)
+        agents = GoalAgentStore(self.db)
+        try:
+            agents.add_proposal(project, AgentProposal(
+                "create_child", project,
+                {"type": "task", "title": "Publish page", "description": "Go live."},
+                "Tentative next step."))
+        finally:
+            agents.close()
+        cfg = Config(memory_db_path=self.db, goal_ai_leaf_horizon=2)
+        recommendation = {
+            "parent_id": project, "new_type": "task",
+            "title": "Share launch", "description": "Tell early users.",
+        }
+
+        with self.assertRaises(LeafHorizonError) as raised:
+            propose_goal_intake(cfg, recommendation, "New intake")
+
+        self.assertEqual(raised.exception.code, "horizon_full")
+
+    def test_replan_requires_every_direct_leaf_once_and_target_ownership(self):
+        project = self.goals.create("overgoal", "Project")
+        other_project = self.goals.create("overgoal", "Other")
+        history = self.goals.create(
+            "task", "Historical work", parent_id=project, status="completed")
+        now = self.goals.create("task", "Current work", parent_id=project)
+        elsewhere = self.goals.create("task", "Elsewhere", parent_id=other_project)
+
+        with self.assertRaisesRegex(ValueError, "every non-archived direct Leaf"):
+            self.goals.validate_replan_project(
+                project, [{"op": "keep", "leaf_id": now}])
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            self.goals.validate_replan_project(project, [
+                {"op": "keep", "leaf_id": history},
+                {"op": "keep", "leaf_id": now},
+                {"op": "keep", "leaf_id": elsewhere},
+            ])
+        with self.assertRaisesRegex(ValueError, "only once"):
+            self.goals.validate_replan_project(project, [
+                {"op": "keep", "leaf_id": history},
+                {"op": "keep", "leaf_id": now},
+                {"op": "archive", "leaf_id": now},
+            ])
+
+    def test_completed_leaves_do_not_consume_replan_horizon(self):
+        project = self.goals.create("overgoal", "Project")
+        history = self.goals.create(
+            "task", "Historical work", parent_id=project, status="completed")
+        now = self.goals.create("task", "Implement feature", parent_id=project)
+        provisional = self.goals.create(
+            "task", "Validate feature", parent_id=project, status="paused")
+
+        plan = self.goals.validate_replan_project(project, [
+            {"op": "keep", "leaf_id": history},
+            {"op": "keep", "leaf_id": now},
+            {"op": "keep", "leaf_id": provisional},
+        ], horizon=10)
+
+        self.assertEqual([item["id"] for item in plan["final_open"]],
+                         [now, provisional])
+        self.assertEqual(plan["horizon"], 2)
+
+    def test_replan_rejects_duplicate_create_and_over_horizon(self):
+        project = self.goals.create("overgoal", "Project")
+        current = self.goals.create("task", "Implement feature", parent_id=project)
+        with self.assertRaises(LeafHorizonError):
+            self.goals.validate_replan_project(project, [
+                {"op": "keep", "leaf_id": current},
+                {"op": "create", "title": "Draft Upwork profile"},
+                {"op": "create", "title": "Draft Upwork freelancer profile"},
+            ])
+        with self.assertRaises(LeafHorizonError) as overfull:
+            self.goals.validate_replan_project(project, [
+                {"op": "keep", "leaf_id": current},
+                {"op": "create", "title": "Review budget"},
+                {"op": "create", "title": "Schedule kickoff"},
+            ])
+        self.assertEqual(overfull.exception.code, "horizon_full")
+
+    def test_replan_updates_project_archives_with_snapshot_and_reorders(self):
+        project = self.goals.create(
+            "overgoal", "Old project", description="Old framing")
+        history = self.goals.create(
+            "task", "Brainstorm wins", parent_id=project, status="completed")
+        current = self.goals.create("task", "Draft profile", parent_id=project)
+        duplicate = self.goals.create("task", "Duplicate draft", parent_id=project)
+
+        result = self.goals.apply_replan_project(project, [
+            {"op": "keep", "leaf_id": history},
+            {"op": "update", "leaf_id": current,
+             "description": "Use the evidence-backed profile draft."},
+            {"op": "archive", "leaf_id": duplicate},
+            {"op": "create", "title": "Publish profile and scan postings",
+             "description": "Publish, then apply the novelty filter."},
+        ], project_update={
+            "title": "Upwork application experiment",
+            "description": "Publish the profile and apply to suitable postings.",
+        }, origin={"source_kind": "chat", "source_id": "repair-card"})
+
+        created = result["created_leaf_ids"][0]
+        self.assertEqual(result["ordered_leaf_ids"], [history, current, created])
+        self.assertEqual(result["ordered_leaf_count"], 3)
+        self.assertEqual(result["open_leaf_ids"], [current, created])
+        self.assertEqual(result["operation_counts"]["archive"], 1)
+        self.assertEqual(result["operation_counts"]["update"], 1)
+        self.assertEqual(self.goals.get(project)["title"],
+                         "Upwork application experiment")
+        self.assertEqual(self.goals.get(duplicate)["status"], "archived")
+        self.assertEqual(self.goals.origin(created)["source_id"], "repair-card")
+        snapshot = self.goals.conn.execute(
+            "SELECT prior_status FROM goal_archive_snapshot "
+            "WHERE archive_root_id=? AND goal_id=?", (duplicate, duplicate)).fetchone()
+        self.assertEqual(snapshot["prior_status"], "active")
+
+    def test_replan_failure_rolls_back_project_archive_and_create(self):
+        project = self.goals.create(
+            "overgoal", "Original", description="Original framing")
+        first = self.goals.create("task", "Current", parent_id=project)
+        duplicate = self.goals.create("task", "Duplicate", parent_id=project)
+        before_ids = {row["id"] for row in self.goals.conn.execute(
+            "SELECT id FROM goal_node").fetchall()}
+
+        with mock.patch.object(
+                self.goals, "set_origin", side_effect=RuntimeError("origin failed")):
+            with self.assertRaisesRegex(RuntimeError, "origin failed"):
+                self.goals.apply_replan_project(project, [
+                    {"op": "keep", "leaf_id": first},
+                    {"op": "archive", "leaf_id": duplicate},
+                    {"op": "create", "title": "Review result"},
+                ], project_update={"title": "Changed"},
+                    origin={"source_kind": "chat"})
+
+        self.assertEqual(self.goals.get(project)["title"], "Original")
+        self.assertEqual(self.goals.get(duplicate)["status"], "active")
+        after_ids = {row["id"] for row in self.goals.conn.execute(
+            "SELECT id FROM goal_node").fetchall()}
+        self.assertEqual(after_ids, before_ids)
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT COUNT(*) FROM goal_archive_snapshot WHERE archive_root_id=?",
+            (duplicate,)).fetchone()[0], 0)
+
+    def test_pending_reservations_aggregate_all_persisted_surfaces_privately(self):
+        from livingpc.companion.history import ChatStore
+        from livingpc.curiosity import ClassificationProposal
+        from livingpc.goal_ai import AgentProposal, GoalAgentStore
+
+        project = self.goals.create("overgoal", "Launch")
+        agents = GoalAgentStore(self.db)
+        try:
+            goal_ai_id = agents.add_proposal(project, AgentProposal(
+                "create_child", project,
+                {"type": "task", "title": "Draft offer", "description": "Draft."},
+                "Private rationale"))
+        finally:
+            agents.close()
+        chats = ChatStore(self.db)
+        chat_id = chats.create("Private chat")
+        chats.replace_pending_proposals(chat_id, [{
+            "action": "create_leaf", "target_node_id": project,
+            "label": "Publish offer", "directive": "Publish.",
+        }])
+        curiosity_id = self.curiosities.add_curiosity("Study outreach", "Outreach")
+        curiosity_proposal_id = self.curiosities.add_classification_proposal(
+            curiosity_id, ClassificationProposal(
+                "create_leaf", {"parent_id": project, "title": "Review replies",
+                                "description": "Review."}, "Private rationale"))
+        planning = self.goals.start_plan(None, project, "Plan it", draft={
+            "nodes": [{"type": "task", "title": "Record outcome",
+                       "description": "Record.", "children": []}],
+        })
+
+        reservations = self.goals.pending_leaf_reservations(project)
+
+        self.assertEqual({item["title"] for item in reservations}, {
+            "Draft offer", "Publish offer", "Review replies", "Record outcome"})
+        self.assertTrue(all(set(item) == {
+            "parent_id", "title", "description", "status", "replaces_leaf_id"
+        } for item in reservations))
+        excluded = self.goals.pending_leaf_reservations(project, exclude_refs={
+            f"goal_ai:{goal_ai_id}", f"curiosity:{curiosity_proposal_id}",
+            f"planning:{planning['id']}",
+        })
+        self.assertEqual([item["title"] for item in excluded], ["Publish offer"])
+
+    def test_pending_removal_releases_replaced_capacity(self):
+        from livingpc.companion.history import ChatStore
+
+        project = self.goals.create("overgoal", "Launch")
+        first = self.goals.create("task", "Draft offer", parent_id=project)
+        second = self.goals.create("task", "Old outreach", parent_id=project)
+        chats = ChatStore(self.db)
+        chat_id = chats.create("Planning")
+        chats.replace_pending_proposals(chat_id, [{
+            "action": "delete_node", "target_node_id": second,
+            "label": "Archive old outreach",
+        }])
+
+        reservations = self.goals.pending_leaf_reservations(project)
+        validation = self.goals.validate_leaf_candidate(
+            project, "Publish offer", reservations=reservations)
+
+        self.assertEqual(reservations[0]["status"], "removed")
+        self.assertEqual(reservations[0]["replaces_leaf_id"], second)
+        self.assertEqual(validation["open_after_create"], 2)
+        self.assertEqual(self.goals.get(first)["status"], "active")
+
+    def test_replan_version_snapshot_blocks_overwriting_newer_leaf_context(self):
+        project = self.goals.create(
+            "overgoal", "Profile launch", description="Original framing")
+        current = self.goals.create(
+            "task", "Draft profile", parent_id=project,
+            description="Initial draft direction")
+        provisional = self.goals.create(
+            "task", "Publish profile", parent_id=project)
+        versions = self.goals.replan_expected_versions(project)
+        self.goals.update(current, description="Newer user-approved direction")
+
+        with self.assertRaisesRegex(ValueError, "replan is stale"):
+            self.goals.apply_replan_project(project, [
+                {"op": "update", "leaf_id": current,
+                 "description": "Older staged direction"},
+                {"op": "keep", "leaf_id": provisional},
+            ], project_update={"description": "Older project framing"},
+                expected_versions=versions)
+
+        self.assertEqual(
+            self.goals.get(current)["description"],
+            "Newer user-approved direction")
+        self.assertEqual(
+            self.goals.get(project)["description"], "Original framing")
+
+    def test_retire_pending_operations_honors_source_exclusions(self):
+        from livingpc.companion.history import ChatStore
+        from livingpc.curiosity import ClassificationProposal
+        from livingpc.goal_ai import AgentProposal, GoalAgentStore
+
+        project = self.goals.create("overgoal", "Launch")
+        agents = GoalAgentStore(self.db)
+        try:
+            goal_ai_id = agents.add_proposal(project, AgentProposal(
+                "create_child", project,
+                {"type": "task", "title": "Draft offer"}, "Private"))
+        finally:
+            agents.close()
+        chats = ChatStore(self.db)
+        chat_id = chats.create("Keep this card")
+        chats.replace_pending_proposals(chat_id, [{
+            "action": "create_leaf", "target_node_id": project,
+            "label": "Publish offer",
+        }])
+        curiosity_id = self.curiosities.add_curiosity("Study outreach", "Outreach")
+        curiosity_proposal_id = self.curiosities.add_classification_proposal(
+            curiosity_id, ClassificationProposal(
+                "create_leaf", {"parent_id": project, "title": "Review replies"},
+                "Private"))
+        planning = self.goals.start_plan(None, project, "Plan", draft={
+            "nodes": [{"type": "task", "title": "Record outcome", "children": []}],
+        })
+
+        result = self.goals.retire_pending_leaf_operations(
+            project, exclude_refs={f"companion:{chat_id}:0"})
+
+        self.assertEqual(result, {
+            "retired": 3,
+            "by_source": {"goal_ai": 1, "companion": 0,
+                          "gardening": 0, "leaf_workspace": 0,
+                          "curiosity": 1, "planning": 1},
+        })
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT status FROM goal_agent_proposal WHERE id=?", (goal_ai_id,)
+        ).fetchone()[0], "stale")
+        self.assertEqual(self.goals.conn.execute(
+            "SELECT status FROM curiosity_classification_proposal WHERE id=?",
+            (curiosity_proposal_id,)).fetchone()[0], "dismissed")
+        self.assertEqual(self.goals.plan_session(planning["id"])["status"], "abandoned")
+        self.assertEqual(len(chats.pending_proposals(chat_id)), 1)
+
+        final = self.goals.retire_pending_leaf_operations(project)
+        self.assertEqual(final["by_source"]["companion"], 1)
+        self.assertEqual(chats.pending_proposals(chat_id), [])
+
+    def test_planning_draft_and_commit_reject_over_reserved_horizon(self):
+        from livingpc.companion.history import ChatStore
+
+        project = self.goals.create("overgoal", "Launch")
+        session = self.goals.start_plan(None, project, "Plan", draft={})
+        overfull = {"nodes": [{
+            "type": "subgoal", "title": "Release stage", "children": [
+                {"type": "task", "title": "Draft offer", "children": []},
+                {"type": "task", "title": "Publish offer", "children": []},
+                {"type": "task", "title": "Review replies", "children": []},
+            ],
+        }]}
+        with self.assertRaises(LeafHorizonError) as raised:
+            self.goals.set_plan_draft(session["id"], overfull, ready=True)
+        self.assertEqual(raised.exception.code, "horizon_full")
+
+        direct = {"nodes": [{"type": "task", "title": "Record outcome",
+                             "description": "Record.", "children": []}]}
+        self.goals.set_plan_draft(session["id"], direct, ready=True)
+        self.goals.create("task", "Draft offer", parent_id=project)
+        chats = ChatStore(self.db)
+        chat_id = chats.create("Reserved")
+        chats.replace_pending_proposals(chat_id, [{
+            "action": "create_leaf", "target_node_id": project,
+            "label": "Publish offer",
+        }])
+
+        with self.assertRaises(LeafHorizonError):
+            self.goals.commit_plan(session["id"])
+
+        self.assertEqual(self.goals.plan_session(session["id"])["status"], "ready")
+        self.assertEqual(self.goals.open_leaf_count(project), 1)
+
+    def test_upwork_repair_fixture_keeps_20_and_21_as_only_open_leaves(self):
+        # Mirror the real IDs from the reported tree so the repair contract is
+        # protected without touching the user's database.
+        for index in range(6):
+            self.goals.create("overgoal", f"Placeholder {index}")
+        project = self.goals.create(
+            "overgoal", "Run Upwork automation micro-test",
+            description="Old listing-preparation strategy")
+        self.assertEqual(project, 8)
+        history = self.goals.create(
+            "task", "Brainstorm automation wins", parent_id=project,
+            status="completed")
+        self.assertEqual(history, 9)
+        for node_id in range(10, 20):
+            made = self.goals.create(
+                "task", f"Archived legacy {node_id}", parent_id=project,
+                status="archived")
+            self.assertEqual(made, node_id)
+        now = self.goals.create("task", "Draft Upwork profile", parent_id=project)
+        provisional = self.goals.create(
+            "task", "Publish profile and first posting scan", parent_id=project)
+        duplicate = self.goals.create(
+            "task", "Draft Upwork profile", parent_id=project)
+        obsolete = self.goals.create(
+            "task", "Post Upwork profile and begin bidding", parent_id=project)
+        self.assertEqual([now, provisional, duplicate, obsolete], [20, 21, 22, 23])
+
+        result = self.goals.apply_replan_project(project, [
+            {"op": "keep", "leaf_id": history},
+            {"op": "keep", "leaf_id": now},
+            {"op": "update", "leaf_id": provisional,
+             "description": "Publish, then scan suitable existing postings."},
+            {"op": "archive", "leaf_id": duplicate},
+            {"op": "archive", "leaf_id": obsolete},
+        ], project_update={
+            "description": (
+                "Update and publish the profile, apply to suitable existing "
+                "postings using the AI/novelty filter, and track outcomes in Faerie.")
+        })
+
+        self.assertEqual(result["open_leaf_ids"], [20, 21])
+        self.assertEqual(self.goals.get(22)["status"], "archived")
+        self.assertEqual(self.goals.get(23)["status"], "archived")
+        archived = [self.goals.get(node_id)["status"] for node_id in range(10, 20)]
+        self.assertEqual(set(archived), {"archived"})
 
 
 class TestGoalNotionExport(GoalTestCase):

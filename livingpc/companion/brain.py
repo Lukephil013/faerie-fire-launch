@@ -117,7 +117,9 @@ not enough. Prefer the most specific existing owner and never duplicate equivale
 
 Growth rules: create_branch may represent area, project, or stage; create_leaf is one concrete
 action/outcome; record_goal_progress is preferred when an equivalent node already exists and never
-marks it complete. Investigation rules: add_investigation_context is preferred over a new
+marks it complete. set_project_signal is only for an explicit request to mark or clear one supplied
+semantic Project as highest_priority or currently_working; it never targets an Area, Stage, or Leaf.
+Investigation rules: add_investigation_context is preferred over a new
 start_investigation when an active or paused Investigation overlaps. User-confirmed preferences can
 be useful Investigation context. Use only supplied ids and user-authored statements. Return at most
 three distinct proposals. Every action except start_investigation needs confidence >= 0.75.
@@ -125,10 +127,11 @@ three distinct proposals. Every action except start_investigation needs confiden
 Return strict JSON only:
 {"decision":"propose"|"clarify"|"decline"|"none","reason":str,"question":str,
  "proposals":[{"action":"create_branch"|"create_leaf"|"create_root_branch"|
- "record_goal_progress"|"start_investigation"|"add_investigation_context",
+ "record_goal_progress"|"set_project_signal"|"start_investigation"|"add_investigation_context",
  "label":str,"directive":str,"reasoning":str,"confidence":0..1,
  "target_node_id":int|null,"investigation_id":int|null,
- "semantic_role":"area"|"project"|"stage"|null,"priority":"low"|"normal"|"high"}]}
+ "semantic_role":"area"|"project"|"stage"|null,"priority":"low"|"normal"|"high",
+ "signal_kind":"highest_priority"|"currently_working"|null,"enabled":bool|null}]}
 
 Use clarify only when one short answer would materially change placement. Use decline with a concise
 reason only for an explicit proposal request that is unsuitable. For ordinary turns with no useful
@@ -541,6 +544,7 @@ class Companion:
             "{\"action\": one of \"attach_existing\" | \"create_branch\" | "
             "\"create_root_branch\" | \"create_leaf\" | \"rename_node\" | "
             "\"delete_node\" | \"move_node\" | \"replan_project\" | \"start_investigation\" | "
+            "\"set_project_signal\" | "
             "\"add_investigation_context\" | \"start_exploration\" | "
             "\"rename_investigation\" | \"merge_investigations\" | "
             "\"archive_investigation\" | \"record_goal_progress\" | \"browser_task\",\n"
@@ -548,7 +552,11 @@ class Companion:
             " \"directive\": \"the underlying question, note, or current-state dump, in their words\",\n"
             " \"reasoning\": \"one sentence on why it fits there\",\n"
             " \"confidence\": a number 0-1 (REQUIRED for every action except start_investigation),\n"
-            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/replan_project),\n"
+            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/replan_project/set_project_signal),\n"
+            " \"signal_kind\": \"highest_priority\"|\"currently_working\" "
+            "(REQUIRED for set_project_signal),\n"
+            " \"enabled\": true|false (set_project_signal only; true marks the "
+            "Project and false clears that marker),\n"
             " \"steps\": the complete new ordered plan (REQUIRED for replan_project, max 12): a list of "
             "{\"op\": \"create\"|\"keep\"|\"rename\"|\"update\"|\"complete\"|\"archive\", \"leaf_id\": existing Leaf id "
             "(every op except create), \"title\": (create), \"new_title\": (rename), "
@@ -557,6 +565,9 @@ class Companion:
             "exactly once. Use \"complete\" for work the user actually finished (it stays as the "
             "project's record and stops counting against the horizon) and \"archive\" only for steps "
             "that no longer belong — never archive finished work to get it out of the way,\n"
+            " \"project_update\": {\"title\": optional replacement title, "
+            "\"description\": optional replacement description} (replan_project only; "
+            "use it when the project's framing changed with the plan),\n"
             " \"investigation_id\": the id from the current Investigations list (REQUIRED for "
             "add_investigation_context/start_exploration/rename_investigation/"
             "merge_investigations/archive_investigation; for merge_investigations it is the "
@@ -602,7 +613,7 @@ class Companion:
             "can push back on beats a questionnaire. Prefer one replan_project card "
             "over several individual create/rename/delete cards whenever more than one "
             "Leaf of the same project is changing. PROSE IS NOT A PROPOSAL: if you "
-            "describe a Leaf concretely in your reply — a title, a NOW/PROVISIONAL "
+            "describe a Leaf concretely in your reply — a title, a NOW/TENTATIVE-NEXT "
             "framing, 'Leaf 1: ...' — you MUST stage it as a card in that same reply "
             "(inside the replan_project block when the project's shape is changing). "
             "Bolded plans with no block behind them look staged to the user but create "
@@ -611,9 +622,21 @@ class Companion:
             "the card, never replaces it — they can approve or redirect from the draft. "
             "Related: create_leaf never targets "
             "a Leaf — a follow-up action belongs under the project node itself.\n"
+            "PROJECT ATTENTION: when the user explicitly asks to make a Project "
+            "their highest/top priority, mark it currently working, or clear either "
+            "marker, emit set_project_signal in the same reply. Copy the real Project "
+            "id from the tree, use signal_kind highest_priority or currently_working, "
+            "and enabled true or false. The approval card is the permission step. "
+            "Only semantic Projects can carry these markers; never reinterpret a "
+            "Leaf's low/normal/high execution metadata as Project attention. Each "
+            "marker is global, so approving a new Project automatically moves that "
+            "marker from the old Project.\n"
             f"JUST-IN-TIME LEAVES (the horizon rule): a project holds at most "
-            f"{max(1, int(getattr(self.cfg, 'goal_ai_leaf_horizon', 2)))} open Leaves "
-            "— the step being worked now, plus at most one PROVISIONAL next step. "
+            f"{min(2, max(1, int(getattr(self.cfg, 'goal_ai_leaf_horizon', 2))))} open Leaves "
+            "— the step being worked now, plus at most one tentative next step. "
+            "Public NOW/TENTATIVE-NEXT labels appear only for a Project marked "
+            "CURRENTLY_WORKING or HIGHEST_PRIORITY; unmarked projects retain "
+            "backend position without an execution label. "
             "Never queue more: pre-built leaf sequences go stale the moment the "
             "first one finishes (the user's own words: they want to follow the "
             "river — structure that responds to where they went, not structure "
@@ -621,13 +644,13 @@ class Companion:
             "create_leaf or replan that would exceed it is dropped. Treat the "
             "second open Leaf as a cheap-to-rewrite guess, and rewrite it freely "
             "via replan_project when reality turns. THE DEBRIEF MOMENT: when the "
-            "user arrives saying they completed a Leaf, that conversation is the "
-            "planning step — first capture what happened and what it changed "
-            "(record_goal_progress on the project when it's real progress; if the "
-            "Leaf still shows open in the horizon, include an op:\"complete\" step "
-            "for it in the replan so the tree reflects reality), then "
-            "decide the next step together and stage it (create_leaf, or "
-            "replan_project if the provisional step no longer fits), and sanity-"
+            "user arrives saying they completed the NOW Leaf, stage exactly ONE "
+            "replan_project card: include op:\"complete\" for that Leaf, promote "
+            "or rewrite the existing tentative-next Leaf, and, if the project "
+            "continues, create exactly one new tentative-next Leaf. Do not also emit "
+            "record_goal_progress or a standalone create_leaf for that project in "
+            "the same reply. The replan card is the only mutation and remains "
+            "approval-gated. Then sanity-"
             "check the chain above it: does the project, its Branch, and its Root "
             "still point at what they actually want? Say so plainly if not.\n"
             "EXPLORATION THREADS — A REAL FEATURE YOU KNOW ABOUT: every Investigation "
@@ -650,9 +673,9 @@ class Companion:
             "user over-split earlier, say so and propose the merge yourself.\n"
             f"HARD CONFIDENCE GATE: only emit attach_existing/create_branch/"
             f"create_root_branch/create_leaf/rename_node/delete_node/move_node/"
-            f"replan_project/add_investigation_context/start_exploration/"
+            f"replan_project/set_project_signal/add_investigation_context/start_exploration/"
             f"rename_investigation/merge_investigations/archive_investigation/"
-            f"record_goal_progress/browser_task at "
+            f"record_goal_progress/set_project_signal/browser_task at "
             f"confidence {self.PROPOSAL_CONFIDENCE_GATE} or above, and only with a "
             "target_node_id (and new_parent_id, for move_node) that actually appears "
             "in the tree list above (except create_root_branch, which has no target); "
@@ -1468,6 +1491,11 @@ class Companion:
     _PLACEMENT_ACTIONS = {"attach_existing", "create_branch", "create_root_branch", "create_leaf"}
     _STRUCTURAL_ACTIONS = {"rename_node", "delete_node", "move_node"}
     _REPLAN_ACTIONS = {"replan_project"}
+    _PROJECT_SIGNAL_ACTIONS = {"set_project_signal"}
+    _LEAF_GROWTH_ACTIONS = {
+        "create_leaf", "rename_node", "delete_node", "move_node",
+        "record_goal_progress", "replan_project",
+    }
     _INVESTIGATION_ACTIONS = {
         "add_investigation_context", "start_exploration",
         "rename_investigation", "merge_investigations",
@@ -1477,20 +1505,25 @@ class Companion:
     # Every gated action except create_root_branch names a real existing
     # node via target_node_id, verified against the catalog before acting.
     _TARGETED_ACTIONS = ((_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS |
-                          _REPLAN_ACTIONS | _PROGRESS_ACTIONS)
+                          _REPLAN_ACTIONS | _PROGRESS_ACTIONS |
+                          _PROJECT_SIGNAL_ACTIONS)
                          - {"create_root_branch"})
     _ALL_ACTIONS = (_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS | _REPLAN_ACTIONS |
-                    _INVESTIGATION_ACTIONS | _PROGRESS_ACTIONS | _BROWSER_ACTIONS |
+                    _INVESTIGATION_ACTIONS | _PROGRESS_ACTIONS |
+                    _PROJECT_SIGNAL_ACTIONS | _BROWSER_ACTIONS |
                     {"start_investigation"})
     _REPLAN_STEP_OPS = {"create", "keep", "rename", "update", "archive", "complete"}
     _REPLAN_MAX_STEPS = 12
     _SCOUT_ACTIONS = {"create_branch", "create_root_branch", "create_leaf",
-                      "record_goal_progress", "start_investigation",
+                      "record_goal_progress", "set_project_signal",
+                      "start_investigation",
                       "add_investigation_context"}
     _EXPLICIT_PROPOSAL_RE = re.compile(
         r"\b(?:propose this|make (?:this|that) a proposal|start an? investigation|"
         r"track this|(?:propose|add|put|record|track).{0,48}"
-        r"(?:growth tree|tree|investigation|leaf|branch|project))\b", re.I)
+        r"(?:growth tree|tree|investigation|leaf|branch|project)|"
+        r"(?:make|mark|set|clear|remove).{0,60}"
+        r"(?:highest priority|top priority|currently working|current project))\b", re.I)
     _ACTION_SIGNAL_RE = re.compile(
         r"\b(?:i(?:'m| am) (?:starting|doing|working on|building|writing|drafting|"
         r"updating|applying|studying|learning|planning|preparing)|i (?:started|finished|"
@@ -1532,8 +1565,21 @@ class Companion:
         catalog = self._goal_catalog()
         if not catalog:
             return "(tree is empty so far — only Soul exists)"
-        return "\n".join(f"- id={n['id']} [{n['type']}] {n['path'] or n['title']}"
-                         for n in catalog)
+        lines = []
+        for node in catalog:
+            details = [str(node["type"])]
+            role = str(node.get("semantic_role") or "").strip()
+            if role:
+                details.append(f"role={role.upper()}")
+            focus = node.get("project_focus") or {}
+            if focus.get("highest_priority"):
+                details.append("HIGHEST_PRIORITY")
+            if focus.get("currently_working"):
+                details.append("CURRENTLY_WORKING")
+            lines.append(
+                f"- id={node['id']} [{'; '.join(details)}] "
+                f"{node['path'] or node['title']}")
+        return "\n".join(lines)
 
     def _catalog_lookup(self, node_id) -> dict | None:
         try:
@@ -1543,7 +1589,7 @@ class Companion:
         return next((n for n in self._goal_catalog() if n["id"] == node_id), None)
 
     def _leaf_horizon_limit(self) -> int:
-        return max(1, int(getattr(self.cfg, "goal_ai_leaf_horizon", 2)))
+        return min(2, max(1, int(getattr(self.cfg, "goal_ai_leaf_horizon", 2))))
 
     def _open_leaf_count(self, node_id) -> int:
         try:
@@ -1586,12 +1632,20 @@ class Companion:
             return "(no projects with Leaves yet)"
         lines = []
         for project in projects:
+            focus = project.get("project_focus") or {}
+            attention = "/".join(name for name, active in (
+                ("CURRENTLY_WORKING", focus.get("currently_working")),
+                ("HIGHEST_PRIORITY", focus.get("highest_priority")),
+            ) if active)
+            suffix = f" attention={attention}" if attention else ""
             lines.append(f"- {project['path'] or project['project_title']} "
-                         f"(id={project['project_id']})")
+                         f"(id={project['project_id']}{suffix})")
             for index, leaf in enumerate(project["open"]):
-                marker = "NOW" if index == 0 else "PROVISIONAL"
+                marker = ("NOW" if index == 0 else "TENTATIVE_NEXT"
+                          if index == 1 else "OUTSIDE_HORIZON")
                 description = f" — {leaf['description']}" if leaf["description"] else ""
-                lines.append(f"    open[{marker}] id={leaf['id']} "
+                visible_marker = f"[{marker}]" if project.get("attention_active") else ""
+                lines.append(f"    open{visible_marker} id={leaf['id']} "
                              f"{leaf['title']}{description}")
             if not project["open"]:
                 lines.append("    (no open Leaf — next step undecided; "
@@ -1639,6 +1693,10 @@ class Companion:
                     "title": entry["title"], "path": entry["path"],
                     "description": str(node.get("description") or "")[:1000],
                     "status": node.get("status"),
+                    "project_focus": (goals.project_focus(int(entry["id"]))
+                                      if node["type"] == "subgoal" and
+                                      goals.resolved_semantic_role(int(entry["id"])) == "project"
+                                      else None),
                 })
         finally:
             goals.close()
@@ -1675,10 +1733,228 @@ class Companion:
             "investigations": investigations,
         }
 
+    def _proposal_key(self, proposal: dict) -> tuple:
+        """Stable batch identity without conflating separate projects."""
+        action = str(proposal.get("action") or "")
+        if action == "set_project_signal":
+            try:
+                target_id = int(proposal.get("target_node_id"))
+            except (TypeError, ValueError):
+                target_id = 0
+            return (action, target_id,
+                    str(proposal.get("signal_kind") or ""),
+                    bool(proposal.get("enabled", True)))
+        label = " ".join(str(proposal.get("label") or "").casefold().split())
+        projects = (tuple(sorted(self._proposal_affected_project_ids(proposal)))
+                    if action in self._LEAF_GROWTH_ACTIONS else ())
+        return action, label, projects
+
+    def _proposal_affected_project_ids(self, proposal: dict) -> set[int]:
+        """Projects whose direct Leaf plan this card can change.
+
+        A Leaf move affects both its old and new parents. Project-level
+        rename/delete/move cards affect the project itself. Archived Leaves
+        still resolve through their stored parent so a successful replan can
+        retire older cards targeting Leaves it just archived.
+        """
+        action = str(proposal.get("action") or "")
+        if action not in self._LEAF_GROWTH_ACTIONS:
+            return set()
+        projects: set[int] = set()
+        try:
+            from ..goals import GoalStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                target = goals.get(int(proposal.get("target_node_id")))
+                if not target:
+                    return set()
+                if action in {"create_leaf", "replan_project"}:
+                    if target["type"] in {"overgoal", "subgoal"}:
+                        projects.add(int(target["id"]))
+                    return projects
+                if target["type"] == "task" and target.get("parent_id"):
+                    projects.add(int(target["parent_id"]))
+                    if action == "move_node":
+                        new_parent = goals.get(int(proposal.get("new_parent_id")))
+                        if new_parent and new_parent["type"] in {"overgoal", "subgoal"}:
+                            projects.add(int(new_parent["id"]))
+                elif target["type"] in {"overgoal", "subgoal"}:
+                    projects.add(int(target["id"]))
+            finally:
+                goals.close()
+        except Exception:
+            return set()
+        return projects
+
+    def _ensure_replan_expected_versions(self, proposal: dict) -> bool:
+        """Attach an app-owned optimistic-lock snapshot exactly once."""
+        if proposal.get("action") != "replan_project":
+            return True
+        existing = proposal.get("expected_versions")
+        if isinstance(existing, dict) and existing:
+            return True
+        try:
+            from ..goals import GoalStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                versions = goals.replan_expected_versions(
+                    int(proposal.get("target_node_id")))
+            finally:
+                goals.close()
+        except Exception:
+            return False
+        if not versions:
+            return False
+        proposal["expected_versions"] = dict(versions)
+        return True
+
     @staticmethod
-    def _proposal_key(proposal: dict) -> tuple[str, str]:
-        return (str(proposal.get("action") or ""),
-                " ".join(str(proposal.get("label") or "").casefold().split()))
+    def _reservation_parent_id(reservation: dict) -> int | None:
+        try:
+            return int(reservation.get("parent_id", reservation.get("target_node_id")))
+        except (TypeError, ValueError):
+            return None
+
+    def _reservation_excluded_leaf_ids(
+            self, reservations: list[dict] | None, parent_id: int) -> list[int]:
+        excluded = []
+        for reservation in reservations or []:
+            if self._reservation_parent_id(reservation) != int(parent_id):
+                continue
+            try:
+                excluded.append(int(reservation.get("replaces_leaf_id")))
+            except (TypeError, ValueError):
+                continue
+        return excluded
+
+    def _leaf_reservations(self, proposal: dict) -> list[dict]:
+        """Capacity/concept reservations contributed by one kept Growth card."""
+        action = str(proposal.get("action") or "")
+        try:
+            from ..goals import GoalStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                target = goals.get(int(proposal.get("target_node_id")))
+                if action == "create_leaf" and target:
+                    return [{
+                        "parent_id": int(target["id"]),
+                        "title": str(proposal.get("label") or "").strip(),
+                        "description": str(proposal.get("directive") or "").strip(),
+                        "status": "active",
+                    }]
+                if not target or target["type"] != "task" or not target.get("parent_id"):
+                    return []
+                leaf_id = int(target["id"])
+                old_parent_id = int(target["parent_id"])
+                open_status = target.get("status") in {"active", "paused"}
+                if action == "rename_node" and open_status:
+                    return [{
+                        "parent_id": old_parent_id,
+                        "title": str(proposal.get("new_title") or "").strip(),
+                        "description": str(target.get("description") or ""),
+                        "status": str(target.get("status") or "active"),
+                        "replaces_leaf_id": leaf_id,
+                    }]
+                if action == "delete_node" and open_status:
+                    return [{
+                        "parent_id": old_parent_id, "status": "removed",
+                        "replaces_leaf_id": leaf_id,
+                    }]
+                if action == "move_node" and open_status:
+                    new_parent = goals.get(int(proposal.get("new_parent_id")))
+                    if not new_parent or new_parent["type"] not in {"overgoal", "subgoal"}:
+                        return []
+                    new_parent_id = int(new_parent["id"])
+                    result = []
+                    if new_parent_id != old_parent_id:
+                        result.append({
+                            "parent_id": old_parent_id, "status": "removed",
+                            "replaces_leaf_id": leaf_id,
+                        })
+                    result.append({
+                        "parent_id": new_parent_id,
+                        "title": str(target.get("title") or ""),
+                        "description": str(target.get("description") or ""),
+                        "status": str(target.get("status") or "active"),
+                        **({"replaces_leaf_id": leaf_id}
+                           if new_parent_id == old_parent_id else {}),
+                    })
+                    return result
+            finally:
+                goals.close()
+        except Exception:
+            return []
+        return []
+
+    def _arbitrate_proposals(self, proposals: list[dict]) -> tuple[list[dict], int]:
+        """Choose one coherent, currently valid approval batch.
+
+        A valid replan owns every Leaf-level Growth mutation for its project.
+        Remaining create cards reserve capacity and concepts against later cards
+        in the same batch. Investigation cards are intentionally independent.
+        """
+        candidates = [item for item in proposals if isinstance(item, dict)]
+        chosen_replans: dict[int, dict] = {}
+        unstamped_replans: set[int] = set()
+        for proposal in candidates:
+            if (proposal.get("action") == "replan_project"
+                    and not self._ensure_replan_expected_versions(proposal)):
+                unstamped_replans.add(id(proposal))
+        for proposal in candidates:
+            if proposal.get("action") != "replan_project":
+                continue
+            project_ids = self._proposal_affected_project_ids(proposal)
+            project_id = next(iter(project_ids), None)
+            if (id(proposal) not in unstamped_replans
+                    and project_id is not None and project_id not in chosen_replans
+                    and self._valid_proposal(
+                        proposal, reservations=[], exclude_current_chat=True)):
+                chosen_replans[project_id] = proposal
+
+        kept: list[dict] = []
+        reservations: list[dict] = []
+        seen: set[tuple] = set()
+        dropped = 0
+        for proposal in candidates:
+            if id(proposal) in unstamped_replans:
+                dropped += 1
+                continue
+            key = self._proposal_key(proposal)
+            if key in seen:
+                dropped += 1
+                continue
+            project_ids = self._proposal_affected_project_ids(proposal)
+            owners = [chosen_replans[project_id] for project_id in project_ids
+                      if project_id in chosen_replans]
+            if owners and any(proposal is not owner for owner in owners):
+                dropped += 1
+                continue
+            if not self._valid_proposal(
+                    proposal, reservations=reservations,
+                    exclude_current_chat=True):
+                dropped += 1
+                continue
+            if len(kept) >= 3:
+                dropped += 1
+                continue
+            kept.append(proposal)
+            seen.add(key)
+            reservations.extend(self._leaf_reservations(proposal))
+        return kept, dropped
+
+    def _retire_project_growth_proposals(self, project_id: int) -> int:
+        remaining = []
+        retired = 0
+        for proposal in self._pending_proposals:
+            if (proposal.get("action") in self._LEAF_GROWTH_ACTIONS
+                    and int(project_id) in
+                    self._proposal_affected_project_ids(proposal)):
+                retired += 1
+            else:
+                remaining.append(proposal)
+        if retired:
+            self._replace_pending_proposals(remaining)
+        return retired
 
     def _replace_pending_proposals(self, proposals: list[dict]) -> None:
         self._pending_proposals = list(proposals or [])[:3]
@@ -1736,23 +2012,19 @@ class Companion:
         decision = str(result.get("decision") or "none").strip().lower()
         if decision == "propose":
             existing = list(self._pending_proposals)
-            seen = {self._proposal_key(item) for item in existing}
-            added = []
+            new_candidates = []
             for raw in list(result.get("proposals") or [])[:3]:
                 proposal = self._normalize_proposal(raw)
-                if (proposal.get("action") not in self._SCOUT_ACTIONS or
-                        not self._valid_proposal(proposal)):
+                if proposal.get("action") not in self._SCOUT_ACTIONS:
                     continue
-                key = self._proposal_key(proposal)
-                if key in seen:
-                    continue
-                seen.add(key)
-                existing.append(proposal)
-                added.append(proposal)
-                if len(existing) >= 3:
-                    break
+                new_candidates.append(proposal)
+            combined, _dropped = self._arbitrate_proposals(
+                existing + new_candidates)
+            added = [proposal for proposal in new_candidates
+                     if any(proposal is survivor for survivor in combined)]
+            if combined != existing:
+                self._replace_pending_proposals(combined)
             if added:
-                self._replace_pending_proposals(existing)
                 return "\n\n".join(self._render_proposal(item) for item in added)
             return ""
         if decision == "clarify":
@@ -1815,6 +2087,7 @@ class Companion:
             return {}
         normalized = dict(proposal)
         action = str(normalized.get("action") or "").strip().lower()
+        raw_action = action
         action = {
             "attach_investigation_context": "add_investigation_context",
             "add_context_to_investigation": "add_investigation_context",
@@ -1836,14 +2109,67 @@ class Companion:
             "rename_curiosity": "rename_investigation",
             "archive_curiosity": "archive_investigation",
             "delete_investigation": "archive_investigation",
+            "make_project_highest_priority": "set_project_signal",
+            "set_highest_priority": "set_project_signal",
+            "mark_project_currently_working": "set_project_signal",
+            "set_current_project": "set_project_signal",
+            "clear_project_priority": "set_project_signal",
+            "clear_current_project": "set_project_signal",
         }.get(action, action)
         normalized["action"] = action
+        if action == "set_project_signal":
+            alias_kind = ({
+                "make_project_highest_priority": "highest_priority",
+                "set_highest_priority": "highest_priority",
+                "clear_project_priority": "highest_priority",
+                "mark_project_currently_working": "currently_working",
+                "set_current_project": "currently_working",
+                "clear_current_project": "currently_working",
+            }.get(raw_action))
+            raw_kind = str(
+                normalized.get("signal_kind")
+                or normalized.get("project_signal")
+                or normalized.get("kind")
+                or alias_kind
+                or "").strip().lower().replace("-", "_").replace(" ", "_")
+            normalized["signal_kind"] = {
+                "priority": "highest_priority",
+                "highest": "highest_priority",
+                "top_priority": "highest_priority",
+                "current": "currently_working",
+                "current_project": "currently_working",
+                "working": "currently_working",
+            }.get(raw_kind, raw_kind)
+            raw_enabled = normalized.get("enabled")
+            if raw_enabled is None:
+                normalized["enabled"] = raw_action not in {
+                    "clear_project_priority", "clear_current_project"}
+            elif isinstance(raw_enabled, str):
+                normalized["enabled"] = raw_enabled.strip().lower() not in {
+                    "0", "false", "no", "off", "clear", "remove"}
+            else:
+                normalized["enabled"] = bool(raw_enabled)
         if action == "replan_project":
+            # Optimistic-lock snapshots are app-owned. Never accept a model-
+            # supplied version map; arbitration stamps the current tree after
+            # the semantic plan itself validates.
+            normalized.pop("expected_versions", None)
             raw_steps = next((normalized.get(key) for key in (
                 "steps", "leaves", "plan", "operations")
                 if isinstance(normalized.get(key), list)), [])
             normalized["steps"] = [self._normalize_replan_step(step)
                                    for step in raw_steps]
+            raw_update = normalized.get("project_update")
+            if isinstance(raw_update, dict):
+                project_update = {}
+                if "title" in raw_update:
+                    project_update["title"] = str(raw_update.get("title") or "").strip()
+                if "description" in raw_update:
+                    project_update["description"] = str(
+                        raw_update.get("description") or "").strip()
+                normalized["project_update"] = project_update
+            else:
+                normalized.pop("project_update", None)
         if not str(normalized.get("directive") or "").strip():
             normalized["directive"] = next((str(normalized.get(key) or "").strip()
                                             for key in ("context", "note", "description", "content")
@@ -2094,6 +2420,22 @@ class Companion:
                 "(reversible from the Investigations tab)",
                 f"{conf_text}**{target_label}** 탐구를 보관해요 "
                 "(Investigations 탭에서 되돌릴 수 있어요)"))
+        elif action == "set_project_signal":
+            target = self._catalog_lookup(proposal.get("target_node_id"))
+            target_label = target["title"] if target else label
+            enabled = bool(proposal.get("enabled", True))
+            signal_kind = str(proposal.get("signal_kind") or "")
+            marker = (lang_T("Highest priority", "최우선")
+                      if signal_kind == "highest_priority" else
+                      lang_T("Currently working", "현재 작업 중"))
+            if enabled:
+                lines.append(lang_T(
+                    f"{conf_text}mark **{target_label}** as **{marker}**",
+                    f"{conf_text}**{target_label}** 프로젝트를 **{marker}**으로 표시해요"))
+            else:
+                lines.append(lang_T(
+                    f"{conf_text}clear **{marker}** from **{target_label}**",
+                    f"{conf_text}**{target_label}** 프로젝트의 **{marker}** 표시를 해제해요"))
         elif action == "record_goal_progress":
             target = self._catalog_lookup(proposal.get("target_node_id"))
             target_label = target["title"] if target else label
@@ -2111,6 +2453,16 @@ class Companion:
             lines.append(lang_T(
                 f"{conf_text}restructure the plan under **{target_label}**",
                 f"{conf_text}**{target_label}**의 계획을 재구성해요"))
+            project_update = proposal.get("project_update")
+            if isinstance(project_update, dict) and project_update:
+                if str(project_update.get("title") or "").strip():
+                    lines.append(lang_T(
+                        f"Project title → **{project_update['title']}**",
+                        f"프로젝트 이름 → **{project_update['title']}**"))
+                if "description" in project_update:
+                    lines.append(lang_T(
+                        f"Project framing → {project_update.get('description') or '(clear)'}",
+                        f"프로젝트 설명 → {project_update.get('description') or '(비움)'}"))
             lines.extend(self._render_replan_steps(proposal))
         elif action in self._STRUCTURAL_ACTIONS:
             lines.append(f"{conf_text}{self._describe_target(proposal)}")
@@ -2131,7 +2483,77 @@ class Companion:
     _PROPOSAL_BLOCK_RE = re.compile(
         r"<<<faerie_proposal\s*(\{.*?\})\s*faerie_proposal>>>", re.DOTALL)
 
-    def _valid_proposal(self, proposal) -> bool:
+    def _valid_leaf_structural_proposal(
+            self, proposal: dict, reservations: list[dict] | None, *,
+            exclude_current_chat: bool = False) -> bool:
+        """Validate Leaf rename/move effects against the shared horizon."""
+        action = str(proposal.get("action") or "")
+        try:
+            from ..goals import GoalStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                target = goals.get(int(proposal.get("target_node_id")))
+                if not target or target.get("status") == "archived":
+                    return False
+                if action == "rename_node":
+                    new_title = str(proposal.get("new_title") or "").strip()
+                    if not new_title:
+                        return False
+                    if (target["type"] == "task"
+                            and target.get("status") in {"active", "paused"}):
+                        parent_id = int(target["parent_id"])
+                        combined = goals.pending_leaf_reservations(
+                            parent_id,
+                            exclude_refs=(
+                                [f"companion:{self.chat_id}"]
+                                if exclude_current_chat else None))
+                        combined.extend(list(reservations or []))
+                        excluded = self._reservation_excluded_leaf_ids(
+                            combined, parent_id)
+                        excluded.append(int(target["id"]))
+                        goals.validate_leaf_candidate(
+                            parent_id, new_title,
+                            description=str(target.get("description") or ""),
+                            reservations=combined,
+                            horizon=self._leaf_horizon_limit(),
+                            exclude_leaf_ids=excluded)
+                    return True
+                if action != "move_node":
+                    return True
+                new_parent = goals.get(int(proposal.get("new_parent_id")))
+                if not new_parent or new_parent.get("status") == "archived":
+                    return False
+                if target["type"] != "task":
+                    return True
+                if new_parent["type"] not in {"overgoal", "subgoal"}:
+                    return False
+                if target.get("status") in {"active", "paused"}:
+                    parent_id = int(new_parent["id"])
+                    combined = goals.pending_leaf_reservations(
+                        parent_id,
+                        exclude_refs=(
+                            [f"companion:{self.chat_id}"]
+                            if exclude_current_chat else None))
+                    combined.extend(list(reservations or []))
+                    excluded = self._reservation_excluded_leaf_ids(
+                        combined, parent_id)
+                    if int(target.get("parent_id") or 0) == parent_id:
+                        excluded.append(int(target["id"]))
+                    goals.validate_leaf_candidate(
+                        parent_id, str(target.get("title") or ""),
+                        description=str(target.get("description") or ""),
+                        reservations=combined,
+                        horizon=self._leaf_horizon_limit(),
+                        exclude_leaf_ids=excluded)
+                return True
+            finally:
+                goals.close()
+        except (TypeError, ValueError, OSError):
+            return False
+
+    def _valid_proposal(
+            self, proposal, *, reservations: list[dict] | None = None,
+            exclude_current_chat: bool = False) -> bool:
         valid = (isinstance(proposal, dict) and proposal.get("action") in self._ALL_ACTIONS
                  and str(proposal.get("label") or "").strip())
         if valid and proposal["action"] != "start_investigation":
@@ -2159,24 +2581,55 @@ class Companion:
                 valid = (source is not None and merge_target is not None
                          and int(source["id"]) != int(merge_target["id"]))
             if valid and proposal["action"] == "move_node":
-                valid = self._catalog_lookup(proposal.get("new_parent_id")) is not None
+                valid = (self._catalog_lookup(proposal.get("new_parent_id")) is not None
+                         and self._valid_leaf_structural_proposal(
+                             proposal, reservations,
+                             exclude_current_chat=exclude_current_chat))
             if valid and proposal["action"] == "rename_node":
-                valid = bool(str(proposal.get("new_title") or "").strip())
+                valid = self._valid_leaf_structural_proposal(
+                    proposal, reservations,
+                    exclude_current_chat=exclude_current_chat)
             if valid and proposal["action"] == "create_leaf":
                 # A Leaf can never parent another Leaf; catching it here keeps
                 # a doomed card from reaching approve and raising ValueError.
                 target = self._catalog_lookup(proposal.get("target_node_id"))
                 valid = bool(target) and target["type"] in {"Root", "Branch"}
-                # Just-in-time horizon: one committed Leaf plus one provisional
-                # next. Beyond that, the plan should bend (replan_project) —
-                # not grow a stale queue of predicted steps.
-                valid = valid and (self._open_leaf_count(
-                    proposal.get("target_node_id")) < self._leaf_horizon_limit())
+                if valid:
+                    try:
+                        from ..goals import GoalStore
+                        goals = GoalStore(self.cfg.memory_db_path)
+                        try:
+                            parent_id = int(proposal.get("target_node_id"))
+                            combined = goals.pending_leaf_reservations(
+                                parent_id,
+                                exclude_refs=(
+                                    [f"companion:{self.chat_id}"]
+                                    if exclude_current_chat else None))
+                            combined.extend(list(reservations or []))
+                            goals.validate_leaf_candidate(
+                                parent_id,
+                                str(proposal.get("label") or ""),
+                                description=str(proposal.get("directive") or ""),
+                                reservations=combined,
+                                horizon=self._leaf_horizon_limit(),
+                                exclude_leaf_ids=self._reservation_excluded_leaf_ids(
+                                    combined, parent_id))
+                        finally:
+                            goals.close()
+                    except (TypeError, ValueError, OSError):
+                        valid = False
             if valid and proposal["action"] == "create_branch":
                 target = self._catalog_lookup(proposal.get("target_node_id"))
                 valid = bool(target) and target["type"] in {"Soul", "Root", "Branch"}
                 role = str(proposal.get("semantic_role") or "").strip().lower()
                 valid = valid and (not role or role in {"area", "project", "stage"})
+            if valid and proposal["action"] == "set_project_signal":
+                target = self._catalog_lookup(proposal.get("target_node_id"))
+                valid = (bool(target) and target["type"] == "Branch"
+                         and target.get("semantic_role") == "project"
+                         and proposal.get("signal_kind") in {
+                             "highest_priority", "currently_working"}
+                         and isinstance(proposal.get("enabled"), bool))
             if valid and proposal["action"] == "replan_project":
                 target = self._catalog_lookup(proposal.get("target_node_id"))
                 steps = proposal.get("steps")
@@ -2184,11 +2637,22 @@ class Companion:
                          and isinstance(steps, list)
                          and 0 < len(steps) <= self._REPLAN_MAX_STEPS
                          and all(self._valid_replan_step(step) for step in steps)
-                         and any(step.get("op") != "archive" for step in steps)
-                         # A replan is the just-in-time reset: it must land
-                         # within the horizon, not rebuild a long stale queue.
-                         and self._replan_open_step_count(proposal)
-                         <= self._leaf_horizon_limit())
+                         and isinstance(proposal.get("expected_versions"), dict)
+                         and bool(proposal.get("expected_versions")))
+                if valid:
+                    try:
+                        from ..goals import GoalStore
+                        goals = GoalStore(self.cfg.memory_db_path)
+                        try:
+                            goals.validate_replan_project(
+                                int(proposal.get("target_node_id")), steps,
+                                project_update=proposal.get("project_update"),
+                                horizon=self._leaf_horizon_limit(),
+                                expected_versions=proposal.get("expected_versions"))
+                        finally:
+                            goals.close()
+                    except (TypeError, ValueError, OSError):
+                        valid = False
             if valid and proposal["action"] == "record_goal_progress":
                 valid = bool(str(proposal.get("directive") or "").strip())
             if valid and proposal["action"] == "browser_task":
@@ -2229,48 +2693,41 @@ class Companion:
             return cleaned or lang_T(
                 "Proposals are off for this conversation.",
                 "이 대화에서는 제안이 꺼져 있어요.")
-        proposals: list[dict] = []
+        parsed: list[tuple[re.Match, dict]] = []
         rendered_by_start: dict[int, str] = {}
-        seen: set[tuple[str, str]] = set()
         dropped = 0
         for match in matches:
-            if len(proposals) >= 3:
-                rendered_by_start[match.start()] = ""
-                dropped += 1
-                continue
             try:
                 proposal = self._normalize_proposal(json.loads(match.group(1)))
             except (ValueError, TypeError):
                 rendered_by_start[match.start()] = ""
                 dropped += 1
                 continue
-            if not self._valid_proposal(proposal):
-                rendered_by_start[match.start()] = ""
-                dropped += 1
-                continue
-            key = (str(proposal.get("action") or ""),
-                   " ".join(str(proposal.get("label") or "").lower().split()))
-            if key in seen:
-                rendered_by_start[match.start()] = ""
-                continue
-            seen.add(key)
-            proposals.append(proposal)
-            rendered_by_start[match.start()] = self._render_proposal(proposal)
-        if proposals:
-            if preserve_pending:
-                merged = list(self._pending_proposals)
-                positions = {self._proposal_key(item): index
-                             for index, item in enumerate(merged)}
-                for proposal in proposals:
-                    key = self._proposal_key(proposal)
-                    if key in positions:
-                        merged[positions[key]] = proposal
-                    elif len(merged) < 3:
-                        positions[key] = len(merged)
-                        merged.append(proposal)
-                self._replace_pending_proposals(merged)
-            else:
-                self._replace_pending_proposals(proposals)
+            parsed.append((match, proposal))
+
+        candidates = [proposal for _match, proposal in parsed]
+        if preserve_pending:
+            merged = list(self._pending_proposals)
+            positions = {self._proposal_key(item): index
+                         for index, item in enumerate(merged)}
+            for proposal in candidates:
+                key = self._proposal_key(proposal)
+                if key in positions:
+                    merged[positions[key]] = proposal
+                else:
+                    positions[key] = len(merged)
+                    merged.append(proposal)
+            candidates = merged
+        proposals, arbitrated = self._arbitrate_proposals(candidates)
+        dropped += arbitrated
+        survivor_ids = {id(proposal) for proposal in proposals}
+        for match, proposal in parsed:
+            rendered_by_start[match.start()] = (
+                self._render_proposal(proposal)
+                if id(proposal) in survivor_ids else "")
+        # A model generation owns its pending batch. Even an invalid or fully
+        # suppressed batch must retire the cards it tried to replace.
+        self._replace_pending_proposals(proposals)
         cleaned = self._PROPOSAL_BLOCK_RE.sub(
             lambda match: rendered_by_start.get(match.start(), ""), text).strip()
         if dropped:
@@ -2278,9 +2735,9 @@ class Companion:
             # vanishing without a trace looks like it was staged and applied.
             note = lang_T(
                 f"_({dropped} proposed card{'s' if dropped != 1 else ''} couldn't "
-                "be staged — usually an invalid or missing target, or the "
-                "project's leaf horizon is full. Ask me to fold it into a "
-                "replan if it mattered.)_",
+                "be staged — it was invalid or stale, duplicated another Leaf, "
+                "the project's leaf horizon was full, or the change was already "
+                "covered by this project's replan.)_",
                 f"_(제안 카드 {dropped}개를 준비하지 못했어요 — 대상이 잘못됐거나 "
                 "프로젝트의 Leaf 한도가 가득 찬 경우가 대부분이에요. 필요하면 "
                 "리플랜으로 합쳐 달라고 말씀해 주세요.)_")
@@ -2294,6 +2751,14 @@ class Companion:
         """Backward-compatible first pending proposal for older UI clients."""
         return self._pending_proposals[0] if self._pending_proposals else None
 
+    @staticmethod
+    def _stale_proposal_reply() -> str:
+        return lang_T(
+            "That proposal became stale because the Growth tree changed after it "
+            "was drafted. I removed the card and nothing was applied.",
+            "그 제안을 만든 뒤 성장 트리가 바뀌어 더 이상 유효하지 않아요. "
+            "카드를 제거했고 아무것도 적용하지 않았어요.")
+
     def approve_proposal(self, index: int) -> str:
         """Approve one pending proposal from an explicit UI card."""
         proposal = self.chats.pop_pending_proposal(self.chat_id, index)
@@ -2305,7 +2770,9 @@ class Companion:
         shown = lang_T(f"Approve: {label}", f"승인: {label}")
         self.history.append({"role": "user", "content": shown})
         self.chats.append(self.chat_id, "user", shown)
-        text = self._apply_proposal(proposal)
+        text = (self._apply_proposal(proposal)
+                if self._valid_proposal(proposal, reservations=[])
+                else self._stale_proposal_reply())
         self.history.append({"role": "assistant", "content": text})
         self.chats.append(self.chat_id, "assistant", text)
         return text
@@ -2512,6 +2979,43 @@ class Companion:
                         f"보관했어요 — **{investigation['label']}** 탐구를 닫았지만 "
                         "기록은 남아 있어요. Investigations 탭에서 언제든 다시 열 수 있어요.")
 
+                if action == "set_project_signal":
+                    target = goals.get(int(proposal.get("target_node_id")))
+                    if (not target or target.get("status") != "active"
+                            or target.get("type") != "subgoal"
+                            or goals.resolved_semantic_role(int(target["id"])) != "project"):
+                        return gone
+                    signal_kind = str(proposal.get("signal_kind") or "")
+                    enabled = bool(proposal.get("enabled", True))
+                    signals = goals.project_signals()
+                    previous_id = signals.get(signal_kind)
+                    marker = (lang_T("Highest priority", "최우선")
+                              if signal_kind == "highest_priority" else
+                              lang_T("Currently working", "현재 작업 중"))
+                    if enabled and previous_id == int(target["id"]):
+                        return lang_T(
+                            f"Already set — **{target['title']}** is still **{marker}**.",
+                            f"이미 설정되어 있어요 — **{target['title']}** 프로젝트는 계속 "
+                            f"**{marker}**이에요.")
+                    if not enabled and previous_id != int(target["id"]):
+                        return lang_T(
+                            f"Already clear — **{target['title']}** does not carry "
+                            f"the **{marker}** marker.",
+                            f"이미 해제되어 있어요 — **{target['title']}** 프로젝트에는 "
+                            f"**{marker}** 표시가 없어요.")
+                    goals.set_project_signal(
+                        int(target["id"]), signal_kind, enabled=enabled)
+                    if enabled:
+                        return lang_T(
+                            f"Set — **{target['title']}** is now **{marker}**. "
+                            "Its Leaves will show NOW and TENTATIVE NEXT.",
+                            f"설정했어요 — **{target['title']}** 프로젝트가 이제 "
+                            f"**{marker}**이에요. Leaf에 NOW와 잠정 다음이 표시돼요.")
+                    return lang_T(
+                        f"Cleared — **{target['title']}** is no longer **{marker}**.",
+                        f"해제했어요 — **{target['title']}** 프로젝트는 더 이상 "
+                        f"**{marker}**이 아니에요.")
+
                 if action == "record_goal_progress":
                     target = goals.get(int(proposal.get("target_node_id")))
                     if not target or target.get("status") == "archived":
@@ -2573,10 +3077,13 @@ class Companion:
                     priority = str(proposal.get("priority") or "normal")
                     if priority not in {"low", "normal", "high"}:
                         priority = "normal"
-                    new_id = goals.create("task", label, parent_id=parent["id"],
-                                          description=directive, priority=priority)
-                    goals.set_origin(new_id, source_kind="chat", source_label=label,
-                                      summary=directive, detail=reasoning)
+                    goals.create_ai_leaf(
+                        label, parent_id=parent["id"], description=directive,
+                        priority=priority, horizon=self._leaf_horizon_limit(),
+                        reservations=goals.pending_leaf_reservations(
+                            int(parent["id"])),
+                        origin={"source_kind": "chat", "source_label": label,
+                                "summary": directive, "detail": reasoning})
                     return lang_T(
                         f"Created — **{label}** is now a Leaf under **{parent['title']}**.",
                         f"만들었어요 — **{label}**을(를) **{parent['title']}** 아래 "
@@ -2607,60 +3114,21 @@ class Companion:
                     if (not target or target.get("status") == "archived"
                             or target["type"] not in {"overgoal", "subgoal"}):
                         return gone
-                    ordered: list[int] = []
-                    counts = {"create": 0, "rename": 0, "update": 0,
-                              "archive": 0, "keep": 0, "complete": 0}
-                    for step in list(proposal.get("steps") or []):
-                        op = step.get("op")
-                        if op == "create":
-                            title = str(step.get("title") or "").strip()
-                            priority = str(step.get("priority") or "normal")
-                            if priority not in {"low", "normal", "high"}:
-                                priority = "normal"
-                            step_description = str(step.get("description") or "").strip()
-                            new_id = goals.create(
-                                "task", title, parent_id=target["id"],
-                                description=step_description, priority=priority)
-                            goals.set_origin(
-                                new_id, source_kind="chat", source_label=title,
-                                summary=step_description or directive, detail=reasoning)
-                            ordered.append(new_id)
-                            counts["create"] += 1
-                            continue
-                        try:
-                            node = goals.get(int(step.get("leaf_id")))
-                        except (TypeError, ValueError):
-                            node = None
-                        if not node or node["type"] != "task":
-                            continue
-                        if op == "archive":
-                            if node.get("status") != "archived":
-                                goals.delete_subtree(node["id"])
-                                counts["archive"] += 1
-                            continue
-                        if op == "complete":
-                            if node.get("status") != "completed":
-                                goals.update(node["id"], status="completed")
-                                counts["complete"] += 1
-                            ordered.append(node["id"])
-                            continue
-                        changes = {}
-                        if op == "rename":
-                            new_title = str(step.get("new_title") or "").strip()
-                            if new_title and new_title != node["title"]:
-                                changes["title"] = new_title
-                        if op in {"rename", "update"}:
-                            step_description = str(step.get("description") or "").strip()
-                            if step_description:
-                                changes["description"] = step_description
-                        if changes:
-                            goals.update(node["id"], **changes)
-                            counts["rename" if op == "rename" else "update"] += 1
-                        else:
-                            counts["keep"] += 1 if op == "keep" else 0
-                        ordered.append(node["id"])
-                    for index, node_id in enumerate(ordered):
-                        goals.move(node_id, target["id"], position=index)
+                    result = goals.apply_replan_project(
+                        target["id"], list(proposal.get("steps") or []),
+                        project_update=proposal.get("project_update"),
+                        horizon=self._leaf_horizon_limit(),
+                        expected_versions=proposal.get("expected_versions"),
+                        origin={"source_kind": "chat", "source_label": label,
+                                "summary": directive, "detail": reasoning})
+                    counts = result["operation_counts"]
+                    ordered_count = int(result["ordered_leaf_count"])
+                    updated_project = result.get("project") or target
+                    # A successful replan makes any older standalone Growth
+                    # card for this project stale, even if it came from a
+                    # different proposal source.
+                    self._retire_project_growth_proposals(int(target["id"]))
+                    goals.retire_pending_leaf_operations(int(target["id"]))
                     if lang_is_ko():
                         parts = [f"{counts['create']}개 추가" if counts["create"] else "",
                                  f"{counts['rename']}개 이름 변경" if counts["rename"] else "",
@@ -2668,16 +3136,16 @@ class Companion:
                                  f"{counts['complete']}개 완료 처리" if counts["complete"] else "",
                                  f"{counts['archive']}개 보관" if counts["archive"] else ""]
                         summary = ", ".join(part for part in parts if part) or "순서만 변경"
-                        return (f"재구성했어요 — **{target['title']}**의 새 계획은 "
-                                f"{len(ordered)}단계예요 ({summary}). 보관은 되돌릴 수 있어요.")
+                        return (f"재구성했어요 — **{updated_project['title']}**의 새 계획은 "
+                                f"{ordered_count}단계예요 ({summary}). 보관은 되돌릴 수 있어요.")
                     parts = [f"{counts['create']} added" if counts["create"] else "",
                              f"{counts['rename']} renamed" if counts["rename"] else "",
                              f"{counts['update']} updated" if counts["update"] else "",
                              f"{counts['complete']} marked complete" if counts["complete"] else "",
                              f"{counts['archive']} archived" if counts["archive"] else ""]
                     summary = ", ".join(part for part in parts if part) or "reordered only"
-                    return (f"Replanned — **{target['title']}** now has "
-                            f"{len(ordered)} ordered step{'s' if len(ordered) != 1 else ''} "
+                    return (f"Replanned — **{updated_project['title']}** now has "
+                            f"{ordered_count} ordered step{'s' if ordered_count != 1 else ''} "
                             f"({summary}). Archived Leaves are reversible.")
 
                 if action == "rename_node":
@@ -2733,6 +3201,8 @@ class Companion:
             finally:
                 goals.close()
         except Exception as e:
+            if action in {"create_leaf", "replan_project"} and isinstance(e, ValueError):
+                return self._stale_proposal_reply()
             return lang_T(f"(I had trouble making that change: {type(e).__name__})",
                          f"(그 변경을 적용하는 데 문제가 있었어요: {type(e).__name__})")
 
@@ -2765,16 +3235,32 @@ class Companion:
                       f"(응답하는 데 문제가 있었어요: {type(error).__name__})")
 
     def _proposal_approval_reply(self, user_text: str) -> str | None:
-        """A clear approval of a pending proposal is handled directly, no
-        model round-trip needed — mirrors the /teach approve pattern. Also
-        reachable via a UI button that just sends the same approval word."""
+        """Handle unambiguous typed approval without a model round-trip.
+
+        UI card buttons call ``approve_proposal`` with an exact index. A bare
+        "yes" cannot safely choose among several independently gated cards.
+        """
         proposals = list(self._pending_proposals)
         if not proposals:
             return None
         if user_text.strip().lower() not in self._PROPOSAL_APPROVAL_WORDS:
             return None
+        if len(proposals) > 1:
+            return lang_T(
+                f"I have {len(proposals)} separate proposal cards waiting. "
+                "Please click **Approve** on the one you mean; I kept every "
+                "card pending and haven't applied anything.",
+                f"대기 중인 제안 카드가 {len(proposals)}개예요. 원하는 카드의 "
+                "**승인**을 눌러 주세요. 모든 카드를 대기 상태로 두었고 "
+                "아무것도 적용하지 않았어요.")
         self._replace_pending_proposals([])
-        return "\n\n".join(self._apply_proposal(proposal) for proposal in proposals)
+        replies = []
+        for proposal in proposals:
+            if not self._valid_proposal(proposal, reservations=[]):
+                replies.append(self._stale_proposal_reply())
+            else:
+                replies.append(self._apply_proposal(proposal))
+        return "\n\n".join(replies)
 
     def _offer_filing(self, user_text: str, reply_text: str) -> str:
         """Long, brain-dump-shaped messages get a gentle offer to file them."""

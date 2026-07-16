@@ -46,6 +46,7 @@ AREAS = {
     "companion": Area(
         "Command Center embeds the companion bridge; legacy companion.py is locked unless opted in; "
         "personal profile adds recent screen context while launch profile uses only explicit chat/memory/investigation context; "
+        "Growth proposal batches reserve a two-Leaf backend horizon; only the singleton Highest-priority or Currently-working Projects expose NOW/TENTATIVE-NEXT labels, Command Center can change those signals through approval cards, and project replans own covered changes; "
         "approved browser-form tasks use a separate visible Playwright profile and never submit forms.",
         ("companion.py", "livingpc/companion/companion.html", "livingpc/companion/brain.py",
          "livingpc/companion/history.py", "livingpc/companion/personas.py", "livingpc/companion/voice.py",
@@ -70,7 +71,8 @@ AREAS = {
         "canonical beliefs absorb repeated candidates; native agent windows stage changes for one "
         "explicit commit; approved curiosity profiles produce local daily mastery snapshots; the "
         "encrypted Soul/Root/Branch/Leaf tree keeps completion separate from mastery while bounded "
-        "GoalAI agents report and harvest upward, Leaf Coach transcripts stay Leaf-local while "
+        "GoalAI agents share the approval-revalidated two-Leaf horizon with Project-only attention signals, report and harvest upward, "
+        "Leaf Coach transcripts and encrypted locally extracted documents stay Leaf-local while "
         "bounded execution updates flow through ancestors, and crossover remains Soul-approved; one claimed "
         "8 PM daily cycle runs incremental inference, curiosities, and dirty GoalAI paths before "
         "housekeeping, while metadata-only usage accounting tracks tokens and estimated cost.",

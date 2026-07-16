@@ -2,7 +2,8 @@
 
 Attachments are extracted locally and stored as encrypted text in memory.db.
 Raw files are not copied. Owners are opaque stable keys such as one Soul
-Calibration field, one Investigation, or one Investigation question.
+Calibration field, one Investigation, one Investigation question, or one Leaf
+Workspace.
 """
 from __future__ import annotations
 
@@ -20,14 +21,15 @@ from . import crypto
 from .db import connect
 
 
-ALLOWED_OWNER_KINDS = {"soul_calibration", "curiosity", "curiosity_item"}
+ALLOWED_OWNER_KINDS = {
+    "soul_calibration", "curiosity", "curiosity_item", "leaf_workspace"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".log"}
 EXCEL_EXTENSIONS = {".xlsx", ".xlsm"}
 MAX_FILE_BYTES = 15_000_000
 MAX_EXTRACTED_CHARS = 200_000
 MAX_ATTACHMENTS_PER_OWNER = 8
 
-SCHEMA = """
+ATTACHMENT_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS context_attachment (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_kind TEXT NOT NULL,
@@ -38,9 +40,12 @@ CREATE TABLE IF NOT EXISTS context_attachment (
     content_sha256 TEXT NOT NULL,
     char_count INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    CHECK (owner_kind IN ('soul_calibration','curiosity','curiosity_item')),
+    CHECK (owner_kind IN ('soul_calibration','curiosity','curiosity_item','leaf_workspace')),
     UNIQUE (owner_kind,owner_key,content_sha256)
-);
+)
+"""
+
+SCHEMA = ATTACHMENT_TABLE_SQL + ";" + """
 CREATE INDEX IF NOT EXISTS idx_context_attachment_owner
 ON context_attachment(owner_kind,owner_key,id);
 """
@@ -319,7 +324,39 @@ class ContextAttachmentStore:
         self.conn = connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate_owner_kinds()
         self.conn.commit()
+
+    def _migrate_owner_kinds(self) -> None:
+        """Expand the table CHECK without losing existing encrypted documents."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='context_attachment'").fetchone()
+        if row and "leaf_workspace" in str(row["sql"] or ""):
+            return
+        replacement = ATTACHMENT_TABLE_SQL.replace(
+            "CREATE TABLE IF NOT EXISTS context_attachment",
+            "CREATE TABLE context_attachment_v2", 1)
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute("DROP TABLE IF EXISTS context_attachment_v2")
+            self.conn.execute(replacement)
+            self.conn.execute(
+                "INSERT INTO context_attachment_v2 "
+                "(id,owner_kind,owner_key,filename,media_type,content_text,"
+                "content_sha256,char_count,created_at) SELECT "
+                "id,owner_kind,owner_key,filename,media_type,content_text,"
+                "content_sha256,char_count,created_at FROM context_attachment")
+            self.conn.execute("DROP TABLE context_attachment")
+            self.conn.execute(
+                "ALTER TABLE context_attachment_v2 RENAME TO context_attachment")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_context_attachment_owner "
+                "ON context_attachment(owner_kind,owner_key,id)")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def close(self) -> None:
         self.conn.close()

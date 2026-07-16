@@ -2914,9 +2914,17 @@ def _attached_summary(store: CuriosityStore, curiosity_id: int) -> str:
         f"title={crypto.dec(row['title'])}" for row in rows) or "  (none)"
 
 
+def _classification_leaf_horizon(config) -> int:
+    try:
+        configured = int(getattr(config, "goal_ai_leaf_horizon", 2))
+    except (TypeError, ValueError):
+        configured = 2
+    return min(2, max(1, configured))
+
+
 def classify_curiosity(config, mem, inf, store: CuriosityStore, curiosity_id: int,
                        model=None) -> dict:
-    from .goals import GoalStore
+    from .goals import GoalStore, LeafHorizonError
     curiosity = store.get_curiosity(int(curiosity_id))
     if not curiosity:
         raise ValueError("investigation not found")
@@ -2937,10 +2945,32 @@ def classify_curiosity(config, mem, inf, store: CuriosityStore, curiosity_id: in
     proposals = active.classify(
         curiosity, context, tree_summary, attached_summary)
     created = []
-    for proposal in proposals[:4]:
-        proposal_id = store.add_classification_proposal(int(curiosity_id), proposal)
-        if proposal_id:
-            created.append(proposal_id)
+    goals = GoalStore(config.memory_db_path)
+    try:
+        for proposal in proposals[:4]:
+            if proposal.proposal_type == "create_leaf":
+                payload = (proposal.payload
+                           if isinstance(proposal.payload, dict) else {})
+                try:
+                    parent_id = int(payload.get("parent_id"))
+                    goals.validate_leaf_candidate(
+                        parent_id,
+                        str(payload.get("title") or ""),
+                        description=str(payload.get("description") or ""),
+                        reservations=goals.pending_leaf_reservations(parent_id),
+                        horizon=_classification_leaf_horizon(config),
+                    )
+                except (KeyError, TypeError, ValueError, LeafHorizonError):
+                    # A malformed, duplicate, overlapping, or over-horizon Leaf
+                    # never becomes an approval card. Other classification
+                    # types in the same model response remain independent.
+                    continue
+            proposal_id = store.add_classification_proposal(
+                int(curiosity_id), proposal)
+            if proposal_id:
+                created.append(proposal_id)
+    finally:
+        goals.close()
     return {"created": len(created), "proposal_ids": created,
             "proposals": store.classification_proposals(int(curiosity_id))}
 
@@ -3013,7 +3043,7 @@ def _classification_origin(curiosity: dict, proposal: dict, store: CuriosityStor
 
 
 def decide_classification_proposal(config, proposal_id: int, action: str) -> dict:
-    from .goals import GoalStore
+    from .goals import GoalStore, LeafHorizonError
     store = CuriosityStore(config.memory_db_path)
     goals = GoalStore(config.memory_db_path)
     try:
@@ -3071,12 +3101,34 @@ def decide_classification_proposal(config, proposal_id: int, action: str) -> dic
             priority = str(payload.get("priority") or "normal")
             if priority not in {"low", "normal", "high"}:
                 priority = "normal"
-            attached_goal_id = goals.create(
-                "task", str(payload.get("title") or "New Leaf"),
-                parent_id=parent_id,
-                description=str(payload.get("description") or ""),
-                priority=priority)
-            origin_goal_ids.append(attached_goal_id)
+            try:
+                attached_goal_id = goals.create_ai_leaf(
+                    str(payload.get("title") or "New Leaf"),
+                    parent_id=parent_id,
+                    description=str(payload.get("description") or ""),
+                    priority=priority,
+                    reservations=goals.pending_leaf_reservations(
+                        parent_id,
+                        exclude_refs={f"curiosity:{int(proposal_id)}"},
+                    ),
+                    horizon=_classification_leaf_horizon(config),
+                    origin=origin,
+                )
+            except LeafHorizonError as error:
+                # The tree or another approval card changed since staging.
+                # Retire the stale card and leave the Goal tree untouched.
+                store.resolve_classification_proposal(
+                    int(proposal_id), "dismissed")
+                return {
+                    "ok": False,
+                    "status": "dismissed",
+                    "stale": True,
+                    "reason_code": error.code,
+                    "message": (
+                        "This Leaf proposal became stale because the project's "
+                        "two-Leaf horizon changed. Nothing was applied."
+                    ),
+                }
             goals.link_curiosity(parent_id, curiosity_id)
         elif proposal_type == "keep_soul":
             attached_goal_id = None

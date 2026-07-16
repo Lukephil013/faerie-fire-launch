@@ -9,6 +9,7 @@ import pytest
 from gui import GuiApi
 from livingpc import crypto
 from livingpc.config import Config
+from livingpc.context_attachment import ContextAttachmentStore
 from livingpc.curiosity import CuriosityStore
 from livingpc.goal_ai import (
     AgentProposal, AgentReport, ChatResult, ClaudeGoalAgentModel, GardeningProposal, GoalAgentStore,
@@ -30,7 +31,10 @@ from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
     run_goal_subtree, run_goal_sweep,
 )
-from livingpc.goals import GoalStore, propose_goal_restructure, record_experiment_outcome
+from livingpc.goals import (
+    GoalStore, propose_goal_intake, propose_goal_restructure,
+    record_experiment_outcome,
+)
 from livingpc.inference_scheduler import goal_ai_due
 from livingpc.memory import MemoryStore
 
@@ -53,6 +57,61 @@ def test_leaf_agents_use_recognition_led_memory_reconstruction():
         assert "organization" in prompt or "organizing" in prompt
     assert "one main" in LEAF_WORKSPACE_SYSTEM and "question\nper turn" in LEAF_WORKSPACE_SYSTEM
     assert "Never require a complete inventory" in LEAF_WORKSPACE_SYSTEM
+
+
+def test_leaf_workspace_exposes_now_labels_only_for_an_attended_project(world):
+    cfg, goals, agents, _, ids = world
+    second = goals.create("task", "Practice listening", parent_id=ids["sub_a"])
+
+    quiet = build_leaf_workspace_context(goals, agents, ids["task_a"])
+    assert quiet["growth_horizon"]["roles_visible"] is False
+    assert [leaf["planning_role"] for leaf in quiet["growth_horizon"]["leaves"]] == [
+        None, None]
+
+    goals.set_project_signal(ids["sub_a"], "currently_working")
+    attended = build_leaf_workspace_context(goals, agents, ids["task_a"])
+    assert attended["growth_horizon"]["roles_visible"] is True
+    assert attended["growth_horizon"]["project_focus"]["currently_working"] is True
+    assert [leaf["planning_role"] for leaf in attended["growth_horizon"]["leaves"]] == [
+        "now", "tentative_next"]
+    assert attended["growth_horizon"]["leaves"][1]["id"] == second
+
+
+def test_leaf_workspace_scans_only_its_own_encrypted_documents(world):
+    cfg, goals, _, _, ids = world
+    sibling = goals.create("task", "Practice listening", parent_id=ids["sub_a"])
+    documents = ContextAttachmentStore(cfg.memory_db_path)
+    try:
+        documents.add_text(
+            "leaf_workspace", ids["task_a"], "particle-notes.md",
+            "Opening context.\n\nThe energy handoff uses a blue status column and CSV export.")
+        documents.add_text(
+            "leaf_workspace", sibling, "sibling-secret.txt",
+            "This sibling-only document must never enter the particle Leaf.")
+    finally:
+        documents.close()
+    model = RecordingWorkspaceModel([
+        "I can use the attached particle notes here.",
+        "The document says the handoff uses a blue status column and CSV export.",
+    ])
+
+    opened = open_leaf_workspace(cfg, ids["task_a"], model=model)
+    opening_context = model.calls[0]["context"]
+    assert [item["name"] for item in opened["attachments"]] == ["particle-notes.md"]
+    assert "energy handoff" in opening_context["attached_documents"]["excerpts"]
+    assert "sibling-only" not in json.dumps(opening_context)
+
+    sent = send_leaf_workspace(
+        cfg, ids["task_a"], "What does the attached document say about the energy handoff?",
+        model=model)
+    turn_context = model.calls[-1]["context"]
+    assert "blue status column" in turn_context["attached_documents"]["excerpts"]
+    user_turn = sent["messages"][-2]
+    assert user_turn["content"] == (
+        "What does the attached document say about the energy handoff?")
+    assert "blue status column" not in user_turn["content"]
+    assert "attached_documents" in LEAF_WORKSPACE_SYSTEM
+    assert "untrusted reference material" in LEAF_WORKSPACE_SYSTEM
 
 
 @pytest.fixture
@@ -187,7 +246,9 @@ def test_leaf_step_draft_context_sees_ordered_root_peers_but_not_other_roots(wor
     encoded = json.dumps(context)
 
     assert [item["id"] for item in context["peer_leaves"]] == [earlier, later]
-    assert [item["relation"] for item in context["peer_leaves"]] == ["earlier", "later"]
+    # Canonical tree position wins over an earlier due date; due/priority no
+    # longer silently reorder the NOW/PROVISIONAL sequence.
+    assert [item["relation"] for item in context["peer_leaves"]] == ["later", "later"]
     assert "Lift" not in encoded and "Build strength" not in encoded
     assert "unrelated_roots" in context["jurisdiction"]["excludes"]
 
@@ -747,6 +808,22 @@ class ProposalModel:
             ])
 
 
+class LeafBatchProposalModel:
+    model_name = "leaf-batch-model"
+
+    def __init__(self, *titles):
+        self.titles = titles
+
+    def assess(self, context, role):
+        node_id = context["node"]["id"]
+        return AgentReport(
+            "Several next steps are possible.", "needs-attention", .8,
+            proposals=[AgentProposal(
+                "create_child", node_id,
+                {"type": "task", "title": title}, "Possible next step")
+                for title in self.titles])
+
+
 def test_proposal_cap_and_deduplication(world):
     cfg, _, agents, _, ids = world
     cfg.goal_ai_max_open_proposals = 3
@@ -757,18 +834,170 @@ def test_proposal_cap_and_deduplication(world):
     assert len(agents.proposals(ids["sub_a"])) == 3
 
 
+def test_goal_ai_pending_leaf_reserves_remaining_horizon_slot(world):
+    cfg, _, agents, _, ids = world
+    cfg.goal_ai_leaf_horizon = 2
+
+    result = run_goal_agent(cfg, ids["sub_a"], model=LeafBatchProposalModel(
+        "Collect pronunciation clips", "Choose conversation partner"))
+
+    assert result["proposals_created"] == 1
+    proposals = agents.proposals(ids["sub_a"])
+    assert [proposal["payload"]["title"] for proposal in proposals] == [
+        "Collect pronunciation clips"]
+
+
+def test_goal_ai_pending_semantic_duplicate_is_suppressed_without_using_slot(world):
+    cfg, goals, agents, _, ids = world
+    cfg.goal_ai_leaf_horizon = 2
+    listening = goals.create("subgoal", "Listening", parent_id=ids["over_a"])
+
+    result = run_goal_agent(cfg, listening, model=LeafBatchProposalModel(
+        "Collect pronunciation clips",
+        "Collect Korean pronunciation clips",
+        "Choose conversation partner"))
+
+    assert result["proposals_created"] == 2
+    titles = {proposal["payload"]["title"]
+              for proposal in agents.proposals(listening)}
+    assert titles == {"Collect pronunciation clips", "Choose conversation partner"}
+
+
 def test_create_child_task_respects_the_leaf_horizon(world):
     cfg, goals, agents, _, ids = world
     cfg.goal_ai_leaf_horizon = 2
-    # sub_a already holds task_a; one more brings it to the horizon.
-    goals.create("task", "Provisional next drill", parent_id=ids["sub_a"])
     proposal_id = agents.add_proposal(ids["sub_a"], AgentProposal(
         "create_child", ids["sub_a"],
         {"type": "task", "title": "A third queued step"}, "Stacks the queue"))
+    # A child added after staging does not change the parent's version, so this
+    # specifically exercises the approval-time horizon revalidation.
+    goals.create("task", "Provisional next drill", parent_id=ids["sub_a"])
     with pytest.raises(ValueError, match="horizon"):
         decide_proposal(cfg, proposal_id, "approve")
     assert agents.get_proposal(proposal_id)["status"] == "stale"
     assert goals.open_leaf_count(ids["sub_a"]) == 2
+
+
+def test_create_child_approval_counts_other_pending_leaf_reservations(world):
+    cfg, goals, agents, _, ids = world
+    cfg.goal_ai_leaf_horizon = 2
+    first_id = agents.add_proposal(ids["sub_a"], AgentProposal(
+        "create_child", ids["sub_a"],
+        {"type": "task", "title": "Collect pronunciation clips"},
+        "Candidate one"))
+    second_id = agents.add_proposal(ids["sub_a"], AgentProposal(
+        "create_child", ids["sub_a"],
+        {"type": "task", "title": "Choose conversation partner"},
+        "Candidate two"))
+
+    with pytest.raises(ValueError, match="horizon"):
+        decide_proposal(cfg, second_id, "approve")
+
+    assert agents.get_proposal(second_id)["status"] == "stale"
+    assert agents.get_proposal(first_id)["status"] == "open"
+    assert goals.open_leaf_count(ids["sub_a"]) == 1
+    assert decide_proposal(cfg, first_id, "approve")["ok"]
+    assert goals.open_leaf_count(ids["sub_a"]) == 2
+
+
+@pytest.mark.parametrize(
+    ("title", "message"),
+    [
+        ("  PRACTICE particles  ", "same normalized title"),
+        ("Practice Korean particles", "overlap"),
+    ],
+)
+def test_create_child_task_rejects_duplicate_or_overlapping_leaf_at_approval(
+        world, title, message):
+    cfg, goals, agents, _, ids = world
+    cfg.goal_ai_leaf_horizon = 2
+    proposal_id = agents.add_proposal(ids["sub_a"], AgentProposal(
+        "create_child", ids["sub_a"],
+        {"type": "task", "title": title}, "Repeats the active work"))
+
+    with pytest.raises(ValueError, match=message):
+        decide_proposal(cfg, proposal_id, "approve")
+
+    assert agents.get_proposal(proposal_id)["status"] == "stale"
+    assert goals.open_leaf_count(ids["sub_a"]) == 1
+    assert goals.get(ids["task_a"])["title"] == "Practice particles"
+
+
+def test_goal_ai_leaf_rename_excludes_itself_but_rejects_sibling_overlap(world):
+    cfg, goals, agents, _, ids = world
+    ok_id = agents.add_proposal(ids["task_a"], AgentProposal(
+        "update_fields", ids["task_a"],
+        {"title": "Practice particles deliberately"}, "Clarify the output"))
+    assert decide_proposal(cfg, ok_id, "approve")["ok"]
+    assert goals.get(ids["task_a"])["title"] == "Practice particles deliberately"
+
+    sibling = goals.create("task", "Review vocabulary", parent_id=ids["sub_a"])
+    for title in ("Review vocabulary", "Review Korean vocabulary"):
+        proposal_id = agents.add_proposal(ids["task_a"], AgentProposal(
+            "update_fields", ids["task_a"], {"title": title},
+            "Would overlap sibling work"))
+        with pytest.raises(ValueError, match="same normalized title|overlap"):
+            decide_proposal(cfg, proposal_id, "approve")
+        assert agents.get_proposal(proposal_id)["status"] == "stale"
+        assert goals.get(ids["task_a"])["title"] == "Practice particles deliberately"
+    assert goals.get(sibling)["status"] == "active"
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_restructure_move_revalidates_destination_leaf_horizon(world, duplicate):
+    cfg, goals, agents, _, ids = world
+    if duplicate:
+        moving = goals.create("task", "Lift", parent_id=ids["sub_a"])
+        message = "same normalized title"
+    else:
+        moving = ids["task_a"]
+        goals.create("task", "Stretch", parent_id=ids["over_b"])
+        message = "horizon"
+    proposal_id = agents.add_proposal(moving, AgentProposal(
+        "restructure_node", moving, {
+            "new_type": "task", "parent_id": ids["over_b"], "position": 0,
+        }, "Move this Leaf into the other Project"))
+
+    with pytest.raises(ValueError, match=message):
+        decide_proposal(cfg, proposal_id, "approve")
+
+    assert goals.get(moving)["parent_id"] == ids["sub_a"]
+    assert agents.get_proposal(proposal_id)["status"] == "stale"
+
+
+def test_restructure_retype_cannot_create_third_leaf(world):
+    cfg, goals, agents, _, ids = world
+    goals.create("task", "Stretch", parent_id=ids["over_b"])
+    branch = goals.create("subgoal", "New fitness routine", parent_id=ids["over_a"])
+    proposal_id = agents.add_proposal(branch, AgentProposal(
+        "restructure_node", branch, {
+            "new_type": "task", "parent_id": ids["over_b"], "position": 2,
+        }, "Turn this Branch into a Leaf"))
+
+    with pytest.raises(ValueError, match="horizon"):
+        decide_proposal(cfg, proposal_id, "approve")
+
+    assert goals.get(branch)["type"] == "subgoal"
+    assert agents.get_proposal(proposal_id)["status"] == "stale"
+
+
+def test_plain_language_leaf_intake_inherits_approval_time_horizon_guard(world):
+    cfg, goals, agents, _, ids = world
+    cfg.goal_ai_leaf_horizon = 2
+    staged = propose_goal_intake(cfg, {
+        "parent_id": ids["sub_a"], "new_type": "task",
+        "title": "Collect pronunciation clips",
+        "description": "Save a small set for the next practice session.",
+    })
+    # Simulate the tree changing while the intake card is waiting for approval.
+    goals.create("task", "Provisional next drill", parent_id=ids["sub_a"])
+
+    with pytest.raises(ValueError, match="horizon"):
+        decide_proposal(cfg, staged["proposal_id"], "approve")
+
+    assert agents.get_proposal(staged["proposal_id"])["status"] == "stale"
+    assert not any(
+        node["title"] == "Collect pronunciation clips" for node in goals.catalog())
 
 
 def test_agent_cannot_propose_into_unrelated_branch(world):
@@ -872,6 +1101,9 @@ def test_approve_proposal_applies_only_after_user_action(world):
     assert result["ok"]
     sub = next(x for x in goals.tree()["children"] if x["id"] == ids["over_a"])["children"][0]
     assert any(c["title"] == "Review examples" for c in sub["children"])
+    origin = goals.origin(result["created_goal_id"])
+    assert origin["source_kind"] == "goal_ai"
+    assert origin["source_proposal_id"] == proposal_id
 
 
 def test_relevance_review_is_versioned_and_tree_mutation_needs_second_approval(world):
@@ -982,6 +1214,64 @@ def test_split_proposal_rewrites_first_part_and_creates_sibling(world):
     assert goal_relevance_view(goals, agents, ids["sub_a"])["due"] is False
 
 
+def test_task_gardening_rewrite_revalidates_sibling_overlap(world):
+    cfg, goals, agents, _, ids = world
+    sibling = goals.create("task", "Review vocabulary", parent_id=ids["sub_a"])
+    review = gardening_review(ids["task_a"], "rewrite", {
+        "title": "Review Korean vocabulary",
+        "description": "Review the vocabulary list once.",
+    })
+    result = review_goal_relevance(
+        cfg, ids["task_a"], model=StaticRelevanceModel(review))
+    proposal_id = result["proposal_ids"][0]
+
+    with pytest.raises(ValueError, match="overlap"):
+        decide_gardening_proposal(cfg, proposal_id, "approve")
+
+    assert goals.get(ids["task_a"])["title"] == "Practice particles"
+    assert goals.get(sibling)["status"] == "active"
+    assert agents.get_gardening_proposal(proposal_id)["status"] == "stale"
+
+
+def test_task_gardening_split_is_atomic_and_cannot_exceed_horizon(world):
+    cfg, goals, agents, _, ids = world
+    sibling = goals.create("task", "Review vocabulary", parent_id=ids["sub_a"])
+    review = gardening_review(ids["task_a"], "split", {"parts": [
+        {"title": "Notice particle patterns", "description": "Notice examples."},
+        {"title": "Use particle patterns", "description": "Say examples aloud."},
+    ]})
+    result = review_goal_relevance(
+        cfg, ids["task_a"], model=StaticRelevanceModel(review))
+    proposal_id = result["proposal_ids"][0]
+
+    with pytest.raises(ValueError, match="horizon"):
+        decide_gardening_proposal(cfg, proposal_id, "approve")
+
+    assert goals.get(ids["task_a"])["title"] == "Practice particles"
+    assert goals.get(sibling)["status"] == "active"
+    assert not any(node["title"] == "Use particle patterns" for node in goals.catalog())
+    assert agents.get_gardening_proposal(proposal_id)["status"] == "stale"
+
+
+def test_pending_task_gardening_split_reserves_goal_ai_horizon(world):
+    cfg, goals, agents, _, ids = world
+    review = gardening_review(ids["task_a"], "split", {"parts": [
+        {"title": "Notice particle patterns", "description": "Notice examples."},
+        {"title": "Use particle patterns", "description": "Say examples aloud."},
+    ]})
+    result = review_goal_relevance(
+        cfg, ids["task_a"], model=StaticRelevanceModel(review))
+    assert agents.get_gardening_proposal(result["proposal_ids"][0])["status"] == "open"
+
+    blocked = agents.add_proposal(ids["sub_a"], AgentProposal(
+        "create_child", ids["sub_a"],
+        {"type": "task", "title": "A third particle drill"},
+        "This would exceed the reserved split"), goals=goals)
+
+    assert blocked is None
+    assert goals.open_leaf_count(ids["sub_a"]) == 1
+
+
 def test_merge_moves_children_and_archives_source_without_deleting_history(world):
     cfg, goals, _, _, ids = world
     review = gardening_review(ids["over_a"], "merge", {
@@ -1027,6 +1317,29 @@ def test_leaf_boundary_merge_is_approval_only_and_preserves_execution_history(wo
     moved = goals.conn.execute(
         "SELECT COUNT(*) FROM experiment_outcome WHERE goal_id=?", (target,)).fetchone()[0]
     assert moved == 1
+
+
+def test_task_gardening_merge_rolls_back_history_transfer_on_replan_failure(
+        world, monkeypatch):
+    cfg, goals, agents, _, ids = world
+    source = goals.create("task", "Practice example review", parent_id=ids["sub_a"])
+    agents.add_coach_message(
+        source, 0, "Review one example", "user", {"text": "Reviewed example A."})
+    proposal = propose_leaf_boundary_merge(
+        cfg, ids["task_a"], source, title="Practice and review particles",
+        description="Practice particles and review one example once.")
+    proposal_id = proposal["proposal_ids"][0]
+
+    monkeypatch.setattr(
+        GoalStore, "apply_replan_project",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("forced replan failure")))
+    with pytest.raises(RuntimeError, match="forced replan failure"):
+        decide_gardening_proposal(cfg, proposal_id, "approve")
+
+    assert goals.get(source)["status"] == "active"
+    assert len(agents.coach_messages(source, 20)) == 1
+    assert agents.coach_messages(ids["task_a"], 20) == []
+    assert agents.get_gardening_proposal(proposal_id)["status"] == "open"
 
 
 def test_leaf_boundary_rewrite_is_approval_only_and_keeps_coaching(world):
@@ -1545,6 +1858,28 @@ def test_leaf_workspace_parser_keeps_plain_prose_and_drops_only_bad_extras():
         "message": "This remains usable.", "selection_mode": "anything"})
     assert invalid_mode and invalid_mode.selection_mode == "single"
 
+    mixed = parse_leaf_workspace_reply({
+        "message": "I need your rate preference and the tools you use.",
+        "questions": [
+            {"prompt": "Which rate structure fits?", "type": "single_choice",
+             "options": ["Hourly", "Fixed price", "Flexible"]},
+            {"prompt": "Which work types apply?", "type": "multi_select",
+             "required": False,
+             "options": [{"label": "Automation"}, {"label": "Data workflows"}]},
+            {"prompt": "Which tools or skills should be listed?", "type": "text",
+             "placeholder": "Python, Make, Zapier…"},
+            {"prompt": "Broken choice", "type": "single_choice",
+             "options": ["Only one"]},
+        ],
+    })
+    assert mixed and [question["type"] for question in mixed.questions] == [
+        "single_choice", "multi_select", "text"]
+    assert mixed.questions[1]["required"] is False
+    assert mixed.questions[2]["placeholder"] == "Python, Make, Zapier…"
+    assert all(question["id"].startswith("question-") for question in mixed.questions)
+    assert all(option["id"].startswith("option-")
+               for question in mixed.questions for option in question["options"])
+
     scratch = parse_leaf_workspace_reply({
         "message": "I can preserve the conversational focus.",
         "working_patch": {"current_focus": "packaging", "decisions": ["assumed"],
@@ -1555,6 +1890,21 @@ def test_leaf_workspace_parser_keeps_plain_prose_and_drops_only_bad_extras():
     broken_tail = parse_leaf_workspace_reply(
         'This answer is still useful.\n{"suggestions":[{"label":"truncated"}')
     assert broken_tail and broken_tail.message == "This answer is still useful."
+    truncated_fenced = parse_leaf_workspace_reply(
+        '```json\n{\n  "message": "Perfect. I can build the full draft.\\n\\n'
+        '**About Me**\\nUse \\"clear milestones\\" and keep the profile practical')
+    assert truncated_fenced
+    assert truncated_fenced.message == (
+        'Perfect. I can build the full draft.\n\n'
+        '**About Me**\nUse "clear milestones" and keep the profile practical')
+    assert "```json" not in truncated_fenced.message
+    assert "\\n" not in truncated_fenced.message
+    assert truncated_fenced.questions == [] and truncated_fenced.proposal is None
+    broken_cards = parse_leaf_workspace_reply(
+        '{"message":"The readable answer survives.",'
+        '"questions":[{"prompt":"Which one?","type":"single_choice"')
+    assert broken_cards and broken_cards.message == "The readable answer survives."
+    assert broken_cards.questions == []
     braces_are_prose = parse_leaf_workspace_reply(
         "Use the {client_id} field as the matching key; that is the concrete answer.")
     assert braces_are_prose and braces_are_prose.message.startswith("Use the {client_id}")
@@ -1576,6 +1926,43 @@ def test_leaf_workspace_parser_keeps_plain_prose_and_drops_only_bad_extras():
 
 def test_leaf_workspace_completion_prompt_requires_editable_result_and_lesson_drafts():
     assert "always draft both payload.result and payload.lesson" in LEAF_WORKSPACE_SYSTEM
+
+
+def test_leaf_workspace_model_has_room_for_complete_user_facing_drafts():
+    model = object.__new__(ClaudeGoalAgentModel)
+    captured = {}
+
+    def call(_system, _prompt, **kwargs):
+        captured.update(kwargs)
+        return '{"message":"A complete draft."}'
+
+    model._call = call
+    reply = model.leaf_workspace(
+        {"language": "en", "leaf": {"title": "Draft profile"}}, [], opening=False)
+
+    assert reply.message == "A complete draft."
+    assert captured["max_tokens"] == 4096
+
+
+def test_leaf_workspace_repairs_an_already_stored_raw_truncated_json_reply(world):
+    cfg, goals, agents, _, ids = world
+    agents.ensure_leaf_workspace(goals.get(ids["task_a"]))
+    raw = ('```json\n{"message":"Here is the usable profile draft.\\n\\n'
+           '**Skills**\\nPython, automation, and reporting')
+    agents.add_leaf_workspace_message(ids["task_a"], "assistant", raw)
+    model = RecordingWorkspaceModel(["I can continue from that repaired draft."])
+
+    sent = send_leaf_workspace(
+        cfg, ids["task_a"], "Please continue from the draft.", model=model)
+
+    assert sent["messages"][0]["content"] == (
+        "Here is the usable profile draft.\n\n**Skills**\n"
+        "Python, automation, and reporting")
+    assert model.calls[-1]["messages"][0]["content"] == sent["messages"][0]["content"]
+    assert "```json" not in json.dumps(model.calls[-1]["messages"])
+    # Presentation repair is non-destructive; the encrypted historical row is
+    # not rewritten merely because a newer reader can recover it.
+    assert agents.leaf_workspace_messages(ids["task_a"])[0]["content"] == raw
 
 
 def test_leaf_workspace_is_free_conversation_and_uses_prior_turns(world):
@@ -1637,6 +2024,50 @@ def test_leaf_workspace_suggestion_ids_and_selection_event_persist(world):
     assert user["payload"]["event"]["suggestion_ids"] == ids_selected
     assert sent["working"]["selected_suggestion_ids"] == ids_selected
     assert model.calls[-1]["event"]["suggestion_ids"] == ids_selected
+
+
+def test_leaf_workspace_mixed_questions_submit_as_one_structured_turn(world):
+    cfg, _, _, _, ids = world
+    model = RecordingWorkspaceModel([
+        LeafWorkspaceReply(
+            "I need two details to shape this accurately.",
+            questions=[
+                {"prompt": "Which rate structure fits?", "type": "single_choice",
+                 "options": ["Hourly", "Fixed price", "Flexible"]},
+                {"prompt": "Which tools or skills should be listed?", "type": "text",
+                 "placeholder": "Python, Make, Zapier…"},
+            ]),
+        "Great—I have both the rate structure and the skills now.",
+    ])
+    opened = open_leaf_workspace(cfg, ids["task_a"], model=model)
+    questions = opened["messages"][-1]["payload"]["questions"]
+    rate, skills = questions
+    hourly = rate["options"][0]
+
+    with pytest.raises(ValueError, match="message or selection is required"):
+        send_leaf_workspace(
+            cfg, ids["task_a"], "",
+            {"type": "answer_questions", "message_id": opened["messages"][-1]["id"],
+             "answers": [
+                 {"question_id": rate["id"], "option_ids": [hourly["id"]]},
+             ]}, model=model)
+
+    sent = send_leaf_workspace(
+        cfg, ids["task_a"],
+        "Which rate structure fits?: Hourly\n"
+        "Which tools or skills should be listed?: Python, Make, and Zapier",
+        {"type": "answer_questions", "message_id": opened["messages"][-1]["id"],
+         "answers": [
+             {"question_id": rate["id"], "option_ids": [hourly["id"]]},
+             {"question_id": skills["id"], "text": "Python, Make, and Zapier"},
+         ]}, model=model)
+
+    event = sent["messages"][-2]["payload"]["event"]
+    assert event["type"] == "answer_questions"
+    assert event["answers"][0]["option_labels"] == ["Hourly"]
+    assert event["answers"][1]["text"] == "Python, Make, and Zapier"
+    assert model.calls[-1]["event"] == event
+    assert sent["messages"][-1]["content"].startswith("Great")
 
 
 def test_leaf_workspace_mutates_plan_only_after_explicit_approval(world):
@@ -1781,6 +2212,120 @@ def test_leaf_workspace_completed_leaf_can_reopen_or_return_to_shaping(world):
     assert goals.get(ids["task_a"])["status"] == "active"
 
 
+@pytest.mark.parametrize(("action", "overlap"), [
+    ("reopen", False), ("reshape", True),
+])
+def test_completed_leaf_reactivation_revalidates_horizon_and_overlap(
+        world, action, overlap):
+    cfg, goals, agents, _, ids = world
+    goals.update(ids["task_a"], status="completed")
+    if overlap:
+        goals.create("task", "Practice particles", parent_id=ids["sub_a"])
+        message = "same normalized title"
+    else:
+        goals.create("task", "Review vocabulary", parent_id=ids["sub_a"])
+        goals.create("task", "Practice listening", parent_id=ids["sub_a"])
+        message = "horizon"
+
+    with pytest.raises(ValueError, match=message):
+        if action == "reopen":
+            reopen_leaf_workspace(cfg, ids["task_a"])
+        else:
+            proposal = agents.add_leaf_workspace_proposal(
+                ids["task_a"], "reshape", {"reason": "Try a new shape."}, "Reshape")
+            decide_leaf_workspace_proposal(
+                cfg, ids["task_a"], proposal["id"], "approve")
+
+    assert goals.get(ids["task_a"])["status"] == "completed"
+    pending = agents.leaf_workspace_summary(ids["task_a"])["pending_proposal"]
+    assert pending is None
+    latest = agents.conn.execute(
+        "SELECT id FROM goal_leaf_workspace_proposal WHERE node_id=? ORDER BY id DESC LIMIT 1",
+        (ids["task_a"],)).fetchone()
+    resolved = agents.leaf_workspace_proposal(int(latest["id"]))
+    assert resolved["type"] == action and resolved["status"] == "rejected"
+
+
+def test_completion_is_one_adaptive_horizon_card_and_retires_standalone_growth(world):
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Publish a study guide", parent_id=ids["over_a"])
+    now_leaf = goals.create(
+        "task", "Collect examples", parent_id=project,
+        description="Produce three confirmed examples.")
+    provisional = goals.create(
+        "task", "Evaluate examples", parent_id=project,
+        description="Compare the examples and choose one.")
+    agents.ensure_agents()
+    standalone = agents.add_proposal(project, AgentProposal(
+        "create_child", project,
+        {"type": "task", "title": "Write an extra appendix"},
+        "A stale standalone Growth card"))
+    open_leaf_workspace(cfg, now_leaf, model=RecordingWorkspaceModel([
+        "Let’s collect the examples."]))
+    pending = send_leaf_workspace(
+        cfg, now_leaf, "The examples are ready.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "The collection is complete; here is the adaptive horizon for review.",
+            proposal={"type": "complete_leaf", "payload": {
+                "result": "Three examples are ready.",
+                "what_happened": "We confirmed examples A, B, and C.",
+                "lesson": "Concrete examples make evaluation easier.",
+                "adaptive_horizon": {
+                    "provisional": {
+                        "leaf_id": provisional,
+                        "title": "Evaluate and choose one example",
+                        "description": "Score A, B, and C and choose one.",
+                    },
+                    "next_provisional": {
+                        "title": "Publish the first study guide",
+                        "description": "Publish the chosen example as a small guide.",
+                    },
+                    "project_continues": True,
+                },
+            }, "rationale": "NOW is complete and the next horizon is ready."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+
+    assert goals.get(now_leaf)["status"] == "active"
+    assert agents.get_proposal(standalone)["status"] == "open"
+    completed = decide_leaf_workspace_proposal(
+        cfg, now_leaf, proposal["id"], "approve")
+
+    open_rows = goals.conn.execute(
+        "SELECT id FROM goal_node WHERE parent_id=? AND node_type='task' "
+        "AND status IN ('active','paused') ORDER BY position,id", (project,)).fetchall()
+    open_ids = [int(row["id"]) for row in open_rows]
+    assert goals.get(now_leaf)["status"] == "completed"
+    assert open_ids[0] == provisional and len(open_ids) == 2
+    assert goals.get(provisional)["title"] == "Evaluate and choose one example"
+    assert goals.get(open_ids[1])["title"] == "Publish the first study guide"
+    assert completed["completion_replan"]["open_leaf_ids"] == open_ids
+    assert agents.get_proposal(standalone)["status"] == "stale"
+
+
+def test_stale_adaptive_completion_applies_nothing_and_retires_its_card(world):
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Publish notes", parent_id=ids["over_a"])
+    now_leaf = goals.create("task", "Draft notes", parent_id=project)
+    provisional = goals.create("task", "Publish notes", parent_id=project)
+    open_leaf_workspace(cfg, now_leaf, model=RecordingWorkspaceModel(["Let’s draft."]))
+    pending = send_leaf_workspace(
+        cfg, now_leaf, "The draft is complete.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "The draft is ready for approval.", proposal={
+                "type": "complete_leaf", "payload": {
+                    "result": "Notes drafted.", "lesson": "A short draft was enough."},
+                "rationale": "Ready."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    goals.update(provisional, description="The user changed the next Leaf.")
+
+    with pytest.raises(ValueError, match="stale"):
+        decide_leaf_workspace_proposal(cfg, now_leaf, proposal["id"], "approve")
+
+    assert goals.get(now_leaf)["status"] == "active"
+    assert goals.outcomes(now_leaf) == []
+    assert agents.leaf_workspace_proposal(proposal["id"])["status"] == "rejected"
+
+
 def test_completed_leaf_hands_approved_work_to_next_project_leaf_without_raw_chat(world):
     cfg, goals, agents, _, ids = world
     area = goals.create("subgoal", "Language work", parent_id=ids["over_a"])
@@ -1791,10 +2336,12 @@ def test_completed_leaf_hands_approved_work_to_next_project_leaf_without_raw_cha
         "task", "Collect examples", parent_id=project, priority="high",
         description="Produce three confirmed examples.")
     destination = goals.create(
-        "task", "Evaluate examples", parent_id=project, priority="high",
+        "task", "Evaluate examples", parent_id=project, priority="low",
+        due_date="2026-12-01",
         description="Compare the confirmed examples and select one.")
     unrelated = goals.create(
-        "task", "Design the cover", parent_id=project, priority="low",
+        "task", "Design the cover", parent_id=project, priority="high",
+        due_date="2026-01-01",
         description="Design a cover after the content is selected.")
     agents.ensure_agents()
     open_leaf_workspace(cfg, source, model=RecordingWorkspaceModel([

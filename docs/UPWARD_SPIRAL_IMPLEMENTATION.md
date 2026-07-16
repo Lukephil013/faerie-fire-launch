@@ -87,6 +87,30 @@ Descendant activity resets a quiet goal's 30-day relevance clock. Paused and
 archived nodes stay quiet. "This goal is no longer mine" is treated as a
 successful clarification, not a failure.
 
+### Adaptive two-Leaf horizon
+
+Every AI-managed project stores at most two direct open Leaves in canonical
+position order. Public execution labels are intentionally quieter: only a
+Project marked **Highest priority** or **Currently working** exposes its first
+Leaf as **NOW** and its second as **TENTATIVE NEXT**. Each Project signal is a
+global singleton. Unattended Projects, Areas, Stages, and Roots show no Leaf
+execution label. Priority and due date never reorder the backend sequence.
+Completed and archived Leaves remain as history without consuming either slot.
+
+Command Center, GoalAI, and plain-language intake share one validator. Existing
+and pending Leaves reserve the same capacity; normalized-title duplicates and
+same-project semantic overlap at 0.55 or higher are rejected. A project replan
+owns all covered Growth changes in its proposal batch, includes every live
+direct Leaf exactly once, and rechecks project/Leaf versions at approval. Its
+optional project framing update, Leaf edits, archive snapshots, origins, and
+ordering commit atomically. If another approval or edit made the card stale,
+the card is retired and nothing is applied.
+
+Completing NOW does not grow a predicted queue. Faerie proposes one replan that
+marks the completed Leaf, promotes or rewrites TENTATIVE NEXT, and—only if the
+project continues—adds one new tentative guess. The tree changes only after
+the user approves that single card.
+
 ## The six phases
 
 | Phase | Implemented behavior | Main safeguard |

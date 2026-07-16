@@ -7,13 +7,14 @@ task automatically.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 from . import crypto
 from .db import connect as db_connect
@@ -24,6 +25,7 @@ from .lang import T
 NODE_TYPES = {"umbrella", "overgoal", "subgoal", "task"}
 NODE_STATUSES = {"active", "paused", "completed", "archived"}
 PRIORITIES = {"low", "normal", "high"}
+PROJECT_SIGNAL_KINDS = {"highest_priority", "currently_working"}
 SESSION_STATUSES = {"active", "ready", "implemented", "abandoned"}
 
 STARTER_ROOTS = (
@@ -235,6 +237,14 @@ CREATE TABLE IF NOT EXISTS goal_semantic_role (
     FOREIGN KEY (goal_id) REFERENCES goal_node(id)
 );
 
+CREATE TABLE IF NOT EXISTS goal_project_signal (
+    kind TEXT PRIMARY KEY,
+    goal_id INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (kind IN ('highest_priority','currently_working')),
+    FOREIGN KEY (goal_id) REFERENCES goal_node(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS goal_archive_snapshot (
     archive_root_id INTEGER NOT NULL,
     goal_id INTEGER NOT NULL,
@@ -258,6 +268,23 @@ def _clean_date(value: str | None) -> str | None:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:60]
+
+
+def normalize_leaf_title(value: str) -> str:
+    """Return the stable title key used by AI Leaf-horizon checks."""
+    return " ".join(re.findall(r"[\w]+", str(value or "").casefold()))
+
+
+class LeafHorizonError(ValueError):
+    """A proposed AI Leaf would make a project's short horizon unsafe."""
+
+    def __init__(self, message: str, *, code: str,
+                 conflicting_leaf_id: int | None = None,
+                 similarity: float | None = None):
+        super().__init__(message)
+        self.code = str(code)
+        self.conflicting_leaf_id = conflicting_leaf_id
+        self.similarity = similarity
 
 
 def _derived_branch_role(title: str, description: str, *, parent_type: str,
@@ -436,6 +463,9 @@ class GoalStore:
             "VALUES (?,?,?,?,?) ON CONFLICT(goal_id) DO UPDATE SET role=excluded.role,"
             "rationale=excluded.rationale,source=excluded.source,updated_at=excluded.updated_at",
             (int(goal_id), role, crypto.enc(str(rationale or "")), str(source or "ai")[:24], _now()))
+        if role != "project":
+            self.conn.execute(
+                "DELETE FROM goal_project_signal WHERE goal_id=?", (int(goal_id),))
         self._mark_goal_ai_dirty(int(goal_id))
         if commit:
             self.conn.commit()
@@ -459,6 +489,70 @@ class GoalStore:
             parent_type=str(parent.get("type") if parent else ""),
             parent_role=str(parent_role or ""),
             has_branch_children=has_branch_children)
+
+    def project_signals(self) -> dict[str, int | None]:
+        """Return the two singleton Project-attention signals.
+
+        Stale rows are ignored rather than silently reclassifying a node. A
+        later explicit selection atomically replaces the singleton for that
+        signal kind.
+        """
+        result: dict[str, int | None] = {
+            "highest_priority": None,
+            "currently_working": None,
+        }
+        for row in self.conn.execute(
+                "SELECT kind,goal_id FROM goal_project_signal ORDER BY kind"):
+            kind = str(row["kind"])
+            node = self.get(int(row["goal_id"]))
+            if (kind in PROJECT_SIGNAL_KINDS and node
+                    and node.get("status") == "active"
+                    and node.get("type") == "subgoal"
+                    and self.resolved_semantic_role(int(node["id"])) == "project"):
+                result[kind] = int(node["id"])
+        return result
+
+    def project_focus(self, goal_id: int) -> dict[str, bool]:
+        signals = self.project_signals()
+        goal_id = int(goal_id)
+        return {
+            "highest_priority": signals["highest_priority"] == goal_id,
+            "currently_working": signals["currently_working"] == goal_id,
+        }
+
+    def set_project_signal(self, goal_id: int, kind: str,
+                           enabled: bool = True) -> dict[str, int | None]:
+        """Set or clear one global Project-only attention signal."""
+        goal_id = int(goal_id)
+        kind = str(kind or "").strip().lower()
+        if kind not in PROJECT_SIGNAL_KINDS:
+            raise ValueError("unknown Project signal")
+        node = self.get(goal_id)
+        if (not node or node.get("status") != "active"
+                or node.get("type") != "subgoal"
+                or self.resolved_semantic_role(goal_id) != "project"):
+            raise ValueError("only an active Project can carry this signal")
+        if not self.semantic_role(goal_id):
+            self._set_semantic_role(
+                goal_id, "project",
+                rationale="User selected this Project for explicit attention.",
+                source="user", commit=False)
+        previous = self.conn.execute(
+            "SELECT goal_id FROM goal_project_signal WHERE kind=?", (kind,)).fetchone()
+        if enabled:
+            self.conn.execute(
+                "INSERT INTO goal_project_signal (kind,goal_id,updated_at) VALUES (?,?,?) "
+                "ON CONFLICT(kind) DO UPDATE SET goal_id=excluded.goal_id,"
+                "updated_at=excluded.updated_at",
+                (kind, goal_id, _now()))
+        else:
+            self.conn.execute(
+                "DELETE FROM goal_project_signal WHERE kind=? AND goal_id=?",
+                (kind, goal_id))
+        self._mark_goal_ai_dirty(
+            goal_id, int(previous["goal_id"]) if previous else None)
+        self.conn.commit()
+        return self.project_signals()
 
     def _validate_semantic_placement(self, node_type: str, semantic_role: str | None,
                                      parent_id: int, *,
@@ -501,7 +595,7 @@ class GoalStore:
 
     def set_origin(self, goal_id: int, *, source_kind: str, source_id: str | int | None = None,
                    source_proposal_id: int | None = None, source_label: str = "",
-                   summary: str = "", detail: str = "") -> None:
+                   summary: str = "", detail: str = "", _commit: bool = True) -> None:
         if not self.conn.execute("SELECT 1 FROM goal_node WHERE id=?", (int(goal_id),)).fetchone():
             raise ValueError("goal not found")
         now = _now()
@@ -513,7 +607,8 @@ class GoalStore:
              None if source_proposal_id is None else int(source_proposal_id),
              crypto.enc(source_label), crypto.enc(summary), crypto.enc(detail), now))
         self._mark_goal_ai_dirty(int(goal_id))
-        self.conn.commit()
+        if _commit:
+            self.conn.commit()
 
     def _goal_path_titles(self, goal_id: int) -> list[str]:
         titles: list[str] = []
@@ -539,13 +634,26 @@ class GoalStore:
             "LIMIT ?", (int(max_nodes),)).fetchall()
         type_label = {"umbrella": "Soul", "overgoal": "Root",
                       "subgoal": "Branch", "task": "Leaf"}
-        return [{
-            "id": int(r["id"]),
-            "type": type_label.get(r["node_type"], r["node_type"]),
-            "title": crypto.dec(r["title"]) or "",
-            "path": " › ".join(self._goal_path_titles(int(r["id"]))),
-            "status": r["status"],
-        } for r in rows]
+        signals = self.project_signals()
+        catalog = []
+        for row in rows:
+            goal_id = int(row["id"])
+            semantic_role = (self.resolved_semantic_role(goal_id)
+                             if row["node_type"] == "subgoal" else None)
+            project_focus = ({
+                "highest_priority": signals["highest_priority"] == goal_id,
+                "currently_working": signals["currently_working"] == goal_id,
+            } if semantic_role == "project" else None)
+            catalog.append({
+                "id": goal_id,
+                "type": type_label.get(row["node_type"], row["node_type"]),
+                "semantic_role": semantic_role,
+                "project_focus": project_focus,
+                "title": crypto.dec(row["title"]) or "",
+                "path": " › ".join(self._goal_path_titles(goal_id)),
+                "status": row["status"],
+            })
+        return catalog
 
     def leaf_horizon(self, *, recent_days: int = 7, max_projects: int = 6,
                      max_leaves: int = 4, max_chars: int = 220) -> list[dict]:
@@ -588,6 +696,13 @@ class GoalStore:
             parent = self.get(parent_id)
             if not parent or parent.get("status") == "archived":
                 continue
+            semantic_role = (self.resolved_semantic_role(parent_id)
+                             if parent.get("type") == "subgoal" else None)
+            project_focus = (self.project_focus(parent_id)
+                             if semantic_role == "project" else {
+                                 "highest_priority": False,
+                                 "currently_working": False,
+                             })
             group["recent_done"].sort(key=lambda l: l.get("completed_at") or "",
                                       reverse=True)
             projects.append({
@@ -595,11 +710,17 @@ class GoalStore:
                 "project_title": parent["title"],
                 "path": " › ".join(self._goal_path_titles(parent_id)),
                 "project_status": parent.get("status"),
+                "semantic_role": semantic_role,
+                "project_focus": project_focus,
+                "attention_active": bool(
+                    project_focus["highest_priority"]
+                    or project_focus["currently_working"]),
                 "open": group["open"][:max_leaves],
                 "recent_done": group["recent_done"][:max_leaves],
             })
         # Projects with in-flight work first, then those needing a next step.
-        projects.sort(key=lambda p: (not p["open"], not p["recent_done"],
+        projects.sort(key=lambda p: (not p["attention_active"],
+                                     not p["open"], not p["recent_done"],
                                      p["project_id"]))
         return projects[:max_projects]
 
@@ -609,6 +730,838 @@ class GoalStore:
             "SELECT COUNT(*) FROM goal_node WHERE parent_id=? "
             "AND node_type='task' AND status IN ('active','paused')",
             (int(parent_id),)).fetchone()[0])
+
+    def _pending_ref_exclusions(self, exclude_refs) -> set[str]:
+        if exclude_refs is None:
+            return set()
+        if isinstance(exclude_refs, (str, bytes, Mapping)):
+            values = [exclude_refs]
+        else:
+            try:
+                values = list(exclude_refs)
+            except TypeError:
+                values = [exclude_refs]
+        excluded: set[str] = set()
+        for raw in values:
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="ignore")
+            if isinstance(raw, str):
+                value = raw.strip().lower()
+                if value:
+                    excluded.add(value)
+                continue
+            if isinstance(raw, Mapping):
+                kind = str(raw.get("kind") or raw.get("source_kind") or
+                           raw.get("source") or "").strip().lower()
+                source_id = raw.get("id", raw.get("source_id"))
+                suffix = raw.get("position", raw.get("step"))
+                if kind and source_id not in (None, ""):
+                    value = f"{kind}:{source_id}"
+                    if suffix not in (None, ""):
+                        value += f":{suffix}"
+                    excluded.add(value.lower())
+                continue
+            if isinstance(raw, (tuple, list)) and len(raw) >= 2:
+                value = ":".join(str(part) for part in raw if part not in (None, ""))
+                if value:
+                    excluded.add(value.lower())
+        return excluded
+
+    @staticmethod
+    def _pending_ref_is_excluded(excluded: set[str], *refs: str) -> bool:
+        for ref in refs:
+            value = str(ref or "").strip().lower()
+            if not value:
+                continue
+            if value in excluded:
+                return True
+            # Excluding a whole source (for example planning:12) also excludes
+            # its individual steps (planning:12:0, planning:12:1, ...).
+            if any(value.startswith(item + ":") for item in excluded):
+                return True
+        return False
+
+    def _decode_pending_payload(self, value) -> dict:
+        try:
+            decoded = crypto.dec(value) or "{}"
+            payload = json.loads(decoded)
+        except (TypeError, ValueError, json.JSONDecodeError, crypto.EncryptionError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _pending_leaf_operations(self, parent_id: int, *, exclude_refs=None) -> list[dict]:
+        """Internal cross-surface scan; source metadata never leaves this method."""
+        parent_id = int(parent_id)
+        excluded = self._pending_ref_exclusions(exclude_refs)
+        tables = {str(row["name"]) for row in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        operations: list[dict] = []
+
+        def add(source: str, row_id, reservation: Mapping[str, Any], *,
+                refs: Iterable[str] = (), **metadata) -> None:
+            all_refs = [f"{source}:{row_id}", *[str(ref) for ref in refs]]
+            if self._pending_ref_is_excluded(excluded, *all_refs):
+                return
+            try:
+                reservation_parent = int(reservation.get("parent_id"))
+            except (TypeError, ValueError):
+                return
+            if reservation_parent != parent_id:
+                return
+            status = str(reservation.get("status") or "active").strip().lower()
+            replaces = reservation.get("replaces_leaf_id")
+            try:
+                replaces = int(replaces) if replaces not in (None, "") else None
+            except (TypeError, ValueError):
+                replaces = None
+            title = str(reservation.get("title") or "").strip()
+            if status in {"active", "paused"} and not normalize_leaf_title(title):
+                return
+            operations.append({
+                "source": source, "row_id": row_id,
+                "refs": tuple(all_refs),
+                "reservation": {
+                    "parent_id": parent_id,
+                    "title": title,
+                    "description": str(reservation.get("description") or ""),
+                    "status": status,
+                    "replaces_leaf_id": replaces,
+                },
+                **metadata,
+            })
+
+        def node(goal_id) -> dict | None:
+            try:
+                return self.get(int(goal_id))
+            except (TypeError, ValueError):
+                return None
+
+        def normalized_type(value, *, parent_type: str = "") -> str:
+            raw = str(value or "").strip().lower()
+            mapped = {"root": "overgoal", "branch": "subgoal", "leaf": "task"}.get(raw, raw)
+            if mapped in {"overgoal", "subgoal", "task"}:
+                return mapped
+            return "overgoal" if parent_type == "umbrella" else "task"
+
+        # GoalAI proposals. Replacement mappings model the proposed final
+        # Leaf, so a rename/update does not consume a second horizon slot.
+        if "goal_agent_proposal" in tables:
+            rows = self.conn.execute(
+                "SELECT id,target_node_id,proposal_type,payload_json FROM "
+                "goal_agent_proposal WHERE status='open' ORDER BY id").fetchall()
+            for row in rows:
+                proposal_id = int(row["id"])
+                payload = self._decode_pending_payload(row["payload_json"])
+                kind = str(row["proposal_type"] or "")
+                target = node(row["target_node_id"])
+                if kind == "create_child" and target:
+                    child_type = normalized_type(payload.get("type"), parent_type=target["type"])
+                    if child_type == "task":
+                        add("goal_ai", proposal_id, {
+                            "parent_id": target["id"], "title": payload.get("title"),
+                            "description": payload.get("description"), "status": "active",
+                        })
+                    continue
+                if kind in {"update_fields", "pause", "archive"} and target and target["type"] == "task":
+                    add("goal_ai", proposal_id, {
+                        "parent_id": target.get("parent_id"),
+                        "title": payload.get("title") or target.get("title"),
+                        "description": payload.get("description") or target.get("description"),
+                        "status": ("paused" if kind == "pause" else
+                                   "archived" if kind == "archive" else target.get("status")),
+                        "replaces_leaf_id": target["id"],
+                    })
+                    continue
+                changes = ([payload] if kind == "restructure_node" else
+                           list(payload.get("changes") or []) if kind == "restructure_tree" else [])
+                for change_index, change in enumerate(changes):
+                    if not isinstance(change, Mapping):
+                        continue
+                    target_leaf = target if kind == "restructure_node" else node(change.get("goal_id"))
+                    if not target_leaf or target_leaf["type"] != "task":
+                        continue
+                    old_parent = int(target_leaf.get("parent_id") or 0)
+                    try:
+                        new_parent = int(change.get("parent_id"))
+                    except (TypeError, ValueError):
+                        new_parent = old_parent
+                    new_type = normalized_type(change.get("new_type") or target_leaf["type"])
+                    step_refs = [f"goal_ai:{proposal_id}:{change_index}"]
+                    if old_parent != new_parent or new_type != "task":
+                        add("goal_ai", proposal_id, {
+                            "parent_id": old_parent, "status": "removed",
+                            "replaces_leaf_id": target_leaf["id"],
+                        }, refs=step_refs)
+                    if new_type == "task":
+                        add("goal_ai", proposal_id, {
+                            "parent_id": new_parent, "title": target_leaf["title"],
+                            "description": target_leaf["description"],
+                            "status": target_leaf["status"],
+                            "replaces_leaf_id": target_leaf["id"],
+                        }, refs=step_refs)
+
+        # Companion cards persist independently in every chat.
+        if "companion_pending_proposal" in tables:
+            rows = self.conn.execute(
+                "SELECT id,chat_id,position,payload FROM companion_pending_proposal "
+                "ORDER BY chat_id,position,id").fetchall()
+            for row in rows:
+                row_id = int(row["id"])
+                chat_id = str(row["chat_id"])
+                position = int(row["position"])
+                refs = [f"companion:{chat_id}:{position}", f"companion:{chat_id}"]
+                payload = self._decode_pending_payload(row["payload"])
+                action = str(payload.get("action") or "").strip().lower()
+                target = node(payload.get("target_node_id"))
+                if action == "create_leaf" and target:
+                    add("companion", row_id, {
+                        "parent_id": target["id"], "title": payload.get("label"),
+                        "description": payload.get("directive"), "status": "active",
+                    }, refs=refs, chat_id=chat_id)
+                    continue
+                if action == "replan_project" and target:
+                    for step_index, step in enumerate(list(payload.get("steps") or [])):
+                        if not isinstance(step, Mapping):
+                            continue
+                        op = str(step.get("op") or "").lower()
+                        step_refs = [*refs, f"companion:{chat_id}:{position}:{step_index}"]
+                        if op == "create":
+                            add("companion", row_id, {
+                                "parent_id": target["id"], "title": step.get("title"),
+                                "description": step.get("description"), "status": "active",
+                            }, refs=step_refs, chat_id=chat_id)
+                            continue
+                        target_leaf = node(step.get("leaf_id"))
+                        if not target_leaf or target_leaf["type"] != "task":
+                            continue
+                        final_title = (step.get("new_title") if op == "rename"
+                                       else target_leaf.get("title"))
+                        final_description = (step.get("description") if op in {"rename", "update"}
+                                             and step.get("description") else
+                                             target_leaf.get("description"))
+                        final_status = ("archived" if op == "archive" else
+                                        "completed" if op == "complete" else
+                                        target_leaf.get("status"))
+                        add("companion", row_id, {
+                            "parent_id": target["id"], "title": final_title,
+                            "description": final_description, "status": final_status,
+                            "replaces_leaf_id": target_leaf["id"],
+                        }, refs=step_refs, chat_id=chat_id)
+                    continue
+                if not target or target["type"] != "task" or not target.get("parent_id"):
+                    continue
+                old_parent = int(target["parent_id"])
+                if action == "rename_node":
+                    add("companion", row_id, {
+                        "parent_id": old_parent, "title": payload.get("new_title"),
+                        "description": target.get("description"), "status": target.get("status"),
+                        "replaces_leaf_id": target["id"],
+                    }, refs=refs, chat_id=chat_id)
+                elif action == "delete_node":
+                    add("companion", row_id, {
+                        "parent_id": old_parent, "status": "removed",
+                        "replaces_leaf_id": target["id"],
+                    }, refs=refs, chat_id=chat_id)
+                elif action == "move_node":
+                    new_parent_node = node(payload.get("new_parent_id"))
+                    if not new_parent_node:
+                        continue
+                    new_parent = int(new_parent_node["id"])
+                    if new_parent != old_parent:
+                        add("companion", row_id, {
+                            "parent_id": old_parent, "status": "removed",
+                            "replaces_leaf_id": target["id"],
+                        }, refs=refs, chat_id=chat_id)
+                    add("companion", row_id, {
+                        "parent_id": new_parent, "title": target.get("title"),
+                        "description": target.get("description"), "status": target.get("status"),
+                        "replaces_leaf_id": target["id"] if new_parent == old_parent else None,
+                    }, refs=refs, chat_id=chat_id)
+
+        # GoalAI gardening cards can rewrite one Leaf into a different final
+        # identity, split it into siblings, or merge sibling Leaves. Model only
+        # their final open/removed effects; rationale and evidence stay private.
+        if "goal_gardening_proposal" in tables:
+            rows = self.conn.execute(
+                "SELECT id,target_node_id,proposal_type,payload_json FROM "
+                "goal_gardening_proposal WHERE status IN ('open','refined') ORDER BY id"
+            ).fetchall()
+            for row in rows:
+                proposal_id = int(row["id"])
+                target = node(row["target_node_id"])
+                if not target or target["type"] != "task" or not target.get("parent_id"):
+                    continue
+                payload = self._decode_pending_payload(row["payload_json"])
+                kind = str(row["proposal_type"] or "")
+                parent = int(target["parent_id"])
+                if kind == "rewrite":
+                    add("gardening", proposal_id, {
+                        "parent_id": parent, "title": payload.get("title") or target["title"],
+                        "description": payload.get("description") or target["description"],
+                        "status": target["status"], "replaces_leaf_id": target["id"],
+                    })
+                elif kind == "split":
+                    parts = [part for part in list(payload.get("parts") or [])
+                             if isinstance(part, Mapping) and
+                             normalize_leaf_title(str(part.get("title") or ""))]
+                    if not parts:
+                        continue
+                    add("gardening", proposal_id, {
+                        "parent_id": parent, "title": parts[0].get("title"),
+                        "description": parts[0].get("description"),
+                        "status": target["status"], "replaces_leaf_id": target["id"],
+                    }, refs=[f"gardening:{proposal_id}:0"])
+                    for index, part in enumerate(parts[1:], 1):
+                        add("gardening", proposal_id, {
+                            "parent_id": parent, "title": part.get("title"),
+                            "description": part.get("description"), "status": "active",
+                        }, refs=[f"gardening:{proposal_id}:{index}"])
+                elif kind == "merge":
+                    add("gardening", proposal_id, {
+                        "parent_id": parent, "title": payload.get("title") or target["title"],
+                        "description": payload.get("description") or target["description"],
+                        "status": target["status"], "replaces_leaf_id": target["id"],
+                    })
+                    for source_id in list(payload.get("source_node_ids") or [])[:6]:
+                        source = node(source_id)
+                        if source and source["type"] == "task" and source.get("parent_id") == parent:
+                            add("gardening", proposal_id, {
+                                "parent_id": parent, "status": "removed",
+                                "replaces_leaf_id": source["id"],
+                            })
+                elif kind in {"pause", "archive"}:
+                    add("gardening", proposal_id, {
+                        "parent_id": parent, "title": target["title"],
+                        "description": target["description"],
+                        "status": "paused" if kind == "pause" else "archived",
+                        "replaces_leaf_id": target["id"],
+                    })
+
+        if "goal_leaf_workspace_proposal" in tables:
+            rows = self.conn.execute(
+                "SELECT id,node_id,proposal_type,payload_json FROM "
+                "goal_leaf_workspace_proposal WHERE status='open' ORDER BY id"
+            ).fetchall()
+            for row in rows:
+                proposal_id = int(row["id"])
+                target = node(row["node_id"])
+                if not target or target["type"] != "task" or not target.get("parent_id"):
+                    continue
+                payload = self._decode_pending_payload(row["payload_json"])
+                kind = str(row["proposal_type"] or "")
+                workspace_action = str(payload.get("_workspace_action") or "")
+                if kind == "complete_leaf":
+                    final_status = "completed"
+                elif workspace_action in {"reshape", "reopen"}:
+                    final_status = "active"
+                else:
+                    continue
+                add("leaf_workspace", proposal_id, {
+                    "parent_id": target["parent_id"], "title": target["title"],
+                    "description": target["description"], "status": final_status,
+                    "replaces_leaf_id": target["id"],
+                })
+
+        if "curiosity_classification_proposal" in tables:
+            rows = self.conn.execute(
+                "SELECT id,payload_json FROM curiosity_classification_proposal "
+                "WHERE status='open' AND proposal_type='create_leaf' ORDER BY id").fetchall()
+            for row in rows:
+                proposal_id = int(row["id"])
+                envelope = self._decode_pending_payload(row["payload_json"])
+                payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else envelope
+                add("curiosity", proposal_id, {
+                    "parent_id": payload.get("parent_id"), "title": payload.get("title"),
+                    "description": payload.get("description"), "status": "active",
+                })
+
+        # A planning session can reserve only a direct child of its persisted
+        # target. Descendants live under not-yet-created parents and are checked
+        # as an in-draft sibling group before commit.
+        if "goal_plan_session" in tables:
+            rows = self.conn.execute(
+                "SELECT id,target_parent_id,draft_json FROM goal_plan_session "
+                "WHERE status IN ('active','ready') ORDER BY id").fetchall()
+            for row in rows:
+                session_id = int(row["id"])
+                draft = self._decode_pending_payload(row["draft_json"])
+                nodes = list(draft.get("nodes") or [])
+                if not nodes or not isinstance(nodes[0], Mapping):
+                    continue
+                raw = nodes[0]
+                target = node(row["target_parent_id"])
+                children = list(raw.get("children") or [])
+                if (not target or target["type"] == "umbrella"
+                        or normalized_type(raw.get("type"), parent_type=target["type"]) != "task"
+                        or children):
+                    continue
+                add("planning", session_id, {
+                    "parent_id": target["id"], "title": raw.get("title"),
+                    "description": raw.get("description"), "status": "active",
+                }, refs=[f"planning:{session_id}:0"], session_id=session_id)
+        return operations
+
+    def pending_leaf_reservations(self, parent_id: int, *, exclude_refs=None) -> list[dict]:
+        """Return privacy-minimal pending Leaf effects across all proposal surfaces."""
+        return [dict(item["reservation"])
+                for item in self._pending_leaf_operations(
+                    int(parent_id), exclude_refs=exclude_refs)]
+
+    def retire_pending_leaf_operations(self, parent_id: int, *, exclude_refs=None) -> dict:
+        """Retire cross-surface Leaf cards invalidated by an approved replan.
+
+        The caller must exclude the card currently being approved when it is
+        still persisted. The result contains counts only, never proposal text.
+        """
+        operations = self._pending_leaf_operations(
+            int(parent_id), exclude_refs=exclude_refs)
+        sources: dict[str, set] = {name: set() for name in (
+            "goal_ai", "companion", "gardening", "leaf_workspace",
+            "curiosity", "planning")}
+        chats: set[str] = set()
+        for item in operations:
+            sources[item["source"]].add(item["row_id"])
+            if item.get("chat_id"):
+                chats.add(str(item["chat_id"]))
+        now = _now()
+        savepoint = "faerie_retire_leaf_operations"
+        self.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            if sources["goal_ai"]:
+                ids = sorted(int(value) for value in sources["goal_ai"])
+                self.conn.execute(
+                    f"UPDATE goal_agent_proposal SET status='stale',resolved_at=? "
+                    f"WHERE status='open' AND id IN ({','.join('?' for _ in ids)})",
+                    [now, *ids])
+            if sources["curiosity"]:
+                ids = sorted(int(value) for value in sources["curiosity"])
+                self.conn.execute(
+                    f"UPDATE curiosity_classification_proposal SET status='dismissed',resolved_at=? "
+                    f"WHERE status='open' AND id IN ({','.join('?' for _ in ids)})",
+                    [now, *ids])
+            if sources["gardening"]:
+                ids = sorted(int(value) for value in sources["gardening"])
+                self.conn.execute(
+                    f"UPDATE goal_gardening_proposal SET status='stale',resolved_at=? "
+                    f"WHERE status IN ('open','refined') AND id IN "
+                    f"({','.join('?' for _ in ids)})", [now, *ids])
+            if sources["leaf_workspace"]:
+                ids = sorted(int(value) for value in sources["leaf_workspace"])
+                self.conn.execute(
+                    f"UPDATE goal_leaf_workspace_proposal SET status='rejected',resolved_at=? "
+                    f"WHERE status='open' AND id IN "
+                    f"({','.join('?' for _ in ids)})", [now, *ids])
+            if sources["companion"]:
+                ids = sorted(int(value) for value in sources["companion"])
+                self.conn.execute(
+                    f"DELETE FROM companion_pending_proposal WHERE id IN "
+                    f"({','.join('?' for _ in ids)})", ids)
+                for chat_id in chats:
+                    rows = self.conn.execute(
+                        "SELECT id FROM companion_pending_proposal WHERE chat_id=? "
+                        "ORDER BY position,id", (chat_id,)).fetchall()
+                    for position, row in enumerate(rows):
+                        self.conn.execute(
+                            "UPDATE companion_pending_proposal SET position=? WHERE id=?",
+                            (position, int(row["id"])))
+            if sources["planning"]:
+                ids = sorted(int(value) for value in sources["planning"])
+                self.conn.execute(
+                    f"UPDATE goal_plan_session SET status='abandoned',updated_at=? "
+                    f"WHERE status IN ('active','ready') AND id IN "
+                    f"({','.join('?' for _ in ids)})", [now, *ids])
+                has_curiosity_items = self.conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='curiosity_item'").fetchone()
+                if has_curiosity_items:
+                    self.conn.execute(
+                        f"UPDATE curiosity_item SET implementation_session_id=NULL "
+                        f"WHERE implementation_session_id IN "
+                        f"({','.join('?' for _ in ids)})", ids)
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception:
+            self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        by_source = {name: len(values) for name, values in sources.items()}
+        return {"retired": sum(by_source.values()), "by_source": by_source}
+
+    def validate_leaf_candidate(
+            self, parent_id: int, title: str, *, description: str = "",
+            reservations: Iterable[Mapping[str, Any]] | None = None,
+            horizon: int = 2,
+            exclude_leaf_ids: Iterable[int] | None = None) -> dict:
+        """Validate one AI-proposed open Leaf against committed and staged work.
+
+        ``reservations`` are other not-yet-applied open Leaf candidates for the
+        same parent. Low-level ``create`` deliberately remains unrestricted for
+        imports, manual edits, and test setup; AI entry points call this method
+        while staging and call ``create_ai_leaf`` at approval time.
+        """
+        try:
+            parent_id = int(parent_id)
+            limit = min(2, int(horizon))
+        except (TypeError, ValueError):
+            raise LeafHorizonError(
+                "the Leaf needs a valid parent and horizon",
+                code="invalid_parent")
+        if limit < 1:
+            raise ValueError("Leaf horizon must be at least one")
+        parent = self.get(parent_id)
+        if (not parent or parent.get("status") == "archived"
+                or parent.get("type") not in {"overgoal", "subgoal"}):
+            raise LeafHorizonError(
+                "the Leaf parent is missing, archived, or cannot contain Leaves",
+                code="invalid_parent")
+        candidate_title = str(title or "").strip()
+        candidate_key = normalize_leaf_title(candidate_title)
+        if not candidate_key:
+            raise LeafHorizonError("Leaf title is required", code="invalid_title")
+        excluded: set[int] = set()
+        for value in exclude_leaf_ids or ():
+            try:
+                excluded.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        reserved: list[dict] = []
+        replacement_ids: set[int] = set()
+        for raw in reservations or ():
+            if not isinstance(raw, Mapping):
+                continue
+            raw_parent = raw.get("parent_id", raw.get("target_node_id"))
+            if raw_parent not in (None, ""):
+                try:
+                    if int(raw_parent) != parent_id:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            replaces = raw.get("replaces_leaf_id")
+            replacement_id = None
+            try:
+                if replaces not in (None, ""):
+                    replacement_id = int(replaces)
+                    replacement_ids.add(replacement_id)
+            except (TypeError, ValueError):
+                pass
+            if str(raw.get("status") or "active").lower() not in {"active", "paused"}:
+                continue
+            reserved_title = str(raw.get("title") or raw.get("label") or "").strip()
+            if not normalize_leaf_title(reserved_title):
+                continue
+            reserved.append({
+                "id": replacement_id,
+                "title": reserved_title,
+                "description": str(raw.get("description") or raw.get("directive") or ""),
+            })
+        excluded.update(replacement_ids)
+        rows = self.conn.execute(
+            "SELECT id,title,description FROM goal_node WHERE parent_id=? "
+            "AND node_type='task' AND status IN ('active','paused') "
+            "ORDER BY position,id", (parent_id,)).fetchall()
+        committed = [{
+            "id": int(row["id"]),
+            "title": crypto.dec(row["title"]) or "",
+            "description": crypto.dec(row["description"]) or "",
+        } for row in rows if int(row["id"]) not in excluded]
+        from .inference import concept_similarity
+        for other in [*committed, *reserved]:
+            other_title = str(other.get("title") or "")
+            if normalize_leaf_title(other_title) == candidate_key:
+                raise LeafHorizonError(
+                    "an open Leaf with the same normalized title already exists",
+                    code="duplicate_title",
+                    conflicting_leaf_id=other.get("id"))
+            similarity = float(concept_similarity(candidate_title, other_title))
+            if similarity >= 0.55:
+                raise LeafHorizonError(
+                    "the proposed Leaf strongly overlaps another open Leaf",
+                    code="semantic_overlap",
+                    conflicting_leaf_id=other.get("id"), similarity=similarity)
+        existing_count = len(committed)
+        reserved_count = len(reserved)
+        if existing_count + reserved_count + 1 > limit:
+            raise LeafHorizonError(
+                "the project's open Leaf horizon is already reserved",
+                code="horizon_full")
+        return {
+            "parent_id": parent_id,
+            "horizon": limit,
+            "committed_open": existing_count,
+            "reserved_open": reserved_count,
+            "open_after_create": existing_count + reserved_count + 1,
+        }
+
+    def replan_expected_versions(self, project_id: int) -> dict[str, str]:
+        """Version snapshot for one project and every direct live Leaf.
+
+        Replan cards persist this snapshot when staged. Approval compares it
+        inside the same savepoint as the apply so a newer edit can never be
+        overwritten by an older card.
+        """
+        project_id = int(project_id)
+        rows = self.conn.execute(
+            "SELECT id,parent_id,node_type,title,description,status,priority,due_date,"
+            "position,updated_at,completed_at FROM goal_node WHERE id=? OR "
+            "(parent_id=? AND node_type='task' AND status!='archived') "
+            "ORDER BY id", (project_id, project_id)).fetchall()
+        if not rows or not any(int(row["id"]) == project_id for row in rows):
+            raise ValueError("replan target not found")
+        columns = ("id", "parent_id", "node_type", "title", "description",
+                   "status", "priority", "due_date", "position", "updated_at",
+                   "completed_at")
+        return {
+            str(int(row["id"])): hashlib.sha256(
+                json.dumps([str(row[column] or "") for column in columns],
+                           ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            for row in rows
+        }
+
+    def validate_replan_project(
+            self, project_id: int, steps: Iterable[Mapping[str, Any]], *,
+            project_update: Mapping[str, Any] | None = None,
+            expected_versions: Mapping[str | int, str] | None = None,
+            horizon: int = 2) -> dict:
+        """Validate and normalize one complete direct-Leaf replan."""
+        try:
+            project_id = int(project_id)
+            limit = min(2, int(horizon))
+        except (TypeError, ValueError):
+            raise ValueError("replan needs a valid project and horizon")
+        if limit < 1:
+            raise ValueError("Leaf horizon must be at least one")
+        project = self.get(project_id)
+        if (not project or project.get("status") == "archived"
+                or project.get("type") not in {"overgoal", "subgoal"}):
+            raise ValueError("replan target must be an active Root or Branch")
+        update = dict(project_update or {})
+        unknown_update = set(update) - {"title", "description"}
+        if unknown_update:
+            raise ValueError("project_update supports only title and description")
+        if "title" in update:
+            update["title"] = str(update.get("title") or "").strip()
+            if not update["title"]:
+                raise ValueError("project_update title cannot be blank")
+        if "description" in update:
+            update["description"] = str(update.get("description") or "")
+
+        direct_rows = self.conn.execute(
+            "SELECT * FROM goal_node WHERE parent_id=? AND node_type='task' "
+            "AND status!='archived' ORDER BY position,id", (project_id,)).fetchall()
+        direct = {int(row["id"]): self._row(row) for row in direct_rows}
+        if expected_versions is not None:
+            expected = {str(key): str(value) for key, value in
+                        dict(expected_versions).items()}
+            current = self.replan_expected_versions(project_id)
+            if expected != current:
+                raise ValueError(
+                    "replan is stale because the project or one of its Leaves changed")
+        raw_steps = list(steps or ())
+        if not raw_steps:
+            raise ValueError("replan needs at least one Leaf operation")
+        allowed_ops = {"keep", "rename", "update", "archive", "complete", "create"}
+        seen_ids: set[int] = set()
+        normalized_steps: list[dict] = []
+        create_titles: list[str] = []
+        final_open: list[dict] = []
+        from .inference import concept_similarity
+
+        def reject_overlap(title_value: str, candidates: list[dict], *,
+                           duplicate_code: str = "duplicate_title") -> None:
+            key = normalize_leaf_title(title_value)
+            for candidate in candidates:
+                other_title = str(candidate.get("title") or "")
+                if normalize_leaf_title(other_title) == key:
+                    raise LeafHorizonError(
+                        "the replan contains duplicate open Leaf titles",
+                        code=duplicate_code,
+                        conflicting_leaf_id=candidate.get("id"))
+                score = float(concept_similarity(title_value, other_title))
+                if score >= 0.55:
+                    raise LeafHorizonError(
+                        "the replan contains strongly overlapping open Leaves",
+                        code="semantic_overlap",
+                        conflicting_leaf_id=candidate.get("id"), similarity=score)
+
+        for raw in raw_steps:
+            if not isinstance(raw, Mapping):
+                raise ValueError("every replan step must be an object")
+            op = str(raw.get("op") or "").strip().lower()
+            if op not in allowed_ops:
+                raise ValueError("replan contains an unsupported Leaf operation")
+            if op == "create":
+                title_value = str(raw.get("title") or "").strip()
+                if not normalize_leaf_title(title_value):
+                    raise ValueError("create steps need a Leaf title")
+                reject_overlap(title_value, [
+                    {"id": None, "title": value} for value in create_titles
+                ], duplicate_code="duplicate_create")
+                create_titles.append(title_value)
+                priority = str(raw.get("priority") or "normal").strip().lower()
+                if priority not in PRIORITIES:
+                    priority = "normal"
+                due_date = _clean_date(raw.get("due_date"))
+                normalized = {
+                    "op": "create", "title": title_value,
+                    "description": str(raw.get("description") or "").strip(),
+                    "priority": priority, "due_date": due_date,
+                }
+                normalized_steps.append(normalized)
+                final_open.append({"id": None, "title": title_value})
+                continue
+            try:
+                leaf_id = int(raw.get("leaf_id"))
+            except (TypeError, ValueError):
+                raise ValueError(f"{op} steps need a valid Leaf id")
+            if leaf_id in seen_ids:
+                raise ValueError("a Leaf can appear only once in a replan")
+            node = direct.get(leaf_id)
+            if not node:
+                referenced = self.get(leaf_id)
+                if referenced and referenced.get("type") == "task":
+                    raise ValueError("referenced Leaf does not belong to the target project")
+                raise ValueError("referenced Leaf is missing, archived, or not a Leaf")
+            seen_ids.add(leaf_id)
+            normalized = {"op": op, "leaf_id": leaf_id}
+            final_title = str(node.get("title") or "")
+            if op == "rename":
+                final_title = str(raw.get("new_title") or "").strip()
+                if not normalize_leaf_title(final_title):
+                    raise ValueError("rename steps need a new Leaf title")
+                normalized["new_title"] = final_title
+                if str(raw.get("description") or "").strip():
+                    normalized["description"] = str(raw.get("description") or "").strip()
+            elif op == "update":
+                description_value = str(raw.get("description") or "").strip()
+                if not description_value:
+                    raise ValueError("update steps need a Leaf description")
+                normalized["description"] = description_value
+            normalized_steps.append(normalized)
+            final_status = ("archived" if op == "archive" else
+                            "completed" if op == "complete" else node.get("status"))
+            if final_status in {"active", "paused"}:
+                final_open.append({"id": leaf_id, "title": final_title})
+
+        expected_ids = set(direct)
+        if seen_ids != expected_ids:
+            missing = sorted(expected_ids - seen_ids)
+            raise ValueError(
+                "every non-archived direct Leaf must appear exactly once"
+                + (f" (missing: {', '.join(map(str, missing))})" if missing else ""))
+        if len(final_open) > limit:
+            raise LeafHorizonError(
+                "the replan ends above the open Leaf horizon",
+                code="horizon_full")
+        checked: list[dict] = []
+        for candidate in final_open:
+            reject_overlap(str(candidate["title"]), checked)
+            checked.append(candidate)
+        return {
+            "project_id": project_id,
+            "project_update": update,
+            "steps": normalized_steps,
+            "final_open": final_open,
+            "horizon": limit,
+        }
+
+    def apply_replan_project(
+            self, project_id: int, steps: Iterable[Mapping[str, Any]], *,
+            project_update: Mapping[str, Any] | None = None,
+            expected_versions: Mapping[str | int, str] | None = None,
+            horizon: int = 2,
+            origin: Mapping[str, Any] | None = None) -> dict:
+        """Revalidate and apply a complete Leaf replan as one transaction."""
+        savepoint = "faerie_leaf_replan"
+        self.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            plan = self.validate_replan_project(
+                project_id, steps, project_update=project_update,
+                expected_versions=expected_versions, horizon=horizon)
+            project_id = int(plan["project_id"])
+            if plan["project_update"]:
+                self.update(project_id, _commit=False, **plan["project_update"])
+            ordered: list[int] = []
+            created: list[int] = []
+            counts = {name: 0 for name in (
+                "create", "rename", "update", "archive", "keep", "complete")}
+            origin_values = dict(origin or {})
+            for step in plan["steps"]:
+                op = step["op"]
+                if op == "create":
+                    new_id = self.create(
+                        "task", step["title"], parent_id=project_id,
+                        description=step.get("description", ""),
+                        priority=step.get("priority", "normal"),
+                        due_date=step.get("due_date"), _commit=False)
+                    if origin is not None:
+                        self.set_origin(
+                            new_id,
+                            source_kind=str(origin_values.get("source_kind") or "ai"),
+                            source_id=origin_values.get("source_id"),
+                            source_proposal_id=origin_values.get("source_proposal_id"),
+                            source_label=str(origin_values.get("source_label") or step["title"]),
+                            summary=str(origin_values.get("summary") or
+                                        step.get("description") or ""),
+                            detail=str(origin_values.get("detail") or ""),
+                            _commit=False)
+                    ordered.append(new_id)
+                    created.append(new_id)
+                    counts["create"] += 1
+                    continue
+                leaf_id = int(step["leaf_id"])
+                node = self.get(leaf_id)
+                if op == "archive":
+                    self.delete_subtree(leaf_id, _commit=False)
+                    counts["archive"] += 1
+                    continue
+                if op == "complete":
+                    if node and node.get("status") != "completed":
+                        self.update(leaf_id, status="completed", _commit=False)
+                        counts["complete"] += 1
+                    ordered.append(leaf_id)
+                    continue
+                changes: dict[str, Any] = {}
+                if op == "rename":
+                    if node and step.get("new_title") != node.get("title"):
+                        changes["title"] = step["new_title"]
+                    if step.get("description"):
+                        changes["description"] = step["description"]
+                elif op == "update":
+                    changes["description"] = step["description"]
+                if changes:
+                    self.update(leaf_id, _commit=False, **changes)
+                    counts[op] += 1
+                elif op == "keep":
+                    counts["keep"] += 1
+                ordered.append(leaf_id)
+
+            tail = [int(row["id"]) for row in self.conn.execute(
+                "SELECT id FROM goal_node WHERE parent_id=? "
+                + (f"AND id NOT IN ({','.join('?' for _ in ordered)}) " if ordered else "")
+                + "ORDER BY position,id",
+                ([project_id, *ordered] if ordered else [project_id])).fetchall()]
+            for position, node_id in enumerate([*ordered, *tail]):
+                self.conn.execute(
+                    "UPDATE goal_node SET position=?,updated_at=? WHERE id=?",
+                    (position, _now(), node_id))
+            self._mark_goal_ai_dirty(project_id, *ordered, *created)
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception:
+            self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        open_leaf_ids = [int(row["id"]) for row in self.conn.execute(
+            "SELECT id FROM goal_node WHERE parent_id=? AND node_type='task' "
+            "AND status IN ('active','paused') ORDER BY position,id",
+            (int(project_id),)).fetchall()]
+        return {
+            "project": self.get(int(project_id)),
+            "ordered_leaf_ids": ordered,
+            "ordered_leaf_count": len(ordered),
+            "open_leaf_ids": open_leaf_ids,
+            "created_leaf_ids": created,
+            "operation_counts": counts,
+        }
 
     def starter_root_catalog(self, language: str = "en") -> list[dict]:
         language = "ko" if str(language).lower().startswith("ko") else "en"
@@ -825,7 +1778,44 @@ class GoalStore:
             self.conn.commit()
         return int(cur.lastrowid)
 
-    def update(self, goal_id: int, **changes) -> dict:
+    def create_ai_leaf(
+            self, title: str, *, parent_id: int, description: str = "",
+            priority: str = "normal", due_date: str | None = None,
+            status: str = "active",
+            reservations: Iterable[Mapping[str, Any]] | None = None,
+            horizon: int = 2,
+            origin: Mapping[str, Any] | None = None) -> int:
+        """Atomically revalidate and create one approval-gated AI Leaf."""
+        if status not in {"active", "paused"}:
+            raise ValueError("AI-created horizon Leaves must be active or paused")
+        savepoint = "faerie_create_ai_leaf"
+        self.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            self.validate_leaf_candidate(
+                parent_id, title, description=description,
+                reservations=reservations, horizon=horizon)
+            new_id = self.create(
+                "task", title, parent_id=int(parent_id), description=description,
+                priority=priority, due_date=due_date, status=status, _commit=False)
+            if origin is not None:
+                values = dict(origin)
+                self.set_origin(
+                    new_id,
+                    source_kind=str(values.get("source_kind") or "ai"),
+                    source_id=values.get("source_id"),
+                    source_proposal_id=values.get("source_proposal_id"),
+                    source_label=str(values.get("source_label") or title),
+                    summary=str(values.get("summary") or description),
+                    detail=str(values.get("detail") or ""),
+                    _commit=False)
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return new_id
+        except Exception:
+            self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+
+    def update(self, goal_id: int, *, _commit: bool = True, **changes) -> dict:
         node = self.get(goal_id)
         if not node:
             raise ValueError("goal not found")
@@ -859,11 +1849,16 @@ class GoalStore:
         values.append(_now())
         values.append(int(goal_id))
         self.conn.execute(f"UPDATE goal_node SET {','.join(sql)} WHERE id=?", values)
+        if changes.get("status") not in (None, "active"):
+            self.conn.execute(
+                "DELETE FROM goal_project_signal WHERE goal_id=?", (int(goal_id),))
         self._mark_goal_ai_dirty(int(goal_id))
-        self.conn.commit()
+        if _commit:
+            self.conn.commit()
         return self.get(goal_id)  # type: ignore[return-value]
 
-    def move(self, goal_id: int, parent_id: int, position: int | None = None) -> None:
+    def move(self, goal_id: int, parent_id: int, position: int | None = None,
+             *, _commit: bool = True) -> None:
         node = self.get(goal_id)
         if not node or node["type"] == "umbrella":
             raise ValueError("goal cannot be moved")
@@ -887,7 +1882,8 @@ class GoalStore:
                 self.conn.execute("UPDATE goal_node SET position=? WHERE id=?",
                                   (index, sibling["id"]))
         self._mark_goal_ai_dirty(int(goal_id), old_parent, parent_id)
-        self.conn.commit()
+        if _commit:
+            self.conn.commit()
 
     def _subtree_ids(self, goal_id: int) -> list[int]:
         ids, pending = [int(goal_id)], [int(goal_id)]
@@ -1037,6 +2033,8 @@ class GoalStore:
             elif str(new_type) != "subgoal":
                 self.conn.execute(
                     "DELETE FROM goal_semantic_role WHERE goal_id=?", (int(goal_id),))
+                self.conn.execute(
+                    "DELETE FROM goal_project_signal WHERE goal_id=?", (int(goal_id),))
             new_siblings = [int(row["id"]) for row in self.conn.execute(
                 "SELECT id FROM goal_node WHERE parent_id=? AND id!=? ORDER BY position,id",
                 (new_parent, int(goal_id))).fetchall()]
@@ -1279,6 +2277,8 @@ class GoalStore:
                 if item["new_type"] != "subgoal":
                     self.conn.execute("DELETE FROM goal_semantic_role WHERE goal_id=?",
                                       (int(item["goal_id"]),))
+                    self.conn.execute("DELETE FROM goal_project_signal WHERE goal_id=?",
+                                      (int(item["goal_id"]),))
                 self.conn.execute(
                     "INSERT INTO goal_restructure_history "
                     "(goal_id,proposal_id,old_parent_id,new_parent_id,old_node_type,new_node_type,"
@@ -1309,7 +2309,7 @@ class GoalStore:
             raise
         return preview
 
-    def delete_subtree(self, goal_id: int) -> int:
+    def delete_subtree(self, goal_id: int, *, _commit: bool = True) -> int:
         """'Delete' a node and everything under it. Always a soft archive
         (status='archived'), never a hard row delete — reversible, and
         consistent with how catalog()/tree() already hide archived nodes.
@@ -1333,8 +2333,11 @@ class GoalStore:
             f"SELECT id,status FROM goal_node WHERE id IN ({','.join('?' for _ in ids)})",
             ids).fetchall()
         now = _now()
+        started = False
         try:
-            self.conn.execute("BEGIN IMMEDIATE")
+            if _commit and not self.conn.in_transaction:
+                self.conn.execute("BEGIN IMMEDIATE")
+                started = True
             self.conn.execute(
                 "DELETE FROM goal_archive_snapshot WHERE archive_root_id=?", (int(goal_id),))
             self.conn.executemany(
@@ -1344,10 +2347,15 @@ class GoalStore:
             self.conn.executemany(
                 "UPDATE goal_node SET status='archived',updated_at=? WHERE id=?",
                 [(now, node_id) for node_id in ids])
+            self.conn.execute(
+                f"DELETE FROM goal_project_signal WHERE goal_id IN "
+                f"({','.join('?' for _ in ids)})", ids)
             self._mark_goal_ai_dirty(*ids, node.get("parent_id"))
-            self.conn.commit()
+            if _commit:
+                self.conn.commit()
         except Exception:
-            self.conn.rollback()
+            if _commit and (started or self.conn.in_transaction):
+                self.conn.rollback()
             raise
         return len(ids)
 
@@ -1641,6 +2649,10 @@ class GoalStore:
             node["mastery"] = self.mastery(node["id"])
             node["semantic_role"] = None
             node["semantic_role_source"] = ""
+            node["project_focus"] = {
+                "highest_priority": False,
+                "currently_working": False,
+            }
         for row in self.conn.execute(
                 "SELECT goal_id,role,source FROM goal_semantic_role ORDER BY goal_id"):
             if row["goal_id"] in nodes:
@@ -1722,6 +2734,10 @@ class GoalStore:
         root = nodes.get(self.root_id)
         if root:
             assign_semantic_roles(root)
+            signals = self.project_signals()
+            for kind, goal_id in signals.items():
+                if goal_id in nodes:
+                    nodes[goal_id]["project_focus"][kind] = True
             inherit_curiosities(root, [])
             progress(root)
         return root or {}
@@ -1785,7 +2801,7 @@ class GoalStore:
         # Placement is an approval boundary, not model-authored draft content.
         # Preserve it when the planner replies or the user edits the JSON review.
         row = self.conn.execute(
-            "SELECT draft_json FROM goal_plan_session WHERE id=?",
+            "SELECT draft_json,target_parent_id FROM goal_plan_session WHERE id=?",
             (int(session_id),)).fetchone()
         if row:
             try:
@@ -1795,6 +2811,10 @@ class GoalStore:
             if existing.get("_placement"):
                 draft = dict(draft or {})
                 draft["_placement"] = existing["_placement"]
+        if ready and row:
+            self._validate_plan_draft_horizon(
+                int(session_id), int(row["target_parent_id"]), draft,
+                allow_incomplete=True)
         self.conn.execute(
             "UPDATE goal_plan_session SET draft_json=?,summary=COALESCE(?,summary),"
             "status=?,updated_at=? WHERE id=? AND status IN ('active','ready')",
@@ -1823,6 +2843,85 @@ class GoalStore:
             "messages": [{"role": m["role"], "content": crypto.dec(m["content"]),
                           "created_at": m["created_at"]} for m in messages],
         }
+
+    @staticmethod
+    def _draft_effective_node_type(raw: Mapping[str, Any], parent_type: str) -> str:
+        requested = str(raw.get("type") or "").strip().lower()
+        children = list(raw.get("children") or [])
+        if parent_type == "umbrella":
+            return "overgoal"
+        if requested == "task" and not children:
+            return "task"
+        if requested in {"subgoal", "task", "overgoal", "umbrella"} or children:
+            return "subgoal"
+        return "task"
+
+    def _validate_plan_draft_horizon(
+            self, session_id: int, target_parent_id: int,
+            draft: Mapping[str, Any], *, allow_incomplete: bool = False) -> None:
+        """Preflight every draft sibling group before any goal rows are written."""
+        target = self.get(int(target_parent_id))
+        if not target:
+            raise ValueError("planning target not found")
+        from .inference import concept_similarity
+
+        def validate_group(raw_nodes, parent_type: str, *, persisted_parent_id=None) -> None:
+            candidates: list[dict] = []
+            branches: list[tuple[Mapping[str, Any], str]] = []
+            for raw in list(raw_nodes or []):
+                if not isinstance(raw, Mapping):
+                    continue
+                node_type = self._draft_effective_node_type(raw, parent_type)
+                if node_type == "task":
+                    title = str(raw.get("title") or "").strip()
+                    if not normalize_leaf_title(title):
+                        if allow_incomplete:
+                            continue
+                        raise LeafHorizonError(
+                            "planning draft contains a Leaf without a title",
+                            code="invalid_title")
+                    candidates.append({
+                        "title": title,
+                        "description": str(raw.get("description") or ""),
+                        "status": "active",
+                    })
+                else:
+                    branches.append((raw, node_type))
+            if len(candidates) > 2:
+                raise LeafHorizonError(
+                    "planning draft exceeds the two-Leaf horizon",
+                    code="horizon_full")
+            checked: list[str] = []
+            for candidate in candidates:
+                key = normalize_leaf_title(candidate["title"])
+                for other in checked:
+                    if normalize_leaf_title(other) == key:
+                        raise LeafHorizonError(
+                            "planning draft contains duplicate Leaf titles",
+                            code="duplicate_title")
+                    score = float(concept_similarity(candidate["title"], other))
+                    if score >= 0.55:
+                        raise LeafHorizonError(
+                            "planning draft contains overlapping Leaves",
+                            code="semantic_overlap", similarity=score)
+                checked.append(candidate["title"])
+            if persisted_parent_id is not None:
+                reservations = self.pending_leaf_reservations(
+                    int(persisted_parent_id),
+                    exclude_refs={f"planning:{int(session_id)}"})
+                prior: list[dict] = []
+                for candidate in candidates:
+                    self.validate_leaf_candidate(
+                        int(persisted_parent_id), candidate["title"],
+                        description=candidate["description"],
+                        reservations=[*reservations, *prior], horizon=2)
+                    prior.append(candidate)
+            for raw, node_type in branches:
+                validate_group(raw.get("children") or [], node_type)
+
+        validate_group(
+            draft.get("nodes") or [], str(target.get("type") or ""),
+            persisted_parent_id=int(target_parent_id))
 
     def commit_plan(self, session_id: int) -> dict:
         session = self.plan_session(session_id)
@@ -1858,6 +2957,12 @@ class GoalStore:
                     first["description"] = root_description
                 nodes[0] = first
 
+        commit_draft = dict(session["draft"])
+        commit_draft["nodes"] = nodes
+        self._validate_plan_draft_horizon(
+            int(session_id), int(session["target_parent_id"]), commit_draft)
+        persisted_reservations: list[dict] = []
+
         def add(raw: dict, parent_id: int) -> int:
             # Model drafts are user-reviewed JSON, not schema-guaranteed: coerce
             # the type onto a valid placement instead of failing the whole commit
@@ -1876,18 +2981,41 @@ class GoalStore:
             priority = str(raw.get("priority") or "normal")
             if priority not in PRIORITIES:
                 priority = "normal"
-            new_id = self.create(
-                node_type, str(raw.get("title") or "").strip(), parent_id=parent_id,
-                description=str(raw.get("description") or ""),
-                notes=str(raw.get("notes") or ""),
-                priority=priority,
-                due_date=raw.get("due_date"), _commit=False)
+            title = str(raw.get("title") or "").strip()
+            description = str(raw.get("description") or "")
+            if node_type == "task":
+                new_id = self.create_ai_leaf(
+                    title, parent_id=parent_id, description=description,
+                    priority=priority, due_date=raw.get("due_date"), horizon=2,
+                    reservations=(persisted_reservations
+                                  if int(parent_id) == int(session["target_parent_id"])
+                                  else None),
+                    origin={"source_kind": "planning",
+                            "source_id": int(session_id),
+                            "source_label": title,
+                            "summary": description})
+                notes = str(raw.get("notes") or "")
+                if notes:
+                    self.update(new_id, notes=notes, _commit=False)
+            else:
+                new_id = self.create(
+                    node_type, title, parent_id=parent_id,
+                    description=description,
+                    notes=str(raw.get("notes") or ""), priority=priority,
+                    due_date=raw.get("due_date"), _commit=False)
             for child in children:
                 add(child, new_id)
             return new_id
 
         try:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
+            # Re-read pending cards after taking the write lock. The earlier
+            # preflight gives fast feedback; this one is the approval boundary.
+            self._validate_plan_draft_horizon(
+                int(session_id), int(session["target_parent_id"]), commit_draft)
+            persisted_reservations = self.pending_leaf_reservations(
+                int(session["target_parent_id"]),
+                exclude_refs={f"planning:{int(session_id)}"})
             created = add(nodes[0], session["target_parent_id"])
             now = _now()
             self.conn.execute(
@@ -2010,14 +3138,46 @@ def propagate_experiment_outcome(config, outcome_id: int) -> dict:
             agents = GoalAgentStore(config.memory_db_path)
             try:
                 title = outcome["next_adjustment"].splitlines()[0].strip()[:160]
-                next_proposal_id = agents.add_proposal(
-                    int(node["parent_id"]), AgentProposal(
-                        "create_child", int(node["parent_id"]),
-                        {"type": "task", "title": title,
-                         "description": (f"Proposed after outcome #{outcome['id']}: "
-                                         f"{observation}")[:1000],
-                         "outcome_id": outcome["id"]},
-                        f"The prior experiment suggested this adjustment: {title}"))
+                parent_id = int(node["parent_id"])
+                description = (f"Proposed after outcome #{outcome['id']}: "
+                               f"{observation}")[:1000]
+                limit = min(2, max(1, int(getattr(
+                    config, "goal_ai_leaf_horizon", 2))))
+                reservations = agents.leaf_reservations(parent_id)
+                try:
+                    goals.validate_leaf_candidate(
+                        parent_id, title, description=description,
+                        reservations=reservations, horizon=limit)
+                    next_proposal_id = agents.add_proposal(
+                        parent_id, AgentProposal(
+                            "create_child", parent_id,
+                            {"type": "task", "title": title,
+                             "description": description,
+                             "outcome_id": outcome["id"]},
+                            f"The prior experiment suggested this adjustment: {title}"),
+                        goals=goals, leaf_horizon=limit)
+                except LeafHorizonError as horizon_error:
+                    # The next adjustment should adapt the horizon, not clone
+                    # an overlapping Leaf or silently build a third step. If
+                    # it overlaps, revise that exact Leaf; if capacity is full,
+                    # revise the furthest (PROVISIONAL) open Leaf.
+                    replacement_id = horizon_error.conflicting_leaf_id
+                    if replacement_id is None and horizon_error.code == "horizon_full":
+                        open_rows = goals.conn.execute(
+                            "SELECT id FROM goal_node WHERE parent_id=? "
+                            "AND node_type='task' AND status IN ('active','paused') "
+                            "ORDER BY position,id", (parent_id,)).fetchall()
+                        if open_rows:
+                            replacement_id = int(open_rows[-1]["id"])
+                    if replacement_id is not None:
+                        next_proposal_id = agents.add_proposal(
+                            parent_id, AgentProposal(
+                                "update_fields", int(replacement_id),
+                                {"title": title, "description": description,
+                                 "outcome_id": outcome["id"],
+                                 "adaptive_horizon": True},
+                                "Adapt the existing horizon after the experiment "
+                                f"instead of creating overlapping work: {title}"))
             finally:
                 agents.close()
 
@@ -2951,6 +4111,12 @@ def propose_goal_intake(config, recommendation: dict, rationale: str = "") -> di
         goals._validate_semantic_placement(
             new_type, role, parent_id,
             nested_stage_justification=nested_stage_justification)
+        if new_type == "task":
+            goals.validate_leaf_candidate(
+                parent_id, title, description=description,
+                reservations=agents.leaf_reservations(parent_id),
+                horizon=min(2, max(1, int(getattr(
+                    config, "goal_ai_leaf_horizon", 2)))))
         payload = {
             "type": new_type, "title": title, "description": description,
             "priority": "normal", "semantic_role": role,

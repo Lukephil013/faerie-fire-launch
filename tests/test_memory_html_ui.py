@@ -392,6 +392,20 @@ def test_growth_map_skin_switches_between_tree_and_solar_system():
     assert "'Solar System':'태양계'" in script
 
 
+def test_unsaved_leaves_spawn_in_a_compact_ring_around_their_parent():
+    script = _script()
+    layout = _function_body(script, "buildGoalConstellation")
+    compact = _function_body(script, "placeGoalLeavesNearParents")
+
+    assert "nodes.push({node,depth,x,y,angle,parentId})" in layout
+    assert "placeGoalLeavesNearParents(nodes,width,height)" in layout
+    assert "item.node.type!=='task'" in compact
+    assert "manuallyPlaced" in compact
+    assert "const distance=76+Math.floor(offset/perRing)*38" in compact
+    assert "x=parent.x+Math.cos(angle)*distance" in compact
+    assert "y=parent.y+Math.sin(angle)*distance" in compact
+
+
 def test_growth_map_is_viewport_locked_compact_and_gold_framed():
     html = _html()
 
@@ -708,6 +722,23 @@ def test_leaf_workspace_lifecycle_cards_and_phase_aware_composer():
     assert ".leaf-workspace-composer { flex:0 0 auto;" in html
 
 
+def test_leaf_workspace_composer_supports_leaf_scoped_documents():
+    html = _html()
+    script = _script()
+    rendered = _function_body(script, "renderLeafCoach")
+    enabled = _function_body(script, "leafWorkspaceSetEnabled")
+    refresh = _function_body(script, "refreshLeafWorkspaceAttachments")
+
+    assert 'id="leaf-workspace-attachments"' in html
+    assert "contextDocumentHtml" in rendered
+    assert "view.attachments||[],'leaf_workspace',view.leaf_id,true" in rendered
+    assert "bindContextDocuments" in rendered
+    assert "documents attached to this Leaf" in rendered
+    assert "another Leaf’s raw conversation or attachments" in rendered
+    assert "#leaf-workspace-attachments button" in enabled
+    assert "goal_leaf_workspace_open(leafId)" in refresh
+
+
 def test_leaf_workspace_natural_messages_do_not_require_suggestions():
     script = _script()
     message = _function_body(script, "leafCoachMessageHtml")
@@ -749,6 +780,29 @@ def test_leaf_workspace_multiple_suggestions_use_checkboxes_and_one_submit():
     assert "suggestion_ids:selected.map(item=>item.id)" in bind
 
 
+def test_leaf_workspace_mixed_question_blocks_share_one_submission():
+    html = _html()
+    script = _script()
+    questions = _function_body(script, "leafWorkspaceMessageQuestions")
+    question_html = _function_body(script, "leafWorkspaceQuestionSetHtml")
+    message = _function_body(script, "leafCoachMessageHtml")
+    bind = _function_body(script, "leafWorkspaceBindActions")
+
+    assert "single_choice" in questions and "multi_select" in questions
+    assert "question.required!==false" in questions
+    assert "inputType=question.type==='single_choice'?'radio':'checkbox'" in question_html
+    assert "data-question-text" in question_html and 'maxlength="4000"' in question_html
+    assert "Submit all answers" in question_html and "모든 답변 제출" in question_html
+    assert question_html.count("data-submit-question-set") == 1
+    assert "leafWorkspaceQuestionSetHtml" in message and "questionsHtml" in message
+    assert ".leaf-workspace-question-set" in html
+    assert "[data-question-option]:checked" in bind
+    assert "[data-question-text]" in bind
+    assert "kind:'answer_questions'" in bind
+    assert "answers.length+' answers submitted" in bind
+    assert "summary.join('\\n')" in bind
+
+
 def test_conversations_bundle_atkinson_hyperlegible_regular_and_bold():
     html = _html()
 
@@ -759,7 +813,9 @@ def test_conversations_bundle_atkinson_hyperlegible_regular_and_bold():
     assert html.count("@font-face") >= 2
     assert "AtkinsonHyperlegible-Regular.ttf" in html
     assert "AtkinsonHyperlegible-Bold.ttf" in html
-    assert "function conversationHtml" in html and "<strong>$1</strong>" in html
+    assert "function conversationHtml" in html
+    assert "return '<strong>'+inner+'</strong>';" in html
+    assert 'class="node-link"' in html
 
 
 def test_atkinson_hyperlegible_is_the_default_across_every_ui_surface():
@@ -1288,6 +1344,7 @@ def test_growth_restructure_flow_previews_preserved_data_before_approval():
     proposal = _function_body(script, "goalProposalSummaryHtml")
     detail = _function_body(script, "renderGoalDetail")
     focus = _function_body(script, "renderGoalFocusPanel")
+    edit_actions = _function_body(script, "goalEditNodeActionsHtml")
     bind_focus = _function_body(script, "bindGoalFocusPanel")
 
     assert "goal_tree_restructure_recommend" in panel
@@ -1320,7 +1377,9 @@ def test_growth_restructure_flow_previews_preserved_data_before_approval():
     assert "goal-restructure-open" in detail
     assert "goal-focus-restructure" in focus
     assert "goal-focus-restructure-panel" in focus
-    assert "goal-focus-ask-command" in focus and "Restructure" in focus
+    assert "goal-focus-ask-command" in focus
+    assert "goalEditNodeActionsHtml(node" in focus
+    assert "Edit this " in edit_actions and "Restructure" in edit_actions
     assert "renderGoalRestructurePanel(node,$('goal-focus-restructure-panel'))" in bind_focus
     assert "#goal-focus-panel .agent-proposal[data-pid]" in bind_focus
 
@@ -1330,9 +1389,11 @@ def test_growth_nodes_have_reversible_archive_controls_in_both_views_and_languag
     focus = _function_body(script, "renderGoalFocusPanel")
     detail = _function_body(script, "renderGoalDetail")
     lifecycle = _function_body(script, "goalLifecycleButtonHtml")
+    edit_actions = _function_body(script, "goalEditNodeActionsHtml")
     binding = _function_body(script, "bindGoalArchiveControls")
 
-    assert "goalLifecycleActionHtml(node)" in focus
+    assert "goalEditNodeActionsHtml(node" in focus
+    assert "goalLifecycleButtonHtml(node)" in edit_actions
     assert "goalLifecycleButtonHtml(node)" in detail
     assert "goal-node-archive" in lifecycle and "goal-node-restore" in lifecycle
     assert "Archive this node" in lifecycle and "Restore this node" in lifecycle
@@ -1386,22 +1447,74 @@ def test_growth_creation_uses_optional_roots_and_plain_language_ai_intake():
     assert "goal_create('overgoal'" in controls
 
 
-def test_growth_map_numbers_active_leaves_in_recommended_execution_order():
+def test_growth_map_removes_number_badges_and_exposes_project_attention_controls():
     html = _html()
     script = _script()
-    ordering = _function_body(script, "goalExecutionOrder")
     focus = _function_body(script, "renderGoalFocusPanel")
     constellation = _function_body(script, "renderGoalConstellation")
+    actions = _function_body(script, "goalProjectSignalActionsHtml")
+    binding = _function_body(script, "bindGoalProjectSignalControls")
+    edit_actions = _function_body(script, "goalEditNodeActionsHtml")
 
-    assert "goalSortedActiveLeaves(scope)" in ordering
-    assert "child.type==='overgoal'" in ordering
-    assert "rank:index+1" in ordering and "total:" in ordering
-    assert "goalExecutionBadge(leaf,executionOrder)" in focus
-    assert "execution-order-badge" in constellation
-    assert "recommended execution order" in constellation
+    assert "goalExecutionOrder" not in script
+    assert "goalExecutionBadge" not in script
+    assert "execution-order-badge" not in constellation
+    assert "recommended execution order" not in constellation
     assert "structurePrefix" in constellation and "goalTypeLabel(node.type,node)" in constellation
-    assert "① = recommended execution order" in html
-    assert "① = 추천 실행 순서" in script
+    assert "NOW / TENTATIVE NEXT = selected Project horizon" in html
+    assert "currently_working" in actions and "highest_priority" in actions
+    assert 'type="checkbox"' in actions
+    assert "Currently working" in actions and "Highest priority" in actions
+    assert "Stop marking as currently working" not in actions
+    assert "Clear highest priority" not in actions
+    assert "goal_set_project_signal" in binding
+    assert "control.onchange" in binding and "control.checked" in binding
+    assert "goalProjectSignalActionsHtml(node)" in focus
+    assert "goalLifecycleButtonHtml(node)" in edit_actions
+
+
+def test_constellation_badges_fit_their_rendered_text():
+    script = _script()
+    fitting = _function_body(script, "fitConstellationBadges")
+    constellation = _function_body(script, "renderGoalConstellation")
+
+    assert "text.getComputedTextLength()" in fitting
+    assert "measured+16" in fitting
+    assert "rect.setAttribute('width'" in fitting
+    assert "fitConstellationBadges(box)" in constellation
+
+
+def test_growth_horizon_roles_are_visible_and_position_controls_sequence():
+    html = _html()
+    script = _script()
+    ordering = _function_body(script, "goalSortedActiveLeaves")
+    active = _function_body(script, "goalActiveLeaves")
+    next_action = _function_body(script, "goalNextActionText")
+    label = _function_body(script, "goalPlanningRoleLabel")
+    chip = _function_body(script, "goalPlanningRoleChip")
+    derive = _function_body(script, "goalDerivePlanningRoles")
+    focus = _function_body(script, "renderGoalFocusPanel")
+    detail = _function_body(script, "renderGoalDetail")
+    constellation = _function_body(script, "renderGoalConstellation")
+
+    assert ordering.index("a.position") < ordering.index("a.id")
+    assert "priority" not in ordering and "due_date" not in ordering
+    assert "['active','paused']" in active
+    assert "goalSortedActiveLeaves(node)" in next_action
+    assert "'NOW'" in label and "'TENTATIVE NEXT'" in label
+    assert "node.planning_role" in label and "goal-planning-role" in chip
+    assert "['active','paused']" in derive
+    assert "leaves[0].planning_role='now'" in derive
+    assert "leaves[1].planning_role='provisional'" in derive
+    assert "goalIsProject(node)" in derive
+    assert "focus.highest_priority||focus.currently_working" in derive
+    assert "goalPlanningRoleChip(node)" in focus
+    assert "goalPlanningRoleChip(leaf)" in focus
+    assert "goalPlanningRoleChip(node)" in detail
+    assert "planning-role-badge" in constellation
+    assert "goalPlanningRoleLabel(node)" in constellation
+    assert ".goal-planning-role.now" in html
+    assert ".goal-planning-role.provisional" in html
 
 
 def test_leaf_workspace_reveals_sections_only_when_they_have_meaning():

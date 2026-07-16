@@ -1285,6 +1285,11 @@
   @keyframes planner-think { 0%,100%{opacity:.45} 50%{opacity:1} }
   .goal-chip { display:inline-block; font-size:10px; padding:2px 8px; border:1px solid var(--line2);
     border-radius:20px; color:var(--muted); margin:2px; }
+  .goal-planning-role { font-weight:900; letter-spacing:1px; text-transform:uppercase; }
+  .goal-planning-role.now { color:#071910; border-color:rgba(83,231,192,.95);
+    background:rgba(83,231,192,.9); }
+  .goal-planning-role.provisional { color:#ffe9a9; border-color:rgba(255,209,102,.58);
+    background:rgba(255,209,102,.1); }
   .goal-add-wrap { position:relative; display:inline-block; }
   .goal-add-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:6; display:none; min-width:140px;
     background:rgba(5,20,12,.97); border:1px solid var(--line2); border-radius:10px; padding:4px; }
@@ -1511,6 +1516,21 @@
   .leaf-workspace-suggestion-copy { display:grid; gap:2px; min-width:0; }
   .leaf-workspace-submit-suggestions { margin-top:9px; }
   .leaf-workspace-suggestion small { color:var(--muted); line-height:1.35; }
+  .leaf-workspace-question-set { display:grid; gap:10px; margin-top:10px; padding:11px;
+    border:1px solid rgba(126,226,255,.2); border-radius:12px;
+    background:rgba(126,226,255,.035); }
+  .leaf-workspace-question-set.submitted { opacity:.78; }
+  .leaf-workspace-question { display:grid; gap:7px; margin:0; padding:0 0 10px;
+    border:0; border-bottom:1px solid rgba(126,226,255,.11); min-width:0; }
+  .leaf-workspace-question:last-of-type { padding-bottom:0; border-bottom:0; }
+  .leaf-workspace-question legend { width:100%; padding:0; color:var(--fg);
+    font-weight:700; line-height:1.42; }
+  .leaf-workspace-question-number { color:var(--cyan); margin-right:5px; }
+  .leaf-workspace-question textarea { width:100%; min-height:76px; resize:vertical;
+    box-sizing:border-box; }
+  .leaf-workspace-question-set .leaf-workspace-suggestions { margin-top:0; }
+  .leaf-workspace-question-actions { display:flex; justify-content:flex-end; align-items:center;
+    gap:8px; padding-top:1px; }
   .leaf-workspace-proposal { margin-top:10px; padding:10px; border:1px solid rgba(255,226,137,.36);
     border-radius:10px; background:rgba(255,209,102,.055); }
   .leaf-workspace-proposal-head { display:flex; align-items:center; gap:7px; margin-bottom:6px; }
@@ -1530,15 +1550,15 @@
   .leaf-workspace-composer { flex:0 0 auto; padding:10px 20px 16px; border-top:1px solid var(--line);
     background:rgba(7,19,13,.985); z-index:2; }
   .leaf-workspace-composer .actions { margin-top:8px; }
+  .leaf-workspace-composer .context-documents { margin:0 0 9px; }
+  .leaf-workspace-composer .context-doc-actions { align-items:center; }
+  .leaf-workspace-composer .context-doc-actions .hint { font-size:10px; line-height:1.35; }
   #leaf-coach-input { width:100%; min-height:82px; }
   .goal-focus-mini { display:grid; gap:7px; margin:10px 0; }
   .goal-focus-leaf { display:flex; gap:8px; align-items:flex-start; padding:8px 9px;
     border:1px solid rgba(83,231,192,.12); border-radius:10px; background:rgba(83,231,192,.04);
     line-height:1.35; }
   .goal-focus-leaf input { margin-top:2px; }
-  .goal-order-chip { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px;
-    margin-right:7px; border:1px solid rgba(255,226,137,.8); border-radius:999px;
-    background:rgba(255,209,102,.18); color:#ffe289; font-size:11px; font-weight:900; vertical-align:middle; }
   .goal-focus-muted { color:var(--muted); font-size:12px; line-height:1.45; }
   .goal-question-card { border:1px solid rgba(83,231,192,.16); border-radius:12px;
     background:rgba(5,20,13,.54); padding:10px; margin:8px 0; }
@@ -1555,6 +1575,19 @@
   .goal-full-note summary { cursor:pointer; color:var(--cyan); font-size:12px; letter-spacing:.6px;
     text-transform:uppercase; }
   .goal-full-note div { color:var(--muted); line-height:1.55; margin-top:8px; white-space:pre-wrap; }
+  .goal-project-signal-checks { display:flex; flex-wrap:wrap; gap:8px 16px; margin:10px 0; }
+  .goal-project-signal-checks label { display:flex; align-items:center; gap:7px; min-height:28px;
+    color:var(--fg); font-size:12px; cursor:pointer; }
+  .goal-project-signal-checks input { width:17px; height:17px; margin:0; accent-color:var(--green);
+    cursor:pointer; }
+  .goal-project-signal-checks input:disabled { cursor:wait; opacity:.62; }
+  .goal-node-edit-menu { margin:9px 0 0; border:1px solid rgba(83,231,192,.13);
+    border-radius:12px; background:rgba(3,13,8,.36); padding:8px 10px; }
+  .goal-node-edit-menu summary { cursor:pointer; color:var(--muted); font-size:11px;
+    font-weight:700; letter-spacing:.45px; text-transform:uppercase; }
+  .goal-node-edit-menu[open] summary { color:var(--cyan); }
+  .goal-node-edit-menu > .actions { margin:9px 0 0; }
+  .goal-node-edit-menu > [id$="restructure-panel"] { margin-top:9px; }
   .settings-choice { display:grid; gap:5px; width:100%; color:var(--muted); font-size:11px; }
   .settings-choice select { width:100%; border:1px solid var(--line); border-radius:10px;
     background:rgba(2,12,7,.72); color:var(--fg); padding:9px 10px; font:inherit; }
@@ -1642,9 +1675,19 @@
   .constellation-node.subgoal.semantic-area text { font-size:12px; }
   .constellation-node.subgoal.semantic-project text { font-size:11.2px; }
   .constellation-node.subgoal.semantic-stage text { font-size:10.7px; }
-  .constellation-node .execution-order-badge circle { fill:#ffd166; stroke:#fff2b4; stroke-width:1; }
-  .constellation-node .execution-order-badge text { fill:#182015; font-size:8px; font-weight:900;
-    paint-order:normal; stroke:none; }
+  .constellation-node .planning-role-badge rect { fill:rgba(10,33,23,.96); stroke:rgba(83,231,192,.92);
+    stroke-width:.8; }
+  .constellation-node .planning-role-badge text { fill:#bfffe5; font-size:6.6px; font-weight:900;
+    letter-spacing:.55px; paint-order:normal; stroke:none; }
+  .constellation-node .planning-role-badge.provisional rect { stroke:rgba(255,209,102,.78);
+    fill:rgba(42,33,10,.94); }
+  .constellation-node .planning-role-badge.provisional text { fill:#ffe9a9; }
+  .constellation-node .project-signal-badge rect { fill:rgba(34,24,6,.96);
+    stroke:rgba(255,209,102,.92); stroke-width:.9; }
+  .constellation-node .project-signal-badge text { fill:#ffe9a9; font-size:6.3px;
+    font-weight:900; letter-spacing:.45px; paint-order:normal; stroke:none; }
+  .constellation-node.project-current circle.glow { fill:rgba(83,231,192,.28); }
+  .constellation-node.project-highest circle.core { stroke:#ffe289; stroke-width:2.2; }
   .constellation-node.paused,.constellation-node.completed { opacity:.58; }
   .constellation-node.selected circle.glow { fill:rgba(47,227,160,.28); }
   .constellation-node.selected circle.core { fill:var(--cyan); stroke:white; stroke-width:2; }
@@ -2307,7 +2350,7 @@
       <div class="growth-map-workspace">
         <div class="growth-map-stage">
           <div class="constellation-legend">
-            <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+            <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>NOW / TENTATIVE NEXT = selected Project horizon</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
           </div>
           <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
         </div>
@@ -2344,7 +2387,7 @@
       <div id="growth-map-summary" class="growth-map-summary"></div>
       <div id="growth-map-tree" class="growth-map-tree" aria-label="Living constellation map"></div>
       <div class="constellation-legend">
-        <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>① = recommended execution order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+        <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>NOW / TENTATIVE NEXT = selected Project horizon</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
       </div>
     </div>
   </div>
@@ -2399,6 +2442,7 @@
       <div id="leaf-workspace-legacy"></div>
     </div>
     <div class="leaf-workspace-composer">
+      <div id="leaf-workspace-attachments"></div>
       <textarea id="leaf-coach-input" rows="4" placeholder="Tell me what fits, what doesn't, or what you want instead…" disabled></textarea>
       <div class="actions"><button class="skip" id="leaf-coach-clear" disabled>Clear conversation</button>
         <button class="accent" id="leaf-coach-send" style="margin-left:auto" disabled>Send</button></div>
@@ -2741,7 +2785,7 @@ const KO_UI_TEXT = Object.freeze({
   '◇ Project':'◇ 프로젝트',
   '◇ Stage':'◇ 단계',
   '★ gold ring = greatest curiosity':'★ 금색 고리 = 가장 큰 호기심',
-  '① = recommended execution order':'① = 추천 실행 순서',
+  'NOW / TENTATIVE NEXT = selected Project horizon':'NOW / 잠정 다음 = 선택된 프로젝트 범위',
 
   // --- added: full sweep ---
   'Command Center chat':'커맨드 센터 채팅',
@@ -3011,7 +3055,7 @@ const KO_UI_TEXT = Object.freeze({
   'Attached context documents':'첨부된 맥락 문서',
   'Insert reference':'참조 삽입',
   'Remove document':'문서 제거',
-  'PDF, DOCX, Markdown, or text. Text is extracted locally and encrypted for this context.':'PDF, DOCX, Markdown 또는 텍스트 파일. 텍스트는 로컬에서 추출되어 이 맥락에 암호화 저장돼요.',
+  'PDF, Word, Excel, CSV, Markdown, JSON, or text. Text is extracted locally and encrypted for this context.':'PDF, Word, Excel, CSV, Markdown, JSON 또는 텍스트 파일. 텍스트는 로컬에서 추출되어 이 맥락에 암호화 저장돼요.',
   'You can refer to an attachment by name in your answer.':'답변에서 첨부 문서 이름을 언급해 참조할 수 있어요.',
   'Investigation document context':'탐구 문서 맥락',
   'These documents inform this Investigation and its future questions.':'이 문서는 이 탐구와 앞으로의 질문에 맥락을 제공해요.',
@@ -4008,7 +4052,7 @@ function contextDocumentHtml(attachments,ownerKind,ownerKey,allowReference){
   return '<div class="context-documents" data-owner-kind="'+esc(ownerKind)+'" data-owner-key="'+esc(ownerKey)+'">'+
     (chips?'<div class="context-doc-list">'+chips+'</div>':'')+
     '<div class="context-doc-actions"><button type="button" class="context-doc-add">📎 Attach document</button>'+
-    '<span class="hint">PDF, DOCX, Markdown, or text. Text is extracted locally and encrypted for this context.</span></div>'+
+    '<span class="hint">PDF, Word, Excel, CSV, Markdown, JSON, or text. Text is extracted locally and encrypted for this context.</span></div>'+
     (allowReference&&attachments.length?'<div class="hint" style="margin-top:6px">You can refer to an attachment by name in your answer.</div>':'')+
     '</div>';
 }
@@ -6539,6 +6583,118 @@ function goalTypeLabel(type,node){
   return {umbrella:'Soul',overgoal:'Root',subgoal:'Branch',task:'Leaf'}[type]||type;
 }
 
+function goalPlanningRoleLabel(node){
+  const role=String(node&&node.planning_role||'').toLowerCase();
+  if(role==='now') return APP_LANG==='ko'?'지금':'NOW';
+  if(role==='provisional'||role==='tentative_next') return APP_LANG==='ko'?'잠정 다음':'TENTATIVE NEXT';
+  return '';
+}
+
+function goalPlanningRoleChip(node){
+  const label=goalPlanningRoleLabel(node);
+  const role=String(node&&node.planning_role||'').toLowerCase();
+  return label?'<span class="goal-chip goal-planning-role '+esc(role)+'">'+esc(label)+'</span>':'';
+}
+
+function goalIsProject(node){
+  return !!(node&&node.type==='subgoal'&&node.semantic_role==='project');
+}
+
+function goalProjectFocus(node){
+  return node&&node.project_focus||{};
+}
+
+function goalProjectSignalLabel(node){
+  if(!goalIsProject(node)) return '';
+  const focus=goalProjectFocus(node), labels=[];
+  if(focus.currently_working) labels.push(APP_LANG==='ko'?'작업 중':'CURRENT');
+  if(focus.highest_priority) labels.push(APP_LANG==='ko'?'최우선':'HIGHEST PRIORITY');
+  return labels.join(' · ');
+}
+
+function fitConstellationBadges(box){
+  if(!box) return;
+  const fit=()=>box.querySelectorAll('.planning-role-badge, .project-signal-badge').forEach(group=>{
+    const text=group.querySelector('text');
+    const rect=group.querySelector('rect');
+    if(!text||!rect||typeof text.getComputedTextLength!=='function') return;
+    const measured=Math.ceil(text.getComputedTextLength());
+    if(!Number.isFinite(measured)||measured<=0) return;
+    const minimum=group.classList.contains('project-signal-badge')?48:32;
+    const width=Math.max(minimum,measured+16);
+    rect.setAttribute('x',String(-width/2));
+    rect.setAttribute('width',String(width));
+  });
+  fit();
+  requestAnimationFrame(fit);
+}
+
+function goalProjectSignalChips(node){
+  if(!goalIsProject(node)) return '';
+  const focus=goalProjectFocus(node);
+  return (focus.currently_working?'<span class="goal-chip goal-planning-role now">'+
+    (APP_LANG==='ko'?'작업 중':'CURRENTLY WORKING')+'</span>':'')+
+    (focus.highest_priority?'<span class="goal-chip goal-planning-role provisional">'+
+    (APP_LANG==='ko'?'최우선 프로젝트':'HIGHEST PRIORITY')+'</span>':'');
+}
+
+function goalProjectSignalActionsHtml(node){
+  if(!goalIsProject(node)||node.status!=='active') return '';
+  const focus=goalProjectFocus(node);
+  return '<div class="goal-project-signal-checks" role="group" aria-label="'+
+    esc(APP_LANG==='ko'?'프로젝트 주의 신호':'Project attention')+'">'+
+    '<label><input type="checkbox" data-project-signal="currently_working" '+
+    (focus.currently_working?'checked ':'')+'><span>'+
+    (APP_LANG==='ko'?'현재 작업 중':'Currently working')+'</span></label>'+
+    '<label><input type="checkbox" data-project-signal="highest_priority" '+
+    (focus.highest_priority?'checked ':'')+'><span>'+
+    (APP_LANG==='ko'?'최우선':'Highest priority')+'</span></label></div>';
+}
+
+function bindGoalProjectSignalControls(node,container){
+  if(!container||!goalIsProject(node)) return;
+  container.querySelectorAll('[data-project-signal]').forEach(control=>{
+    control.onchange=()=>{
+      const kind=control.dataset.projectSignal;
+      const enabled=!!control.checked;
+      control.disabled=true;
+      pywebview.api.goal_set_project_signal(node.id,kind,enabled).then(result=>{
+        handleGoalMutation(result);
+      }).catch(error=>{
+        control.checked=!enabled;
+        control.disabled=false;
+        toast('Could not update Project attention: '+error,true);
+      });
+    };
+  });
+}
+
+function goalEditNodeActionsHtml(node,restructureButtonId,panelId){
+  if(!node||node.type==='umbrella') return '';
+  const type=goalTypeLabel(node.type,node);
+  const title=APP_LANG==='ko'?type+' 편집':'Edit this '+type;
+  const restructure=node.status==='archived'?'':
+    '<button id="'+restructureButtonId+'">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>';
+  return '<details class="goal-node-edit-menu"><summary>'+esc(title)+'</summary>'+
+    '<div class="actions">'+restructure+goalLifecycleButtonHtml(node)+'</div>'+
+    '<div id="'+panelId+'" hidden></div></details>';
+}
+
+function goalDerivePlanningRoles(node){
+  if(!node) return node;
+  const children=node.children||[];
+  const leaves=children.filter(child=>child.type==='task'&&['active','paused'].includes(child.status))
+    .sort((a,b)=>(Number(a.position)||0)-(Number(b.position)||0)||(Number(a.id)||0)-(Number(b.id)||0));
+  children.filter(child=>child.type==='task').forEach(child=>{ child.planning_role=null; });
+  const focus=goalProjectFocus(node);
+  if(goalIsProject(node)&&(focus.highest_priority||focus.currently_working)){
+    if(leaves[0]) leaves[0].planning_role='now';
+    if(leaves[1]) leaves[1].planning_role='provisional';
+  }
+  children.forEach(goalDerivePlanningRoles);
+  return node;
+}
+
 function goalGreatestCuriosityId(){
   const cur=((goalState&&goalState.curiosities)||[]).find(c=>c.is_greatest&&c.status==='active');
   return cur?cur.id:null;
@@ -6560,7 +6716,7 @@ function goalTreeHtml(node,depth){
     'style="padding-left:'+(8+depth*17)+'px"><span class="twist '+(children.length?'has-children':'')+
     '" data-toggle-id="'+node.id+'">'+(children.length?(collapsed?'▸':'▾'):'')+'</span>'+
     '<span class="goal-icon">'+goalIcon(node.type)+'</span><span class="goal-title">'+esc(node.title)+
-    '</span>'+(greatest?'<span class="goal-greatest-star" title="Linked to the greatest curiosity — your #1 investigation · 가장 큰 호기심(1순위 탐구)에 연결됨">★</span>':'')+
+    '</span>'+goalPlanningRoleChip(node)+goalProjectSignalChips(node)+(greatest?'<span class="goal-greatest-star" title="Linked to the greatest curiosity — your #1 investigation · 가장 큰 호기심(1순위 탐구)에 연결됨">★</span>':'')+
     '<span class="cur-conf">'+progress+'</span></div>'+
     (collapsed?'':children.map(c=>goalTreeHtml(c,depth+1)).join(''));
 }
@@ -6646,11 +6802,9 @@ function goalCompletionLabel(node){
 }
 
 function goalSortedActiveLeaves(node){
-  const pr={high:0,normal:1,low:2};
   return goalActiveLeaves(node).sort((a,b)=>
-    (pr[a.priority||'normal']??1)-(pr[b.priority||'normal']??1) ||
-    String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')) ||
-    (a.position||0)-(b.position||0));
+    (Number(a.position)||0)-(Number(b.position)||0) ||
+    (Number(a.id)||0)-(Number(b.id)||0));
 }
 
 function goalUniqueQuestions(items){
@@ -6854,26 +7008,6 @@ function goalStepKey(nodeId,step){
   return 'ff-step:'+nodeId+':'+step.toLowerCase().replace(/\s+/g,' ').slice(0,80);
 }
 
-function goalExecutionOrder(node){
-  const order=new Map();
-  const scopes=node&&node.type==='umbrella'
-    ? goalVisibleChildren(node).filter(child=>child.type==='overgoal')
-    : [node];
-  scopes.forEach(scope=>{
-    const leaves=goalSortedActiveLeaves(scope);
-    leaves.forEach((leaf,index)=>order.set(leaf.id,{rank:index+1,total:leaves.length,scope:scope.title}));
-  });
-  return order;
-}
-
-function goalExecutionBadge(leaf,order){
-  const item=order&&order.get(leaf.id);
-  if(!item) return '';
-  const title=APP_LANG==='ko'
-    ? item.scope+' 안의 추천 실행 순서 '+item.rank+'/'+item.total
-    : 'Recommended execution order '+item.rank+' of '+item.total+' within '+item.scope;
-  return '<span class="goal-order-chip" title="'+esc(title)+'">'+item.rank+'</span>';
-}
 const goalStepDrafts=(function(){
   try{ return JSON.parse(localStorage.getItem('ffGoalStepDrafts')||'{}')||{}; }
   catch(e){ return {}; }
@@ -6999,6 +7133,7 @@ function closeLeafCoach(){
   leafWorkspaceSetLoading(false);
   leafWorkspaceSetEnabled(false);
   if($('leaf-coach-messages')) $('leaf-coach-messages').innerHTML='';
+  if($('leaf-workspace-attachments')) $('leaf-workspace-attachments').innerHTML='';
   if($('leaf-workspace-agreement')) $('leaf-workspace-agreement').innerHTML='';
   if($('leaf-workspace-plan')) $('leaf-workspace-plan').innerHTML='';
   if($('leaf-workspace-legacy')) $('leaf-workspace-legacy').innerHTML='';
@@ -7051,6 +7186,9 @@ function leafWorkspaceSetEnabled(enabled){
   if(input) input.disabled=!enabled;
   if(send) send.disabled=!enabled||leafWorkspaceSending;
   if(clear) clear.disabled=!enabled||leafWorkspaceSending;
+  document.querySelectorAll('#leaf-workspace-attachments button').forEach(button=>{
+    button.disabled=!enabled||leafWorkspaceSending;
+  });
 }
 
 function leafWorkspaceSetLoading(visible,text){
@@ -7193,6 +7331,67 @@ function leafWorkspaceMessageSelectionMode(message,payload){
     ?'multiple':'single';
 }
 
+function leafWorkspaceMessageQuestions(message,payload){
+  const raw=message.questions||payload.questions||[];
+  return (Array.isArray(raw)?raw:[]).map((question,index)=>{
+    if(!question||typeof question!=='object') return null;
+    const type=String(question.type||'text').toLowerCase();
+    const normalizedType=type==='single'||type==='choice'||type==='radio'?'single_choice':
+      (type==='multiple'||type==='multi'||type==='checkbox'?'multi_select':type);
+    const prompt=String(question.prompt||question.question||question.label||'').trim();
+    if(!prompt||!['single_choice','multi_select','text'].includes(normalizedType)) return null;
+    const questionId=String(question.id||'question-'+index);
+    const options=(Array.isArray(question.options)?question.options:[]).map((option,optionIndex)=>
+      typeof option==='string'?{id:'option-'+optionIndex,label:option,description:''}:{
+        id:String(option&&option.id||'option-'+optionIndex),
+        label:String(option&&(option.label||option.text)||''),
+        description:String(option&&option.description||'')
+      }).filter(option=>option.label);
+    if(normalizedType!=='text'&&options.length<2) return null;
+    return {id:questionId,prompt,type:normalizedType,required:question.required!==false,
+      placeholder:String(question.placeholder||''),options};
+  }).filter(Boolean);
+}
+
+function leafWorkspaceQuestionSubmission(messageId){
+  const messages=leafCoachView&&Array.isArray(leafCoachView.messages)?leafCoachView.messages:[];
+  for(const message of messages){
+    const event=message&&message.payload&&message.payload.event;
+    if(event&&event.type==='answer_questions'&&String(event.message_id)===String(messageId)) return event;
+  }
+  return null;
+}
+
+function leafWorkspaceQuestionSetHtml(message,questions){
+  if(!questions.length) return '';
+  const submitted=leafWorkspaceQuestionSubmission(message.id), answers={};
+  ((submitted&&submitted.answers)||[]).forEach(answer=>{answers[String(answer.question_id)]=answer;});
+  const disabled=submitted?' disabled':'';
+  const blocks=questions.map((question,index)=>{
+    const answer=answers[String(question.id)]||{};
+    const legend='<legend><span class="leaf-workspace-question-number">'+(index+1)+'.</span>'+esc(question.prompt)+
+      (question.required?'':' <span class="hint">('+(APP_LANG==='ko'?'선택 사항':'optional')+')</span>')+'</legend>';
+    if(question.type==='text') return '<fieldset class="leaf-workspace-question" data-question-block data-question-id="'+
+      esc(question.id)+'" data-question-type="text" data-question-required="'+question.required+'">'+legend+
+      '<textarea data-question-text maxlength="4000" placeholder="'+esc(question.placeholder||
+        (APP_LANG==='ko'?'답변을 입력하세요…':'Type your answer…'))+'"'+disabled+'>'+esc(answer.text||'')+'</textarea></fieldset>';
+    const inputType=question.type==='single_choice'?'radio':'checkbox';
+    const selected=new Set((answer.option_ids||[]).map(String));
+    return '<fieldset class="leaf-workspace-question" data-question-block data-question-id="'+esc(question.id)+
+      '" data-question-type="'+esc(question.type)+'" data-question-required="'+question.required+'">'+legend+
+      '<ul class="leaf-workspace-suggestions">'+question.options.map(option=>{
+        const checked=selected.has(String(option.id));
+        return '<li><label class="leaf-workspace-suggestion '+(checked?'selected':'')+'"><input type="'+inputType+
+          '" name="leaf-question-'+esc(message.id)+'-'+esc(question.id)+'" value="'+esc(option.id)+
+          '" data-question-option'+(checked?' checked':'')+disabled+'><span class="leaf-workspace-suggestion-copy"><span>'+esc(option.label)+
+          '</span>'+(option.description?'<small>'+esc(option.description)+'</small>':'')+'</span></label></li>';
+      }).join('')+'</ul></fieldset>';
+  }).join('');
+  return '<section class="leaf-workspace-question-set '+(submitted?'submitted':'')+'" data-question-message="'+esc(message.id)+'">'+
+    blocks+'<div class="leaf-workspace-question-actions"><button type="button" class="accent" data-submit-question-set'+disabled+'>'+
+    (submitted?(APP_LANG==='ko'?'답변 제출됨':'Answers submitted'):(APP_LANG==='ko'?'모든 답변 제출':'Submit all answers'))+'</button></div></section>';
+}
+
 function leafWorkspaceMessageProposals(message,payload){
   const raw=message.proposals||payload.proposals||
     (message.proposal||payload.proposal?[message.proposal||payload.proposal]:[]);
@@ -7313,6 +7512,7 @@ function leafCoachMessageHtml(message){
   const payload=message.payload||{}, content=message.content||payload.content||payload.text||'';
   const role=message.role==='user'?'user':'assistant';
   const suggestions=leafWorkspaceMessageSuggestions(message,payload);
+  const questions=leafWorkspaceMessageQuestions(message,payload);
   const selectionMode=leafWorkspaceMessageSelectionMode(message,payload);
   const proposals=leafWorkspaceMessageProposals(message,payload);
   const suggestionsHtml=!suggestions.length?'':selectionMode==='multiple'
@@ -7328,9 +7528,10 @@ function leafCoachMessageHtml(message){
       '<li><button type="button" class="leaf-workspace-suggestion" data-message-id="'+esc(message.id)+
       '" data-suggestion-id="'+esc(item.id)+'"><span>'+esc(item.label)+'</span>'+
       (item.description?'<small>'+esc(item.description)+'</small>':'')+'</button></li>').join('')+'</ul>';
+  const questionsHtml=leafWorkspaceQuestionSetHtml(message,questions);
   return '<article class="leaf-coach-message '+role+'" data-workspace-message="'+esc(message.id)+'">'+
     (content?'<div>'+conversationHtml(content)+'</div>':'')+
-    suggestionsHtml+
+    suggestionsHtml+questionsHtml+
     proposals.map(proposal=>leafWorkspaceProposalHtml(proposal,content)).join('')+'</article>';
 }
 
@@ -7398,14 +7599,21 @@ function renderLeafCoach(){
   const boundary=$('leaf-coach-boundary'), copy=$('leaf-coach-boundary-copy');
   if(boundary) boundary.querySelector('summary').textContent=APP_LANG==='ko'?'이 에이전트가 볼 수 있는 범위':'What this agent can see';
   if(copy) copy.textContent=APP_LANG==='ko'
-    ?'이 Leaf, 상위 경로, 연결된 탐구, 이 작업 공간의 대화와 이 Leaf로 명시적으로 승인된 인계만 볼 수 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요. 다른 Leaf의 원문 대화도 전달되지 않아요.'
-    :'It can see this Leaf, its parent path, linked Investigations, this workspace conversation, and handoffs explicitly approved for this Leaf. It cannot see other Branches, global memory, the main chat, or screen activity, and it never receives another Leaf’s raw conversation.';
+    ?'이 Leaf, 상위 경로, 연결된 탐구, 이 작업 공간의 대화, 이 Leaf에 첨부한 문서와 명시적으로 승인된 인계만 볼 수 있어요. 다른 Branch, 전체 기억, 메인 채팅 또는 화면 활동은 볼 수 없어요. 다른 Leaf의 원문 대화나 첨부 문서도 전달되지 않아요.'
+    :'It can see this Leaf, its parent path, linked Investigations, this workspace conversation, documents attached to this Leaf, and handoffs explicitly approved for it. It cannot see other Branches, global memory, the main chat, or screen activity, and it never receives another Leaf’s raw conversation or attachments.';
   $('leaf-workspace-recovery').innerHTML=leafWorkspaceRecoveryHtml(view);
   $('leaf-workspace-incoming').innerHTML=leafWorkspaceIncomingHtml(view.incoming_handoffs);
   $('leaf-workspace-agreement').innerHTML=leafWorkspaceAgreementHtml(view.agreement);
   $('leaf-workspace-plan').innerHTML=leafWorkspacePlanHtml(view.plan);
   $('leaf-coach-messages').innerHTML=(view.messages||[]).map(leafCoachMessageHtml).join('');
   $('leaf-workspace-legacy').innerHTML=leafWorkspaceLegacyHtml(view.legacy_messages);
+  const attachmentBox=$('leaf-workspace-attachments');
+  if(attachmentBox){
+    attachmentBox.innerHTML=contextDocumentHtml(
+      view.attachments||[],'leaf_workspace',view.leaf_id,true);
+    bindContextDocuments($('leaf-step-coach'),'leaf_workspace',view.leaf_id,
+      $('leaf-coach-input'),()=>refreshLeafWorkspaceAttachments(view.leaf_id));
+  }
   $('leaf-coach-input').placeholder=leafWorkspacePlaceholder(view.completed?'completed':view.phase);
   leafWorkspaceBindActions();
   const prepareHandoff=$('leaf-workspace-prepare-handoff');
@@ -7413,6 +7621,20 @@ function renderLeafCoach(){
   leafWorkspaceSetEnabled(true);
   const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
   if(scroller) scroller.scrollTop=scroller.scrollHeight;
+}
+
+function refreshLeafWorkspaceAttachments(leafId){
+  if(!api()||!pywebview.api.goal_leaf_workspace_open) return;
+  const nonce=leafWorkspaceRequestNonce;
+  pywebview.api.goal_leaf_workspace_open(leafId).then(result=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    const view=leafWorkspaceResult(result);
+    if(!view) throw new Error(APP_LANG==='ko'?'첨부 문서를 새로 고치지 못했어요.':'Could not refresh Leaf attachments.');
+    leafCoachView=view;
+    renderLeafCoach();
+    $('leaf-coach-input').focus();
+  }).catch(error=>leafCoachSetError(String(error.message||error),
+    ()=>refreshLeafWorkspaceAttachments(leafId)));
 }
 
 function prepareMissingLeafHandoff(){
@@ -7522,6 +7744,63 @@ function leafWorkspaceBindActions(){
         labels,message_id:message.id
       },APP_LANG==='ko'?selected.length+'개 선택됨 · 생각하는 중…':selected.length+' selected · thinking…');
     };
+  });
+  document.querySelectorAll('#leaf-coach-messages .leaf-workspace-question-set:not(.submitted)').forEach(group=>{
+    const message=leafWorkspaceFindMessage(group.dataset.questionMessage);
+    if(!message) return;
+    const questions=leafWorkspaceMessageQuestions(message,message.payload||{});
+    const blocks=[...group.querySelectorAll('[data-question-block]')];
+    const submit=group.querySelector('[data-submit-question-set]');
+    const questionFor=block=>questions.find(question=>String(question.id)===String(block.dataset.questionId));
+    const update=()=>{
+      group.querySelectorAll('[data-question-option]').forEach(input=>{
+        input.closest('.leaf-workspace-suggestion').classList.toggle('selected',input.checked);
+      });
+      const requiredMissing=blocks.some(block=>{
+        const question=questionFor(block);
+        if(!question||!question.required) return false;
+        return question.type==='text'
+          ?!String((block.querySelector('[data-question-text]')||{}).value||'').trim()
+          :!block.querySelector('[data-question-option]:checked');
+      });
+      const hasAnswer=blocks.some(block=>{
+        const question=questionFor(block);
+        return question&&question.type==='text'
+          ?Boolean(String((block.querySelector('[data-question-text]')||{}).value||'').trim())
+          :Boolean(block.querySelector('[data-question-option]:checked'));
+      });
+      submit.disabled=requiredMissing||!hasAnswer;
+    };
+    group.querySelectorAll('[data-question-option]').forEach(input=>input.onchange=update);
+    group.querySelectorAll('[data-question-text]').forEach(input=>input.oninput=update);
+    submit.onclick=()=>{
+      update();
+      if(submit.disabled) return;
+      const answers=[], summary=[];
+      blocks.forEach(block=>{
+        const question=questionFor(block);
+        if(!question) return;
+        if(question.type==='text'){
+          const value=String((block.querySelector('[data-question-text]')||{}).value||'').trim();
+          if(value){
+            answers.push({question_id:question.id,text:value});
+            summary.push(question.prompt+': '+value);
+          }
+          return;
+        }
+        const optionIds=[...block.querySelectorAll('[data-question-option]:checked')].map(input=>input.value);
+        if(!optionIds.length) return;
+        const labels=optionIds.map(id=>(question.options.find(option=>String(option.id)===String(id))||{}).label).filter(Boolean);
+        answers.push({question_id:question.id,option_ids:optionIds});
+        summary.push(question.prompt+': '+labels.join(', '));
+      });
+      if(!answers.length) return;
+      group.querySelectorAll('input,textarea,button').forEach(control=>control.disabled=true);
+      sendLeafCoachMessage(summary.join('\n'),{
+        kind:'answer_questions',message_id:message.id,answers
+      },APP_LANG==='ko'?answers.length+'개 답변 제출됨 · 생각하는 중…':answers.length+' answers submitted · thinking…');
+    };
+    update();
   });
   document.querySelectorAll('#leaf-coach-messages [data-proposal-edit]').forEach(button=>button.onclick=()=>{
     const card=button.closest('.leaf-workspace-proposal'), editor=card&&card.querySelector('.leaf-workspace-proposal-editor');
@@ -7773,6 +8052,7 @@ function openLeafCoach(node){
   $('leaf-workspace-agreement').innerHTML='';
   $('leaf-workspace-plan').innerHTML='';
   $('leaf-workspace-legacy').innerHTML='';
+  $('leaf-workspace-attachments').innerHTML='';
   $('leaf-coach-input').value='';
   leafWorkspaceSetEnabled(false);
   leafCoachSetError('');
@@ -8344,7 +8624,6 @@ function renderGoalFocusPanel(){
   panel.dataset.collapseScope='goal-'+node.id;
   const path=goalPathTitles(goalState.tree,node.id,[])||[node.title];
   const leaves=goalSortedActiveLeaves(node);
-  const executionOrder=goalExecutionOrder(goalState.tree);
   const childType=node.type==='umbrella'?'overgoal':node.type==='task'?null:'subgoal';
   const agent=(goalAgentNodeId===node.id&&goalAgentView)?goalAgentView:null;
   const agentState=agent&&agent.state||{};
@@ -8355,13 +8634,17 @@ function renderGoalFocusPanel(){
   if(node.status!=='completed'&&goalNodeNeedsDefinition(node)){
     panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
       '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
-      '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span></div>'+
-      goalDefinitionStarterHtml(node)+goalLifecycleActionHtml(node);
+      '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span>'+goalPlanningRoleChip(node)+goalProjectSignalChips(node)+'</div>'+
+      goalDefinitionStarterHtml(node)+goalProjectSignalActionsHtml(node)+
+      goalEditNodeActionsHtml(node,'goal-focus-restructure','goal-focus-restructure-panel');
     const draft=$('goal-focus-draft-steps');
     if(draft) draft.onclick=()=>draftLeafSteps(node);
     bindGoalStepDraft(node,panel);
     bindGoalLeafAgentEntry(node,panel);
     bindGoalArchiveControls(node,panel);
+    bindGoalProjectSignalControls(node,panel);
+    if($('goal-focus-restructure')) $('goal-focus-restructure').onclick=()=>
+      renderGoalRestructurePanel(node,$('goal-focus-restructure-panel'));
     return;
   }
   const recap=goalRecapHtml(node,agentState,curiosities,evidence);
@@ -8385,7 +8668,7 @@ function renderGoalFocusPanel(){
     ? (node.type==='task'
       ? ''
       : (leaves.length?leaves.slice(0,6).map(leaf=>
-        '<div class="goal-focus-leaf"><span data-open="'+leaf.id+'" title="Open this Leaf">'+goalExecutionBadge(leaf,executionOrder)+'<b>'+esc(leaf.title)+'</b>'+
+        '<div class="goal-focus-leaf"><span data-open="'+leaf.id+'" title="Open this Leaf">'+goalPlanningRoleChip(leaf)+'<b>'+esc(leaf.title)+'</b>'+
         (leaf.due_date?' · due '+esc(leaf.due_date):'')+
         (leaf.priority&&leaf.priority!=='normal'?' · '+esc(leaf.priority):'')+'</span></div>').join(''):
         '<p class="goal-focus-muted">No active Leaves under this node yet.</p>'))
@@ -8393,7 +8676,7 @@ function renderGoalFocusPanel(){
     ? '<label class="goal-focus-leaf"><input type="checkbox" class="goal-focus-complete" data-leaf-id="'+node.id+'" '+(node.status==='completed'?'checked':'')+'><span>'+esc(node.status==='completed'?'Completed':'Mark this Leaf complete when it is actually done')+'</span></label>'
     : (leaves.length?leaves.slice(0,6).map(leaf=>
         '<label class="goal-focus-leaf"><input type="checkbox" class="goal-focus-complete" data-leaf-id="'+leaf.id+'"><span data-open="'+leaf.id+'" title="Open this Leaf">'+
-        goalExecutionBadge(leaf,executionOrder)+'<b>'+esc(leaf.title)+'</b>'+(leaf.due_date?' · due '+esc(leaf.due_date):'')+
+        goalPlanningRoleChip(leaf)+'<b>'+esc(leaf.title)+'</b>'+(leaf.due_date?' · due '+esc(leaf.due_date):'')+
         (leaf.priority&&leaf.priority!=='normal'?' · '+esc(leaf.priority):'')+'</span></label>').join(''):
         '<p class="goal-focus-muted">No active Leaves under this node yet.</p>');
   const agentBrief=String(agentState.brief||'').trim();
@@ -8414,25 +8697,23 @@ function renderGoalFocusPanel(){
       ? '<button class="accent goal-add-something">'+(APP_LANG==='ko'?'무언가 추가':'Add something')+'</button>'
       : '');
   const actionHtml=launchReadOnly
-    ? '<div class="actions"><button class="accent" id="goal-focus-ask-command">'+esc(goalAskFaerieLabel(node))+'</button>'+
-      (node.type!=='umbrella'?'<button id="goal-focus-restructure">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+'</div>'
+    ? '<div class="actions"><button class="accent" id="goal-focus-ask-command">'+esc(goalAskFaerieLabel(node))+'</button></div>'
     : (node.type==='task'?'':'<div class="actions">'+(questionCards?'<button class="accent" id="goal-focus-submit">Submit answers & review node</button>':'')+
       (mode==='leaf'?'<button id="goal-focus-dismiss">Dismiss & rethink</button>':'')+
       '<button id="goal-focus-edit">Edit details</button>'+
       '<button id="goal-focus-ask">Ask Agent</button><button id="goal-focus-review">Review node</button>'+
       '<button id="goal-focus-relevance">Review relevance</button>'+
-      (node.type!=='umbrella'?'<button id="goal-focus-restructure">'+(APP_LANG==='ko'?'구조 변경':'Restructure')+'</button>':'')+
       creationButtons+
       '</div>');
   const visibleActionHtml=node.type==='task'&&node.status==='completed'
     ?''
     :node.status==='archived'
-    ?goalLifecycleActionHtml(node)
-    :actionHtml+goalLifecycleActionHtml(node);
+    ?''
+    :actionHtml;
   const focusIdentity=node.type==='umbrella'?'':('<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
     '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
-    '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+
-    esc(node.status||'active')+'</span><span class="goal-chip">'+esc(node.priority||'normal')+'</span></div>');
+    '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span>'+goalPlanningRoleChip(node)+goalProjectSignalChips(node)+'<span class="goal-chip">'+
+    esc(node.status||'active')+'</span>'+(node.type==='task'?'<span class="goal-chip">'+esc(node.priority||'normal')+'</span>':'')+'</div>');
   panel.innerHTML=focusIdentity+
     (node.type==='task'?(workspaceHtml||(recap+relevance+goalLeafStepsHtml(node))):
       ((node.type==='umbrella'?'':recap+relevance)+progressHtml))+
@@ -8452,7 +8733,8 @@ function renderGoalFocusPanel(){
       : '')+
     (originalNote&&!(node.type==='task'&&node.status==='completed')?'<details class="goal-full-note"><summary>Show full original note</summary><div>'+
       esc(originalNote)+'</div></details>':'')+
-    visibleActionHtml+(node.type!=='umbrella'?'<div id="goal-focus-restructure-panel" hidden></div>':'')+
+    goalProjectSignalActionsHtml(node)+visibleActionHtml+
+    goalEditNodeActionsHtml(node,'goal-focus-restructure','goal-focus-restructure-panel')+
     (node.type==='umbrella'?'<div class="goal-root-starters-panel" hidden></div>':'')+
     (node.type!=='umbrella'&&node.type!=='task'?'<div class="goal-intake-panel" hidden></div>':'')+
     (showGoalAi?'<div class="cur-sub">What does GoalAI think right now?</div>'+goalAiHtml:'')+
@@ -8465,6 +8747,7 @@ function renderGoalFocusPanel(){
   bindCollapsePrefs(panel);
   bindGoalFocusPanel(node,childType);
   bindGoalCompletedLeafControls(node,panel);
+  bindGoalProjectSignalControls(node,panel);
 }
 
 function bindGoalRelevanceControls(node,root,reviewButton){
@@ -8735,7 +9018,7 @@ function submitGoalFocusAnswers(node){
     if(r.tree) latestTree=r.tree;
   }), Promise.resolve());
   chain.then(()=>{
-    if(latestTree&&goalState) goalState.tree=latestTree;
+    if(latestTree&&goalState) goalState.tree=goalDerivePlanningRoles(latestTree);
     goalFocusPending={
       nodeId:node.id,
       questions:answers.map(x=>x.question),
@@ -8758,6 +9041,7 @@ function submitGoalFocusAnswers(node){
   }).then(r=>{
     if(!r||r.ok===false) throw new Error((r&&r.message)||'Could not reload goals.');
     goalState=r;
+    goalDerivePlanningRoles(goalState.tree);
     return pywebview.api.goal_ai_state(node.id);
   }).then(r=>{
     if(!r||r.ok===false) throw new Error((r&&r.message)||'Could not reload GoalAI.');
@@ -8793,7 +9077,7 @@ function buildGoalConstellation(tree){
     const wobble=((Number(node.id)||0)%17-8)*1.7;
     const x=depth===0?cx:cx+Math.cos(angle)*(radiusX+wobble);
     const y=depth===0?cy:cy+Math.sin(angle)*(radiusY+wobble*.55);
-    nodes.push({node,depth,x,y,angle});
+    nodes.push({node,depth,x,y,angle,parentId});
     if(parentId!=null) edges.push({sourceId:parentId,targetId:node.id});
     if(!children.length) return;
     const total=children.reduce((sum,child)=>sum+goalSubtreeWeight(child),0) || children.length;
@@ -8819,6 +9103,7 @@ function buildGoalConstellation(tree){
       item.y=Math.max(-900,Math.min(height+900,Number(saved.y)));
     }
   });
+  placeGoalLeavesNearParents(nodes,width,height);
   const maxDepth=Math.max(0,...nodes.map(item=>item.depth));
   const rings=Array.from({length:maxDepth},(_,index)=>({
     depth:index+1,
@@ -8826,6 +9111,44 @@ function buildGoalConstellation(tree){
     ry:depthRadiusY[Math.min(index+1,depthRadiusY.length-1)]
   }));
   return {width,height,nodes,edges,rings};
+}
+
+function placeGoalLeavesNearParents(nodes,width,height){
+  const byId=Object.fromEntries(nodes.map(item=>[String(item.node.id),item]));
+  const groups=new Map();
+  nodes.forEach(item=>{
+    const saved=goalMapPositions[item.node.id];
+    const manuallyPlaced=saved&&Number.isFinite(saved.x)&&Number.isFinite(saved.y);
+    if(item.node.type!=='task'||item.parentId==null||manuallyPlaced) return;
+    const key=String(item.parentId);
+    if(!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(item);
+  });
+  groups.forEach((leaves,parentId)=>{
+    const parent=byId[String(parentId)];
+    if(!parent) return;
+    leaves.sort((a,b)=>(Number(a.node.id)||0)-(Number(b.node.id)||0));
+    const perRing=6;
+    for(let offset=0;offset<leaves.length;offset+=perRing){
+      const ring=leaves.slice(offset,offset+perRing);
+      const distance=76+Math.floor(offset/perRing)*38;
+      const outward=Math.atan2(parent.y-height/2,parent.x-width/2);
+      ring.forEach((leaf,index)=>{
+        const spread=ring.length===1?0:(index-(ring.length-1)/2)*Math.min(.46,1.9/(ring.length-1));
+        let angle=outward+spread;
+        let x=parent.x+Math.cos(angle)*distance;
+        let y=parent.y+Math.sin(angle)*distance;
+        const parentInside=parent.x>=60&&parent.x<=width-60&&parent.y>=60&&parent.y<=height-60;
+        if(parentInside&&(x<55||x>width-55||y<55||y>height-55)){
+          angle+=Math.PI;
+          x=parent.x+Math.cos(angle)*distance;
+          y=parent.y+Math.sin(angle)*distance;
+        }
+        leaf.x=Math.max(-1200,Math.min(width+1200,x));
+        leaf.y=Math.max(-900,Math.min(height+900,y));
+      });
+    }
+  });
 }
 
 function renderGoalConstellation(summaryId,treeId,opts){
@@ -8842,7 +9165,6 @@ function renderGoalConstellation(summaryId,treeId,opts){
   if(!selectedGoalId) selectedGoalId=tree.id;
   const selected=goalFind(tree,selectedGoalId)||tree;
   const map=buildGoalConstellation(tree);
-  const executionOrder=goalExecutionOrder(tree);
   box.classList.toggle('skin-solar',growthMapSkin==='solar');
   const nodeById=Object.fromEntries(map.nodes.map(x=>[x.node.id,x]));
   const selectedAncestors=new Set();
@@ -8881,25 +9203,30 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const structurePrefix=node.type==='overgoal'||node.type==='subgoal'?goalTypeLabel(node.type,node)+' · ':'';
     const label=goalLabelShort(structurePrefix+node.title,node.type==='task'?24:34);
     const labelDy=item.depth===0?-25:(node.type==='task'?18:22);
-    const order=executionOrder.get(node.id);
-    const orderTitle=order?(APP_LANG==='ko'
-      ?' · '+order.scope+' 안의 추천 실행 순서 '+order.rank+'/'+order.total
-      :' · recommended execution order '+order.rank+' of '+order.total+' within '+order.scope):'';
+    const planningLabel=goalPlanningRoleLabel(node);
+    const planningWidth=planningLabel==='TENTATIVE NEXT'||planningLabel==='잠정 다음'?86:32;
+    const projectSignal=goalProjectSignalLabel(node);
+    const projectSignalWidth=Math.max(48,projectSignal.length*5.1);
     const semanticClass=node.type==='subgoal'&&node.semantic_role
       ?' semantic-'+String(node.semantic_role).toLowerCase():'';
-    return '<g class="constellation-node '+esc(node.type)+semanticClass+status+selectedClass+care+(greatest?' greatest':'')+
+    const projectFocus=goalProjectFocus(node);
+    const signalClass=(projectFocus.currently_working?' project-current':'')+
+      (projectFocus.highest_priority?' project-highest':'');
+    return '<g class="constellation-node '+esc(node.type)+semanticClass+signalClass+status+selectedClass+care+(greatest?' greatest':'')+
       '" tabindex="0" role="button" data-map-goal-id="'+node.id+'" transform="translate('+
       item.x.toFixed(1)+' '+item.y.toFixed(1)+')">'+
       '<title>'+esc(goalTypeLabel(node.type,node)+' · '+node.title+' · '+goalCompletionLabel(node)+
-        (greatest?' · linked to the greatest curiosity':'')+orderTitle)+'</title>'+
+        (planningLabel?' · '+planningLabel:'')+(projectSignal?' · '+projectSignal:'')+
+        (greatest?' · linked to the greatest curiosity':''))+'</title>'+
       '<circle class="glow" r="'+glow+'"></circle>'+
       (care?'<circle class="halo" r="'+(glow+5)+'"></circle>':'')+
       (greatest?'<circle class="greatest-ring" r="'+(radius+4.5)+'"></circle>':'')+
       '<circle class="core" r="'+radius+'"></circle>'+
       '<circle class="planet-shine" cx="'+(-radius*.32).toFixed(1)+'" cy="'+(-radius*.34).toFixed(1)+
       '" r="'+Math.max(1.2,radius*.18).toFixed(1)+'"></circle>'+
-      (order?'<g class="execution-order-badge" transform="translate('+(radius+6)+' '+(-radius-6)+')"><circle r="7"></circle><text text-anchor="middle" dominant-baseline="central">'+order.rank+'</text></g>':'')+
-      '<text text-anchor="middle" y="'+labelDy+'">'+esc(label)+'</text></g>';
+      '<text text-anchor="middle" y="'+labelDy+'">'+esc(label)+'</text>'+
+      (planningLabel?'<g class="planning-role-badge '+esc(String(node.planning_role||''))+'" transform="translate(0 '+(labelDy+13)+')"><rect x="'+(-planningWidth/2)+'" y="-6" width="'+planningWidth+'" height="12" rx="6"></rect><text text-anchor="middle" dominant-baseline="central">'+esc(planningLabel)+'</text></g>':'')+
+      (projectSignal?'<g class="project-signal-badge" transform="translate(0 '+(labelDy+13)+')"><rect x="'+(-projectSignalWidth/2)+'" y="-6" width="'+projectSignalWidth+'" height="12" rx="6"></rect><text text-anchor="middle" dominant-baseline="central">'+esc(projectSignal)+'</text></g>':'')+'</g>';
   }).join('');
   const view=constellationViewState[treeId]||{scale:1,panX:0,panY:0};
   constellationViewState[treeId]=view;
@@ -8917,11 +9244,13 @@ function renderGoalConstellation(summaryId,treeId,opts){
     '<feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs>'+
     '<g class="constellation-viewport" transform="translate('+view.panX+' '+view.panY+') scale('+view.scale+
     ')" filter="url(#starSoftGlow)">'+orbits+edges+nodes+'</g></svg>';
+  fitConstellationBadges(box);
   const path=goalPathTitles(tree,selected.id,[])||[selected.title];
   if(summary){
     const nextAction=goalNextActionText(selected);
     summary.innerHTML='<div class="growth-map-summary-card"><b>'+esc(selected.title)+'</b>'+
       '<span>'+esc(goalTypeLabel(selected.type,selected))+' · '+esc(selected.status||'active')+
+      (goalPlanningRoleLabel(selected)?' · '+esc(goalPlanningRoleLabel(selected)):'')+
       ' · '+esc(goalCompletionLabel(selected))+'<br>'+esc(path.join(' › '))+'</span></div>'+
       (nextAction?'<div class="growth-map-summary-card"><b>TO DO</b><span>'+
       esc(nextAction)+'</span></div>':'');
@@ -9090,18 +9419,13 @@ function closeGrowthMap(){
 function goalActiveLeaves(node,out){
   out=out||[];
   if(!node) return out;
-  if(node.type==='task'&&node.status==='active') out.push(node);
+  if(node.type==='task'&&['active','paused'].includes(node.status)) out.push(node);
   (node.children||[]).forEach(child=>goalActiveLeaves(child,out));
   return out;
 }
 
 function goalNextActionText(node){
-  const leaves=goalActiveLeaves(node).sort((a,b)=>{
-    const pr={high:0,normal:1,low:2};
-    return (pr[a.priority||'normal']??1)-(pr[b.priority||'normal']??1) ||
-      String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')) ||
-      (a.position||0)-(b.position||0);
-  });
+  const leaves=goalSortedActiveLeaves(node);
   if(node.status==='paused') return 'This node is paused — unpause it when it becomes active again.';
   if(node.status==='completed') return 'This node is complete. Add evidence if there is something worth preserving.';
   if(leaves.length) return leaves[0].title;
@@ -9233,6 +9557,9 @@ function renderGoalRestructureManual(node,panel,recommendation,autoPreview){
     '<div class="goal-grid"><label class="goal-field">'+(APP_LANG==='ko'?'새 유형':'New type')+'<select class="goal-restructure-type">'+
       restructureKinds.map(kind=>'<option value="'+kind+'"'+(kind===defaultKind?' selected':'')+'>'+esc(kindLabel(kind))+'</option>').join('')+
     '</select></label><label class="goal-field">'+(APP_LANG==='ko'?'새 상위 영역':'New parent')+'<select class="goal-restructure-parent"></select></label></div>'+
+    '<p class="hint">'+(APP_LANG==='ko'
+      ?'단계는 선택 사항입니다. 여러 Leaf가 필요한 뚜렷한 프로젝트 구간에만 사용하세요. 작은 프로젝트는 프로젝트에서 Leaf로 바로 연결하는 편이 낫습니다.'
+      :'Stage is optional. Use it only for a distinct project phase that needs several Leaves; smaller Projects should usually connect directly to Leaves.')+'</p>'+
     '<label class="goal-field">'+(APP_LANG==='ko'?'같은 상위 영역 안의 위치':'Position under new parent')+'<input class="goal-restructure-position" type="number" min="1" value="'+(((recommendation&&recommendation.preview&&recommendation.preview.proposed.position)!=null?recommendation.preview.proposed.position:Number(node.position||0))+1)+'"></label>'+
     '<label class="goal-field">'+(APP_LANG==='ko'?'변경 이유':'Reason for restructuring')+'<textarea class="goal-restructure-reason" rows="2" placeholder="'+esc(APP_LANG==='ko'?'예: 이 프로젝트는 Career 영역 안의 실험입니다.':'Example: This is a temporary experiment owned by the Career area.')+'"></textarea></label>'+
     '<div class="actions"><button class="accent goal-restructure-preview">'+(APP_LANG==='ko'?'변경 미리보기':'Preview restructure')+'</button>'+
@@ -9315,7 +9642,7 @@ function renderGoalDetail(){
       (x.id===node.parent_id?' selected':'')+'>'+esc(x.title)+' ('+esc(goalTypeLabel(x.type,x))+')</option>').join('');
   const statusChoices=node.status==='archived'?['archived']:['active','paused','completed'];
   $('goal-detail').innerHTML='<div class="cur-head"><span class="cur-label">'+esc(node.title)+'</span>'+
-    '<span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span><span class="goal-chip">'+esc(node.status)+'</span></div>'+
+    '<span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span>'+goalPlanningRoleChip(node)+goalProjectSignalChips(node)+'<span class="goal-chip">'+esc(node.status)+'</span></div>'+
     '<div class="goal-progress"><div class="goal-progress-head"><span>Task completion</span><span>'+pctText+'</span></div>'+
     '<div class="metric-progress"><i style="width:'+(c.percent||0)+'%"></i></div></div>'+
     (node.type==='task'
@@ -9327,9 +9654,13 @@ function renderGoalDetail(){
     '<div class="goal-grid"><label class="goal-field">Status<select id="goal-node-status">'+
       statusChoices.filter(x=>node.type!=='umbrella'||x!=='completed').map(x=>
         '<option'+(x===node.status?' selected':'')+'>'+x+'</option>').join('')+'</select></label>'+
-      '<label class="goal-field">Priority<select id="goal-priority">'+['low','normal','high'].map(x=>
-        '<option'+(x===node.priority?' selected':'')+'>'+x+'</option>').join('')+'</select></label></div>'+
-    '<label class="goal-field">Due date<input id="goal-due" type="date" value="'+esc(node.due_date||'')+'"></label>'+
+      (node.type==='task'?'<label class="goal-field">Leaf priority<select id="goal-priority">'+['low','normal','high'].map(x=>
+        '<option'+(x===node.priority?' selected':'')+'>'+x+'</option>').join('')+'</select></label>':
+        '<input id="goal-priority" type="hidden" value="'+esc(node.priority||'normal')+'">')+'</div>'+
+    (node.type==='task'?'<label class="goal-field">Due date<input id="goal-due" type="date" value="'+esc(node.due_date||'')+'"></label>':
+      '<input id="goal-due" type="hidden" value="'+esc(node.due_date||'')+'">')+
+    (goalIsProject(node)?'<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'프로젝트 주의 신호':'Project attention')+'</b><p class="hint">'+
+      (APP_LANG==='ko'?'NOW와 잠정 다음 표시는 현재 작업 중이거나 최우선인 프로젝트에만 나타납니다. 각 신호는 전체에서 한 프로젝트만 가질 수 있습니다.':'NOW and TENTATIVE NEXT appear only for a Project marked Currently working or Highest priority. Each signal belongs to one Project globally.')+'</p>'+goalProjectSignalActionsHtml(node)+'</div>':'')+
     (node.type!=='umbrella'?'<div class="goal-grid"><label class="goal-field">Parent<select id="goal-parent">'+
       parentOptions+'</select></label><label class="goal-field" title="Where this node appears among the other children of the same parent.">Position among siblings<input id="goal-position" type="number" min="1" value="'+
       ((node.position||0)+1)+'"></label></div><div class="actions"><button id="goal-move">Move / reorder</button></div>':'')+
@@ -9362,6 +9693,7 @@ function renderGoalDetail(){
   bindGoalLeafAgentEntry(node,$('goal-detail'));
   bindGoalCompletedLeafControls(node,$('goal-detail'));
   bindGoalArchiveControls(node,$('goal-detail'));
+  bindGoalProjectSignalControls(node,$('goal-detail'));
   $('goal-detail').querySelectorAll('[data-open]').forEach(el=>{
     el.onclick=e=>{e.preventDefault();selectGrowthNode(el.dataset.open);};
   });
@@ -9796,7 +10128,7 @@ function handleGoalMutation(r){
 function applyGoalTreeUpdate(r){
   if(!r||r.ok===false) return;
   if(r.tree){
-    goalState.tree=r.tree;
+    goalState.tree=goalDerivePlanningRoles(r.tree);
     renderGrowthViewMode();
     if($('growth-map-overlay')&&$('growth-map-overlay').classList.contains('open')) renderGrowthMap();
   } else loadGoals();
@@ -9809,6 +10141,7 @@ function loadGoals(){
     $('goal-status').textContent='';
     if(!r||r.ok===false){ toast((r&&r.message)||'Could not load goals.',true); return; }
     goalState=r;
+    goalDerivePlanningRoles(goalState.tree);
     if(goalState.tree&&selectedGoalId&&!goalFind(goalState.tree,selectedGoalId)) selectedGoalId=goalState.tree.id;
     if(goalState.tree&&!selectedGoalId) selectedGoalId=goalState.tree.id;
     renderGrowthViewMode();
@@ -9828,6 +10161,7 @@ if($('goal-backfill-origin')) $('goal-backfill-origin').onclick=()=>{
     btn.disabled=false; btn.textContent='Backfill context';
     if(!r||r.ok===false){ toast((r&&r.message)||'Could not backfill context.',true); return; }
     goalState=r;
+    goalDerivePlanningRoles(goalState.tree);
     renderGrowthViewMode();
     toast(r.backfilled?'Backfilled '+r.backfilled+' node recap(s).':'Nothing needed backfill.');
   }).catch(e=>{ btn.disabled=false; btn.textContent='Backfill context'; toast('Could not backfill context: '+e,true); });

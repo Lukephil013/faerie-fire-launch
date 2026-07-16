@@ -375,6 +375,16 @@ class GuiApi:
             if row is None:
                 raise ValueError("Investigation context owner not found")
             key = str(int(key))
+        elif kind == "leaf_workspace":
+            from livingpc.goals import GoalStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                row = goals.get(int(key))
+            finally:
+                goals.close()
+            if not row or row.get("type") != "task" or row.get("status") == "archived":
+                raise ValueError("active Leaf Workspace owner not found")
+            key = str(int(key))
         else:
             raise ValueError("unsupported context attachment owner")
         return kind, key
@@ -1864,16 +1874,40 @@ class GuiApi:
             stale_days = int(getattr(self.cfg, "goal_relevance_stale_days", 30))
 
             def enrich(node):
+                children = node.get("children", [])
+                direct_open_leaves = sorted(
+                    (
+                        child for child in children
+                        if child.get("type") == "task"
+                        and child.get("status") in {"active", "paused"}
+                    ),
+                    key=lambda child: (
+                        int(child.get("position") or 0), int(child["id"])),
+                )
+                for child in children:
+                    if child.get("type") == "task":
+                        child["planning_role"] = None
+                project_focus = node.get("project_focus") or {}
+                show_horizon = (
+                    node.get("type") == "subgoal"
+                    and node.get("semantic_role") == "project"
+                    and (project_focus.get("highest_priority")
+                         or project_focus.get("currently_working")))
+                if show_horizon:
+                    for planning_role, leaf in zip(
+                            ("now", "provisional"), direct_open_leaves):
+                        leaf["planning_role"] = planning_role
                 node["relevance"] = goal_relevance_view(
                     goals, agents, node["id"], stale_days=stale_days)
                 node["leaf_workspace"] = (
                     agents.leaf_workspace_summary(node["id"])
                     if node.get("type") == "task" else {})
-                for child in node.get("children", []):
+                for child in children:
                     enrich(child)
 
             enrich(tree)
             return {"ok": True, "tree": tree,
+                    "project_signals": goals.project_signals(),
                     "curiosities": curiosities.list_curiosities(),
                     "relevance_due": relevance_due_nodes(
                         goals, agents, stale_days=stale_days)}
@@ -2309,6 +2343,19 @@ class GuiApi:
         store = GoalStore(self.cfg.memory_db_path)
         try:
             return {"ok": True, "goal": store.update(int(goal_id), **dict(changes or {})),
+                    "tree": store.tree()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_set_project_signal(self, goal_id, kind, enabled=True) -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            signals = store.set_project_signal(
+                int(goal_id), str(kind), bool(enabled))
+            return {"ok": True, "project_signals": signals,
                     "tree": store.tree()}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}

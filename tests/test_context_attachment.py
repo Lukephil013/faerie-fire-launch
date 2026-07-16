@@ -9,6 +9,7 @@ from livingpc.companion.brain import Companion, StubChat
 from livingpc.config import Config
 from livingpc.context_attachment import ContextAttachmentStore, extract_document
 from livingpc.curiosity import CuriosityStore, answer_item, _build_context
+from livingpc.goals import GoalStore
 from livingpc.inference import InferenceStore
 from livingpc.memory import MemoryStore
 from gui import GuiApi
@@ -58,6 +59,44 @@ def test_owner_scope_deduplication_relevant_excerpt_and_hard_remove(tmp_path):
         assert "energy crash" in block and "Unrelated" not in block
         assert store.remove(first["id"], "curiosity", 1)
         assert store.list("curiosity", 1) == []
+    finally:
+        store.close()
+
+
+def test_attachment_schema_upgrade_adds_leaf_workspace_without_losing_documents(tmp_path):
+    path = tmp_path / "memory.db"
+    conn = sqlite3.connect(path)
+    conn.execute("""
+        CREATE TABLE context_attachment (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_kind TEXT NOT NULL,
+            owner_key TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            media_type TEXT NOT NULL,
+            content_text TEXT NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            char_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK (owner_kind IN ('soul_calibration','curiosity','curiosity_item')),
+            UNIQUE (owner_kind,owner_key,content_sha256)
+        )
+    """)
+    conn.execute(
+        "INSERT INTO context_attachment "
+        "(owner_kind,owner_key,filename,media_type,content_text,content_sha256,"
+        "char_count,created_at) VALUES (?,?,?,?,?,?,?,?)",
+        ("curiosity", "7", crypto.enc("existing.txt"), "text/plain",
+         crypto.enc("Existing encrypted context."), "old-digest", 27,
+         "2026-01-01T00:00:00+00:00"))
+    conn.commit(); conn.close()
+
+    store = ContextAttachmentStore(str(path))
+    try:
+        assert store.list("curiosity", 7)[0]["name"] == "existing.txt"
+        leaf = store.add_text(
+            "leaf_workspace", 42, "leaf-notes.md", "Leaf-only reference material.")
+        assert leaf["owner_kind"] == "leaf_workspace"
+        assert store.list("leaf_workspace", 42)[0]["name"] == "leaf-notes.md"
     finally:
         store.close()
 
@@ -173,3 +212,31 @@ def test_gui_picker_persists_and_removes_investigation_document(tmp_path):
     removed = api.context_attachment_remove(
         added["attachment"]["id"], "curiosity", cid)
     assert removed == {"ok": True, "removed": True}
+
+
+def test_gui_picker_accepts_only_real_leaf_workspace_owners(tmp_path):
+    cfg = config(str(tmp_path))
+    goals = GoalStore(cfg.memory_db_path)
+    root = goals.create("overgoal", "Career")
+    project = goals.create("subgoal", "Portfolio project", parent_id=root)
+    leaf = goals.create("task", "Scan project brief", parent_id=project)
+    goals.close()
+    document = tmp_path / "brief.md"
+    document.write_text("The brief requires a CSV export and audit trail.", encoding="utf-8")
+
+    class Window:
+        def create_file_dialog(self, *_args, **_kwargs):
+            return [str(document)]
+
+    api = GuiApi(cfg=cfg)
+    api._window = Window()
+    added = api.context_attachment_add("leaf_workspace", leaf)
+    assert added["ok"] and added["attachment"]["name"] == "brief.md"
+    rejected = api.context_attachment_add("leaf_workspace", project)
+    assert rejected["ok"] is False and "Leaf Workspace owner" in rejected["message"]
+    documents = ContextAttachmentStore(cfg.memory_db_path)
+    try:
+        assert [item["name"] for item in documents.list("leaf_workspace", leaf)] == [
+            "brief.md"]
+    finally:
+        documents.close()
