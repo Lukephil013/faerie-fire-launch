@@ -260,6 +260,10 @@ def _normalize_leaf_handoff(value: dict | None) -> dict:
     raw = dict(value or {})
     def text(key: str, limit: int = 4000) -> str:
         return str(raw.get(key) or "").strip()[:limit]
+    try:
+        artifact_confidence = float(raw.get("artifact_confidence") or 0.0)
+    except (TypeError, ValueError):
+        artifact_confidence = 0.0
 
     constraints = raw.get("constraints")
     if isinstance(constraints, str):
@@ -273,11 +277,147 @@ def _normalize_leaf_handoff(value: dict | None) -> dict:
         unresolved = "\n".join(str(item).strip() for item in unresolved if str(item).strip())
     return {
         "output_summary": text("output_summary", 1600),
-        "working_material": text("working_material", 5000),
+        "working_material": text("working_material", 20000),
         "constraints": constraints[:12],
         "unresolved_questions": str(unresolved or "").strip()[:2400],
         "suggested_start": text("suggested_start", 1600),
+        "artifact_required": raw.get("artifact_required") is True,
+        "artifact_included": raw.get("artifact_included") is True,
+        "artifact_confidence": max(0.0, min(1.0, artifact_confidence)),
+        "artifact_kind": text("artifact_kind", 120),
+        "artifact_source_message_ids": [
+            int(value) for value in (raw.get("artifact_source_message_ids") or [])
+            if str(value).isdigit()
+        ][:8],
     }
+
+
+_HANDOFF_CREATION_WORDS = {
+    "draft", "write", "create", "build", "prepare", "compose", "design",
+    "collect", "brainstorm", "develop", "make", "produce", "finalize",
+}
+_HANDOFF_USE_WORDS = {
+    "publish", "post", "submit", "apply", "use", "review", "evaluate",
+    "select", "implement", "launch", "send", "present", "upload", "ship",
+}
+_HANDOFF_ARTIFACT_WORDS = {
+    "profile", "draft", "document", "report", "proposal", "template", "copy",
+    "resume", "portfolio", "plan", "list", "examples", "design", "code",
+    "analysis", "brief", "guide", "email", "application", "headline",
+}
+_HANDOFF_STOP_WORDS = {
+    "the", "a", "an", "and", "or", "to", "for", "of", "in", "on", "with",
+    "this", "that", "first", "next", "leaf", "project", "now", "tentative",
+}
+
+
+def _handoff_words(value: str) -> set[str]:
+    return {word for word in re.findall(r"[a-z0-9]+", str(value or "").casefold())
+            if len(word) > 2 and word not in _HANDOFF_STOP_WORDS}
+
+
+def _leaf_handoff_artifact_dependency(source: dict, destination: dict) -> dict:
+    """Identify when the next Leaf directly consumes this Leaf's deliverable."""
+    source_text = " ".join(str(source.get(key) or "") for key in
+                           ("title", "description", "notes"))
+    destination_text = " ".join(str(destination.get(key) or "") for key in
+                                ("title", "description", "notes"))
+    source_words, destination_words = (_handoff_words(source_text),
+                                       _handoff_words(destination_text))
+    source_creates = bool(source_words & _HANDOFF_CREATION_WORDS)
+    destination_uses = bool(destination_words & _HANDOFF_USE_WORDS)
+    shared = source_words & destination_words
+    shared_artifacts = shared & _HANDOFF_ARTIFACT_WORDS
+    confidence = 0.0
+    if source_creates and destination_uses:
+        confidence += 0.65
+    if shared_artifacts:
+        confidence += 0.25
+    elif shared:
+        confidence += 0.15
+    if any(word in destination_words for word in (source_words & _HANDOFF_ARTIFACT_WORDS)):
+        confidence += 0.1
+    confidence = min(1.0, confidence)
+    artifact_kind = (sorted(shared_artifacts)[0] if shared_artifacts else
+                     sorted(source_words & _HANDOFF_ARTIFACT_WORDS)[0]
+                     if source_words & _HANDOFF_ARTIFACT_WORDS else "deliverable")
+    return {
+        "required": confidence >= 0.75,
+        "confidence": confidence,
+        "artifact_kind": artifact_kind,
+        "shared_terms": sorted(shared)[:12],
+        "reason": ("The destination Leaf directly uses the artifact produced by "
+                   "the source Leaf." if confidence >= 0.75 else
+                   "The destination can continue from a compact result summary."),
+    }
+
+
+def _leaf_handoff_artifact_candidate(source: dict, destination: dict,
+                                     messages: list[dict]) -> dict:
+    dependency = _leaf_handoff_artifact_dependency(source, destination)
+    dependency.update({"text": "", "source_message_ids": []})
+    if not dependency["required"]:
+        return dependency
+    terms = set(dependency.get("shared_terms") or []) | {
+        str(dependency.get("artifact_kind") or "")}
+    ranked = []
+    for index, raw_message in enumerate(messages or []):
+        message = _readable_leaf_workspace_message(raw_message)
+        if message.get("role") != "assistant":
+            continue
+        if (message.get("payload") or {}).get("recovered_partial"):
+            continue
+        content = str(message.get("content") or "").strip()
+        if len(content) < 180:
+            continue
+        words = _handoff_words(content)
+        term_hits = len(words & terms)
+        structure = sum(token in content for token in (
+            "\n#", "\n- ", "\n1.", "Title:", "Overview", "Template", "```"))
+        score = min(3.0, len(content) / 1800.0) + term_hits * 0.8 + structure * 0.35
+        ranked.append((score, len(content), index, message, content))
+    if not ranked:
+        return dependency
+    _score, _length, _index, message, content = max(ranked)
+    dependency["text"] = content[:18000]
+    dependency["source_message_ids"] = ([int(message["id"])]
+                                         if str(message.get("id") or "").isdigit() else [])
+    return dependency
+
+
+def _handoff_material_contains_artifact(material: str, artifact: str) -> bool:
+    material, artifact = str(material or ""), str(artifact or "")
+    if not artifact:
+        return True
+    if artifact in material:
+        return True
+    anchors = [line.strip() for line in artifact.splitlines()
+               if len(line.strip()) >= 28][:10]
+    return bool(anchors and sum(anchor in material for anchor in anchors) >=
+                max(2, (len(anchors) + 1) // 2))
+
+
+def _ensure_required_handoff_artifact(drafted: dict, dependency: dict) -> dict:
+    raw = dict(drafted or {})
+    artifact = str(dependency.get("text") or "").strip()
+    required = dependency.get("required") is True
+    material = str(raw.get("working_material") or "").strip()
+    included = _handoff_material_contains_artifact(material, artifact)
+    if required and artifact and not included:
+        notes = material
+        material = artifact
+        if notes and notes not in artifact:
+            material += "\n\nHANDOFF NOTES\n" + notes
+        included = True
+    raw.update({
+        "working_material": material,
+        "artifact_required": required,
+        "artifact_included": bool(included and artifact),
+        "artifact_confidence": float(dependency.get("confidence") or 0.0),
+        "artifact_kind": str(dependency.get("artifact_kind") or ""),
+        "artifact_source_message_ids": dependency.get("source_message_ids") or [],
+    })
+    return _normalize_leaf_handoff(raw)
 
 
 def parse_goal_steps(description: str, limit: int = 12) -> list[str]:
@@ -684,6 +824,7 @@ class LeafWorkspaceReply:
     working_patch: dict = field(default_factory=dict)
     selection_mode: str = "single"
     questions: list[dict] = field(default_factory=list)
+    recovered_partial: bool = False
 
 
 @dataclass
@@ -2793,16 +2934,22 @@ def build_leaf_workspace_context(goals: GoalStore, agents: GoalAgentStore,
     agents.ensure_leaf_workspace(node)
     state = agents.leaf_workspace_state(node_id)
     incoming_handoffs = []
+    handoff_material_limit = min(12000, max(5000, int(max_chars) * 2 // 3))
     for item in agents.incoming_leaf_handoffs(node_id, 3):
         handoff = dict(item)
         payload = dict(handoff.get("payload") or {})
         handoff["payload"] = {
             "output_summary": str(payload.get("output_summary") or "")[:1200],
-            "working_material": str(payload.get("working_material") or "")[:5000],
+            "working_material": str(payload.get("working_material") or "")[
+                :handoff_material_limit],
             "constraints": [str(value)[:300] for value in
                             (payload.get("constraints") or [])[:8]],
             "unresolved_questions": str(payload.get("unresolved_questions") or "")[:1200],
             "suggested_start": str(payload.get("suggested_start") or "")[:1200],
+            "artifact_required": payload.get("artifact_required") is True,
+            "artifact_included": payload.get("artifact_included") is True,
+            "artifact_confidence": payload.get("artifact_confidence") or 0.0,
+            "artifact_kind": str(payload.get("artifact_kind") or "")[:120],
         }
         incoming_handoffs.append(handoff)
     curiosity_details = []
@@ -2961,6 +3108,19 @@ def _leaf_workspace_view(goals: GoalStore, agents: GoalAgentStore,
                 message["payload"]["proposal"] = presented
             except (TypeError, ValueError):
                 message["payload"].pop("proposal", None)
+    incoming = agents.incoming_leaf_handoffs(node_id, 3)
+    for handoff in incoming:
+        dependency = _leaf_handoff_record_artifact_dependency(
+            goals, agents, handoff)
+        material = str((handoff.get("payload") or {}).get("working_material") or "")
+        artifact = str(dependency.get("text") or "")
+        handoff["artifact_repair"] = {
+            "available": bool(dependency.get("required") and artifact and
+                              not _handoff_material_contains_artifact(material, artifact)),
+            "confidence": float(dependency.get("confidence") or 0.0),
+            "artifact_kind": str(dependency.get("artifact_kind") or "deliverable"),
+            "artifact_char_count": len(artifact),
+        }
     outgoing = agents.outgoing_leaf_handoffs(node_id, 3)
     recovery_target = None
     if node.get("status") == "completed" and not outgoing:
@@ -2976,7 +3136,7 @@ def _leaf_workspace_view(goals: GoalStore, agents: GoalAgentStore,
             "phase": state["phase"], "kind": state["kind"],
             "agreement": state["agreement"], "working": state["working"],
             "plan": agents.leaf_workspace_plan(node_id), "messages": messages,
-            "incoming_handoffs": agents.incoming_leaf_handoffs(node_id, 3),
+            "incoming_handoffs": incoming,
             "outgoing_handoffs": outgoing,
             "handoff_recovery": {
                 "eligible": bool(recovery_target),
@@ -3029,17 +3189,22 @@ def _fallback_leaf_handoff(context: dict) -> dict:
 def _draft_leaf_handoff(config, goals: GoalStore, agents: GoalAgentStore,
                         node_id: int, destination: dict, completion: dict) -> dict:
     state = agents.leaf_workspace_state(node_id)
+    source = goals.get(node_id) or {}
+    source_messages = agents.leaf_workspace_messages(node_id, 100)
+    artifact_dependency = _leaf_handoff_artifact_candidate(
+        source, destination, source_messages)
     context = {
             "language": "ko" if lang_is_ko() else "en",
-            "source_leaf": {key: value for key, value in (goals.get(node_id) or {}).items()
+            "source_leaf": {key: value for key, value in source.items()
                             if key in {"id", "title", "description", "notes"}},
             "destination": destination,
             "completion": {key: completion.get(key) for key in
                            ("result", "what_happened", "lesson", "next_adjustment")},
             "agreement": state.get("agreement") or {},
             "plan": agents.leaf_workspace_plan(node_id),
+            "artifact_dependency": artifact_dependency,
             "source_conversation": _bounded_leaf_workspace_messages(
-                agents.leaf_workspace_messages(node_id, 100), max_chars=7000, limit=24),
+                source_messages, max_chars=7000, limit=24),
         }
     try:
         active = _leaf_handoff_model(config)
@@ -3053,7 +3218,51 @@ def _draft_leaf_handoff(config, goals: GoalStore, agents: GoalAgentStore,
             "goal-ai",
             f"Leaf handoff draft fallback node_id={node_id} error={type(error).__name__}")
         drafted = _fallback_leaf_handoff(context)
-    return drafted
+    return _ensure_required_handoff_artifact(drafted, artifact_dependency)
+
+
+def _leaf_handoff_record_artifact_dependency(
+        goals: GoalStore, agents: GoalAgentStore, handoff: dict) -> dict:
+    source = goals.get(int(handoff.get("source_leaf_id") or 0)) or {}
+    destination = goals.get(int(handoff.get("destination_leaf_id") or 0)) or {}
+    messages = agents.leaf_workspace_messages(int(source.get("id") or 0), 100)
+    return _leaf_handoff_artifact_candidate(source, destination, messages)
+
+
+def repair_leaf_handoff_artifact(config, node_id: int, handoff_id: int) -> dict:
+    """Explicitly restore a missing produced artifact into an older handoff."""
+    goals = GoalStore(config.memory_db_path)
+    agents = GoalAgentStore(config.memory_db_path)
+    try:
+        node = goals.get(int(node_id))
+        if not node or node.get("type") != "task":
+            raise ValueError("a destination Leaf is required")
+        handoff = agents.leaf_handoff(int(handoff_id))
+        if int(handoff.get("destination_leaf_id") or 0) != int(node_id):
+            raise ValueError("that handoff does not belong to this Leaf")
+        dependency = _leaf_handoff_record_artifact_dependency(goals, agents, handoff)
+        artifact = str(dependency.get("text") or "").strip()
+        current = dict(handoff.get("payload") or {})
+        if not dependency.get("required") or not artifact:
+            raise ValueError("no high-confidence source artifact was found")
+        if _handoff_material_contains_artifact(
+                str(current.get("working_material") or ""), artifact):
+            raise ValueError("the handoff already contains the source artifact")
+        repaired = _ensure_required_handoff_artifact(current, dependency)
+        agents.conn.execute(
+            "UPDATE goal_leaf_handoff SET payload_json=? WHERE id=?",
+            (crypto.enc(_json(repaired)), int(handoff_id)))
+        agents.conn.execute(
+            "UPDATE goal_agent_state SET dirty=1,dirty_reason=?,deferred=0,updated_at=? "
+            "WHERE node_id=?",
+            ("approved handoff artifact repair", _now(), int(node_id)))
+        agents.conn.commit()
+        return _leaf_workspace_view(goals, agents, int(node_id))
+    except Exception:
+        agents.conn.rollback()
+        raise
+    finally:
+        agents.close(); goals.close()
 
 
 def _prepare_leaf_completion_handoff(config, goals: GoalStore,
@@ -3193,6 +3402,8 @@ def _persist_leaf_workspace_reply(agents: GoalAgentStore, node_id: int,
                                          else "single")
         if reply.questions:
             payload["questions"] = reply.questions
+        if reply.recovered_partial:
+            payload["recovered_partial"] = True
         if reply.proposal:
             saved = agents.add_leaf_workspace_proposal(
                 node_id, reply.proposal["type"], reply.proposal.get("payload") or {},
@@ -3226,6 +3437,10 @@ def _readable_leaf_workspace_message(message: dict) -> dict:
         parsed = parse_leaf_workspace_reply(content)
         if parsed and parsed.message:
             cleaned["content"] = parsed.message
+            if parsed.recovered_partial:
+                payload = dict(cleaned.get("payload") or {})
+                payload["recovered_partial"] = True
+                cleaned["payload"] = payload
     return cleaned
 
 
@@ -3243,7 +3458,8 @@ def _call_leaf_workspace_model(active, context: dict, messages: list[dict], *,
             "message": result.message, "suggestions": result.suggestions,
             "proposal": result.proposal, "working_patch": result.working_patch,
             "selection_mode": result.selection_mode,
-            "questions": result.questions})
+            "questions": result.questions,
+            "recovered_partial": result.recovered_partial})
     elif isinstance(result, (str, dict)):
         parsed = parse_leaf_workspace_reply(result)
     else:
@@ -3285,7 +3501,7 @@ def open_leaf_workspace(config, node_id: int, *, model=None) -> dict:
     try:
         context = build_leaf_workspace_context(
             goals, agents, int(node_id),
-            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+            max_chars=min(18000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
         messages = agents.leaf_workspace_messages(node_id, 100)
         pending_row = agents.conn.execute(
             "SELECT id FROM goal_leaf_workspace_proposal WHERE node_id=? AND status='open' "
@@ -3303,7 +3519,7 @@ def open_leaf_workspace(config, node_id: int, *, model=None) -> dict:
                     int(pending["id"]), (refreshed.proposal or {}).get("payload") or {})
                 context = build_leaf_workspace_context(
                     goals, agents, int(node_id), max_chars=min(
-                        12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+                        18000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
         pending_handoffs = [item for item in context.get("incoming_handoffs", [])
                             if item.get("status") == "approved"]
         if not messages or pending_handoffs:
@@ -3332,6 +3548,16 @@ def _normalized_workspace_event(event: dict | None, messages: list[dict]) -> dic
                  "suggestion_ids": [event.get("suggestion_id")],
                  "label": event.get("label"), "message_id": event.get("message_id")}
         event_type = "select_suggestions"
+    if event_type == "retry_partial_response":
+        message_id = str(event.get("message_id") or "")
+        source = next((message for message in reversed(messages[-40:])
+                       if str(message.get("id") or "") == message_id), None)
+        readable = _readable_leaf_workspace_message(source) if source else None
+        if (not readable or readable.get("role") != "assistant" or
+                not (readable.get("payload") or {}).get("recovered_partial")):
+            return None
+        return {"type": "retry_partial_response",
+                "message_id": source.get("id")}
     if event_type == "answer_questions":
         message_id = str(event.get("message_id") or "")
         source = next((message for message in reversed(messages[-20:])
@@ -3404,7 +3630,7 @@ def send_leaf_workspace(config, node_id: int, text: str, event: dict | None = No
     try:
         context = build_leaf_workspace_context(
             goals, agents, int(node_id),
-            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
+            max_chars=min(18000, int(getattr(config, "goal_ai_context_max_chars", 14000))))
         current_messages = agents.leaf_workspace_messages(node_id, 100)
         structured_event = _normalized_workspace_event(event, current_messages)
         if not text and not structured_event:
@@ -3414,6 +3640,10 @@ def send_leaf_workspace(config, node_id: int, text: str, event: dict | None = No
         elif structured_event and structured_event.get("type") == "answer_questions":
             user_content = ("Answered the questions" if context["language"] == "en"
                             else "질문에 답했습니다")
+        elif structured_event and structured_event.get("type") == "retry_partial_response":
+            user_content = ("Please regenerate the cut-off response in full."
+                            if context["language"] == "en" else
+                            "잘린 답변 전체를 다시 생성해 주세요.")
         else:
             user_content = ("Selected suggestions" if context["language"] == "en"
                             else "제안을 선택했습니다")
@@ -3435,7 +3665,7 @@ def send_leaf_workspace(config, node_id: int, text: str, event: dict | None = No
         messages = agents.leaf_workspace_messages(node_id, 100)
         context = build_leaf_workspace_context(
             goals, agents, int(node_id),
-            max_chars=min(12000, int(getattr(config, "goal_ai_context_max_chars", 14000))),
+            max_chars=min(18000, int(getattr(config, "goal_ai_context_max_chars", 14000))),
             attachment_query=text)
         # Full Leaf-local v2 history is supplied; the bounded context never adds
         # main chat, siblings, global memory, or passive screen context.
@@ -3929,8 +4159,12 @@ Return JSON only:
 {"output_summary":str,"working_material":str,"constraints":[str],
  "unresolved_questions":str,"suggested_start":str}
 `working_material` contains the actual usable output—not merely a description that
-an output exists. `suggested_start` tells the destination agent what to do first
-with that material. Use Korean when context.language is ko.
+an output exists. When artifact_dependency.required is true, the destination
+directly consumes the source deliverable: preserve artifact_dependency.text
+verbatim in working_material. A summary, list of sections, or statement that the
+artifact was drafted is invalid in that case. `suggested_start` tells the
+destination agent what to do first with that material. Use Korean when
+context.language is ko.
 """
 
 
@@ -4003,6 +4237,14 @@ multiple questions or needs a typed answer alongside choices, use questions and
 do not also return suggestions. Briefly introduce the information you need in the
 natural message, but place the exact interactive prompts in questions so they are
 not duplicated or stranded in prose.
+If STRUCTURED USER EVENT is retry_partial_response, the prior assistant output was
+cut off by the model limit. Treat that assistant turn as a failed draft, return the
+complete answer to the preceding user request, and do not ask the user to explain
+the formatting problem again. Keep the regenerated answer concise enough to finish.
+If the user pastes a prior `{"message":...}` block while saying your formatting
+looks wrong, recognize it as a report about your own broken reply—not as mysterious
+external material. Briefly acknowledge the display failure and regenerate the
+requested content as readable prose without asking where the JSON came from.
 Nothing semantic changes during ordinary chat. Agreement, plans, plan revisions,
 item completion, Leaf completion, reshaping, and reopening must be returned as
 proposals and remain
@@ -4341,6 +4583,7 @@ def parse_leaf_workspace_reply(value) -> LeafWorkspaceReply | None:
     """
     data: dict = {}
     prose = ""
+    recovered_partial = False
     if isinstance(value, dict):
         data = dict(value)
     else:
@@ -4388,6 +4631,7 @@ def parse_leaf_workspace_reply(value) -> LeafWorkspaceReply | None:
                     # proposals, and state patches are deliberately discarded.
                     prose = _recover_partial_json_string(
                         candidate, "message", "reply", "content")
+                    recovered_partial = bool(prose)
 
     message = str(data.get("message") or data.get("reply") or
                   data.get("content") or prose).strip()
@@ -4497,8 +4741,9 @@ def parse_leaf_workspace_reply(value) -> LeafWorkspaceReply | None:
     selection_mode = str(data.get("selection_mode") or "single").strip().lower()
     if selection_mode not in {"single", "multiple"}:
         selection_mode = "single"
+    recovered_partial = recovered_partial or data.get("recovered_partial") is True
     return LeafWorkspaceReply(message, suggestions, proposal, working_patch,
-                              selection_mode, questions)
+                              selection_mode, questions, recovered_partial)
 
 
 def parse_leaf_step_draft(text: str, allowed_peer_ids: set[int]) -> LeafStepDraft | None:
@@ -5068,6 +5313,7 @@ class ClaudeGoalAgentModel:
         msg = self.client.messages.create(
             model=self.model_name, max_tokens=max(256, int(max_tokens)), system=system,
             messages=[{"role": "user", "content": prompt}])
+        self._last_stop_reason = str(getattr(msg, "stop_reason", "") or "")
         from .llm_usage import record_response
         record_response(self.usage_category, self.model_name, msg, time.monotonic() - started)
         return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
@@ -5124,6 +5370,8 @@ class ClaudeGoalAgentModel:
             # There is deliberately no topical or keyword fallback. A model
             # failure is visible and retryable, while the user's saved turn stays.
             raise ValueError("Leaf Workspace returned no usable message")
+        if getattr(self, "_last_stop_reason", "") == "max_tokens":
+            result.recovered_partial = True
         return result
 
     def leaf_handoff(self, context: dict) -> dict:

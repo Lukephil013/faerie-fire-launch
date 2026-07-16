@@ -2243,6 +2243,19 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    def goal_leaf_workspace_repair_handoff(self, goal_id, handoff_id) -> dict:
+        from livingpc.goal_ai import repair_leaf_handoff_artifact
+        try:
+            node_id = int(goal_id)
+            transfer_id = int(handoff_id)
+            if node_id <= 0 or transfer_id <= 0:
+                raise ValueError("goal_id and handoff_id must be positive integers")
+            workspace = repair_leaf_handoff_artifact(
+                self.cfg, node_id, transfer_id)
+            return {"ok": True, "workspace": workspace}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+
     def goal_leaf_workspace_clear(self, goal_id) -> dict:
         from livingpc.goal_ai import clear_leaf_workspace_messages
         try:

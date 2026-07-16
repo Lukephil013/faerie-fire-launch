@@ -559,12 +559,18 @@ def test_leaf_workspace_renders_optional_suggestions_retry_and_clear():
     script = _script()
     message = _function_body(script, "leafCoachMessageHtml")
     error = _function_body(script, "leafCoachSetError")
+    bind = _function_body(script, "leafWorkspaceBindActions")
 
     assert "leaf-workspace-suggestion" in message
     assert "message.content||payload.content||payload.text" in message
     assert "payload.next_action" not in message and "payload.question" not in message
     assert "data-coach-shortcut" not in html
     assert "leaf-coach-retry" in error
+    assert "payload.recovered_partial===true" in message
+    assert "Regenerate full response" in message
+    assert "data-retry-partial" in message
+    assert "kind:'retry_partial_response'" in bind
+    assert "Regenerating the full response" in bind
     assert "goal_leaf_workspace_clear" in script
 
 
@@ -920,8 +926,14 @@ def test_leaf_workspace_loading_is_visible_and_retry_preserves_the_draft():
     send = _function_body(script, "sendLeafCoachMessage")
 
     assert "thinkingDotsHtml" in loading and "Crafting a response" in loading
+    assert "leaf-coach-message assistant leaf-workspace-thinking" in loading
+    assert "messages.appendChild(thinking)" in loading
+    assert "thinking.setAttribute('role','status')" in loading
+    assert "scroller.scrollTop=scroller.scrollHeight" in loading
+    assert ".leaf-workspace-thinking" in _html()
     assert "Faerie is crafting a response" in send and "페어리가 답변을 만드는 중" in send
     assert "optimistic.dataset.optimistic='true'" in send
+    assert send.index("messageBox.appendChild(optimistic)") < send.index("leafWorkspaceSetLoading(true")
     assert "if(input){input.value=''" in send
     assert "input.style.height='auto';autoGrow(input)" in send
     assert "input.value=text" in send
@@ -1563,6 +1575,7 @@ def test_leaf_completion_edits_and_opens_only_the_approved_downstream_handoff():
     edited = _function_body(script, "leafWorkspaceEditedPayload")
     incoming = _function_body(script, "leafWorkspaceIncomingHtml")
     render = _function_body(script, "renderLeafCoach")
+    repair = _function_body(script, "repairLeafWorkspaceHandoff")
     advance = _function_body(script, "refreshAfterLeafCompletion")
 
     assert 'id="leaf-workspace-incoming"' in html
@@ -1572,6 +1585,12 @@ def test_leaf_completion_edits_and_opens_only_the_approved_downstream_handoff():
     assert "payload.handoff" in edited and "proposalHandoffField" in edited
     assert "Approved handoff from an earlier Leaf" in incoming
     assert "이전 Leaf에서 승인된 인계" in incoming
+    assert "This older handoff contains only a summary" in incoming
+    assert "Restore missing artifact" in incoming
+    assert "data-repair-handoff" in incoming
+    assert "goal_leaf_workspace_repair_handoff" in repair
+    assert "Restoring the original artifact" in repair
+    assert "repairLeafWorkspaceHandoff(button)" in render
     assert "raw conversation" in render and "원문 대화" in render
     assert "handoffLeafId?goalFind" in advance
     assert "view.completion_handoff||view.recovery_handoff" in script

@@ -364,10 +364,16 @@ constraints, unresolved question, and suggested starting point. These fields are
 editable and become durable only when the user approves completion. The encrypted
 handoff is stored atomically with the outcome and is visible only to its explicit
 destination Leaf and the existing ancestor rollups. The source transcript never
-crosses. When the destination Leaf opens, its agent acknowledges the approved
-handoff and continues from the transferred material instead of asking the user to
-paste or reconstruct it. With no eligible destination, completion returns to the
-Project review flow rather than inventing or silently creating work.
+crosses. For high-confidence create-to-consume sequences (for example, draft a
+profile and then publish it), the handoff must contain the actual assistant-produced
+artifact; a summary that merely says it was drafted is not accepted. The artifact
+is inserted into the editable completion proposal before approval. Older approved
+summary-only handoffs expose an explicit restore action in the destination Leaf,
+which copies only the detected produced artifact after the user chooses it. When
+the destination Leaf opens, its agent acknowledges the approved handoff and
+continues from the transferred material instead of asking the user to paste or
+reconstruct it. With no eligible destination, completion returns to the Project
+review flow rather than inventing or silently creating work.
 
 ## How GoalAI-proposed investigations work
 

@@ -25,7 +25,7 @@ from livingpc.goal_ai import (
     prepare_goal_archive, summarize_goal_answer,
     open_leaf_workspace, send_leaf_workspace, decide_leaf_workspace_proposal,
     clear_leaf_workspace_messages, parse_leaf_workspace_reply, reopen_leaf_workspace,
-    prepare_missing_leaf_handoff,
+    prepare_missing_leaf_handoff, repair_leaf_handoff_artifact,
 )
 from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
@@ -1900,6 +1900,7 @@ def test_leaf_workspace_parser_keeps_plain_prose_and_drops_only_bad_extras():
     assert "```json" not in truncated_fenced.message
     assert "\\n" not in truncated_fenced.message
     assert truncated_fenced.questions == [] and truncated_fenced.proposal is None
+    assert truncated_fenced.recovered_partial is True
     broken_cards = parse_leaf_workspace_reply(
         '{"message":"The readable answer survives.",'
         '"questions":[{"prompt":"Which one?","type":"single_choice"')
@@ -1926,6 +1927,8 @@ def test_leaf_workspace_parser_keeps_plain_prose_and_drops_only_bad_extras():
 
 def test_leaf_workspace_completion_prompt_requires_editable_result_and_lesson_drafts():
     assert "always draft both payload.result and payload.lesson" in LEAF_WORKSPACE_SYSTEM
+    assert "report about your own broken reply" in LEAF_WORKSPACE_SYSTEM
+    assert "without asking where the JSON came from" in LEAF_WORKSPACE_SYSTEM
 
 
 def test_leaf_workspace_model_has_room_for_complete_user_facing_drafts():
@@ -1949,16 +1952,20 @@ def test_leaf_workspace_repairs_an_already_stored_raw_truncated_json_reply(world
     agents.ensure_leaf_workspace(goals.get(ids["task_a"]))
     raw = ('```json\n{"message":"Here is the usable profile draft.\\n\\n'
            '**Skills**\\nPython, automation, and reporting')
-    agents.add_leaf_workspace_message(ids["task_a"], "assistant", raw)
+    stored = agents.add_leaf_workspace_message(ids["task_a"], "assistant", raw)
     model = RecordingWorkspaceModel(["I can continue from that repaired draft."])
 
     sent = send_leaf_workspace(
-        cfg, ids["task_a"], "Please continue from the draft.", model=model)
+        cfg, ids["task_a"], "Please regenerate the cut-off response in full.",
+        {"type": "retry_partial_response", "message_id": stored}, model=model)
 
     assert sent["messages"][0]["content"] == (
         "Here is the usable profile draft.\n\n**Skills**\n"
         "Python, automation, and reporting")
+    assert sent["messages"][0]["payload"]["recovered_partial"] is True
     assert model.calls[-1]["messages"][0]["content"] == sent["messages"][0]["content"]
+    assert model.calls[-1]["event"] == {
+        "type": "retry_partial_response", "message_id": stored}
     assert "```json" not in json.dumps(model.calls[-1]["messages"])
     # Presentation repair is non-destructive; the encrypted historical row is
     # not rewritten merely because a newer reader can recover it.
@@ -2393,6 +2400,93 @@ def test_completed_leaf_hands_approved_work_to_next_project_leaf_without_raw_cha
     assert destination_model.calls[-1]["event"]["type"] == "incoming_handoff"
     assert destination_model.calls[-1]["context"]["incoming_handoffs"][0]["id"] == handoff["id"]
     assert agents.leaf_handoff(handoff["id"])["status"] == "consumed"
+
+
+def test_draft_to_publish_handoff_requires_the_actual_profile_artifact(world):
+    cfg, goals, agents, _, ids = world
+    area = goals.create("subgoal", "Freelance work", parent_id=ids["over_a"])
+    goals._set_semantic_role(area, "area", rationale="Owns freelance work.")
+    project = goals.create("subgoal", "Launch Upwork profile", parent_id=area)
+    goals._set_semantic_role(project, "project", rationale="Publishes one profile.")
+    source = goals.create("task", "Draft Upwork profile", parent_id=project)
+    destination = goals.create(
+        "task", "Publish profile and first posting scan", parent_id=project)
+    agents.ensure_agents()
+    profile = """# Upwork Profile
+
+Headline: Business Automation & Data Workflow Specialist
+
+## Overview
+I help business owners eliminate repetitive data work by building maintainable
+Python automations, reporting workflows, and practical system integrations.
+
+## Employment
+Applications Analyst — Parsons — March 2026 to present. Designed production
+workflow improvements, database automation, approval flows, and reporting tools.
+
+## Skills
+Python; Workflow Automation; Data Automation; SQL; AI Integration; Jira.
+
+## Proposal template
+I read your brief and understand the workflow problem. I would map the current
+process, build the smallest maintainable automation, test it with real inputs,
+and document the handoff for your team.
+"""
+    open_leaf_workspace(
+        cfg, source, model=RecordingWorkspaceModel([profile]))
+    pending = send_leaf_workspace(
+        cfg, source, "The profile is drafted exactly as above. Complete this Leaf.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "The profile draft is complete.",
+            proposal={"type": "complete_leaf", "payload": {
+                "result": "A complete Upwork profile is drafted.",
+                "what_happened": "Drafted the headline, overview, employment, skills, and proposal.",
+                "lesson": "The profile should lead with business workflow outcomes.",
+            }, "rationale": "The requested profile artifact is ready."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    drafted_handoff = proposal["payload"]["handoff"]
+
+    assert proposal["payload"]["handoff_target"]["leaf_id"] == destination
+    assert drafted_handoff["artifact_required"] is True
+    assert drafted_handoff["artifact_included"] is True
+    assert drafted_handoff["artifact_confidence"] >= 0.9
+    assert drafted_handoff["artifact_kind"] == "profile"
+    assert profile in drafted_handoff["working_material"]
+
+    completed = decide_leaf_workspace_proposal(
+        cfg, source, proposal["id"], "approve")
+    handoff = completed["completion_handoff"]
+    assert profile in handoff["payload"]["working_material"]
+
+    destination_context = build_leaf_workspace_context(goals, agents, destination)
+    incoming = destination_context["incoming_handoffs"][0]["payload"]
+    assert incoming["artifact_required"] is True
+    assert incoming["artifact_included"] is True
+    assert profile in incoming["working_material"]
+
+    # Existing summary-only handoffs are detected but repaired only after the
+    # user explicitly chooses the restore action in the destination Leaf.
+    legacy_summary = {
+        "output_summary": "A complete Upwork profile was drafted.",
+        "working_material": "Headline, overview, employment, skills, and proposal were drafted.",
+        "constraints": [], "unresolved_questions": "",
+        "suggested_start": "Publish the drafted profile.",
+    }
+    agents.conn.execute(
+        "UPDATE goal_leaf_handoff SET payload_json=? WHERE id=?",
+        (crypto.enc(json.dumps(legacy_summary)), handoff["id"]))
+    agents.conn.commit()
+    opened = open_leaf_workspace(
+        cfg, destination, model=RecordingWorkspaceModel([
+            "I received the older summary-only handoff."]))
+    assert opened["incoming_handoffs"][0]["artifact_repair"]["available"] is True
+    assert profile not in opened["incoming_handoffs"][0]["payload"]["working_material"]
+
+    repaired = repair_leaf_handoff_artifact(cfg, destination, handoff["id"])
+    restored = repaired["incoming_handoffs"][0]
+    assert restored["artifact_repair"]["available"] is False
+    assert restored["payload"]["artifact_included"] is True
+    assert profile in restored["payload"]["working_material"]
 
 
 def test_completed_legacy_leaf_can_recover_an_approved_handoff_without_duplicate_outcome(world):

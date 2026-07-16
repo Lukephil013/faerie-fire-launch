@@ -1436,6 +1436,11 @@
   .leaf-coach-message,.leaf-coach-boundary,.goal-focus-panel,.cur-item { user-select:text; cursor:text; }
   .leaf-coach-message.user { background:rgba(126,226,255,.09); border:1px solid rgba(126,226,255,.2); }
   .leaf-coach-message.assistant { background:rgba(83,231,192,.07); border:1px solid var(--line2); }
+  .leaf-coach-message.leaf-workspace-thinking { width:max-content; max-width:100%; color:var(--muted);
+    user-select:none; cursor:default; }
+  .leaf-workspace-partial { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+    gap:8px; margin-top:10px; padding:8px 9px; border:1px solid rgba(255,209,102,.32);
+    border-radius:9px; background:rgba(255,209,102,.07); color:#ffe289; font-size:11px; }
   .leaf-coach-message.focus { padding:6px 10px; color:var(--cyan); font-size:11px;
     border:1px dashed var(--line2); background:transparent; }
   .leaf-coach-next { margin-top:8px; padding:8px 9px; border-left:2px solid var(--green);
@@ -7193,9 +7198,19 @@ function leafWorkspaceSetEnabled(enabled){
 
 function leafWorkspaceSetLoading(visible,text){
   const box=$('leaf-workspace-loading');
-  if(!box) return;
-  box.hidden=!visible;
-  box.innerHTML=visible?thinkingDotsHtml(text||(APP_LANG==='ko'?'답변을 만드는 중…':'Crafting a response…')):'';
+  if(box){box.hidden=true;box.innerHTML='';}
+  const messages=$('leaf-coach-messages');
+  if(!messages) return;
+  messages.querySelectorAll('.leaf-workspace-thinking').forEach(item=>item.remove());
+  if(!visible) return;
+  const thinking=document.createElement('article');
+  thinking.className='leaf-coach-message assistant leaf-workspace-thinking';
+  thinking.setAttribute('role','status');
+  thinking.setAttribute('aria-live','polite');
+  thinking.innerHTML=thinkingDotsHtml(text||(APP_LANG==='ko'?'답변을 만드는 중…':'Crafting a response…'));
+  messages.appendChild(thinking);
+  const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
+  if(scroller) scroller.scrollTop=scroller.scrollHeight;
 }
 
 function leafWorkspaceResult(result){
@@ -7362,6 +7377,14 @@ function leafWorkspaceQuestionSubmission(messageId){
   return null;
 }
 
+function leafWorkspacePartialRetry(messageId){
+  const messages=leafCoachView&&Array.isArray(leafCoachView.messages)?leafCoachView.messages:[];
+  return messages.some(message=>{
+    const event=message&&message.payload&&message.payload.event;
+    return event&&event.type==='retry_partial_response'&&String(event.message_id)===String(messageId);
+  });
+}
+
 function leafWorkspaceQuestionSetHtml(message,questions){
   if(!questions.length) return '';
   const submitted=leafWorkspaceQuestionSubmission(message.id), answers={};
@@ -7515,6 +7538,8 @@ function leafCoachMessageHtml(message){
   const questions=leafWorkspaceMessageQuestions(message,payload);
   const selectionMode=leafWorkspaceMessageSelectionMode(message,payload);
   const proposals=leafWorkspaceMessageProposals(message,payload);
+  const partial=role==='assistant'&&payload.recovered_partial===true;
+  const partialRetried=partial&&leafWorkspacePartialRetry(message.id);
   const suggestionsHtml=!suggestions.length?'':selectionMode==='multiple'
     ?'<fieldset class="leaf-workspace-multiselect" data-selection-message="'+esc(message.id)+'"><legend>'+
       (APP_LANG==='ko'?'해당하는 항목을 모두 선택하세요':'Select all that apply')+'</legend>'+
@@ -7529,9 +7554,13 @@ function leafCoachMessageHtml(message){
       '" data-suggestion-id="'+esc(item.id)+'"><span>'+esc(item.label)+'</span>'+
       (item.description?'<small>'+esc(item.description)+'</small>':'')+'</button></li>').join('')+'</ul>';
   const questionsHtml=leafWorkspaceQuestionSetHtml(message,questions);
+  const partialHtml=!partial?'':'<div class="leaf-workspace-partial"><span>'+
+    (APP_LANG==='ko'?'이 답변은 모델 제한으로 중간에 잘렸어요.':'This response was cut off by the model limit.')+'</span><button type="button" data-retry-partial="'+esc(message.id)+'"'+
+    (partialRetried?' disabled':'')+'>'+(partialRetried?(APP_LANG==='ko'?'재생성 요청됨':'Regeneration requested'):
+      (APP_LANG==='ko'?'전체 답변 다시 생성':'Regenerate full response'))+'</button></div>';
   return '<article class="leaf-coach-message '+role+'" data-workspace-message="'+esc(message.id)+'">'+
     (content?'<div>'+conversationHtml(content)+'</div>':'')+
-    suggestionsHtml+questionsHtml+
+    partialHtml+suggestionsHtml+questionsHtml+
     proposals.map(proposal=>leafWorkspaceProposalHtml(proposal,content)).join('')+'</article>';
 }
 
@@ -7564,6 +7593,13 @@ function leafWorkspaceIncomingHtml(handoffs){
   if(!Array.isArray(handoffs)||!handoffs.length) return '';
   return handoffs.map(item=>{
     const payload=item.payload||{}, constraints=Array.isArray(payload.constraints)?payload.constraints:[];
+    const repair=item.artifact_repair||{}, kind=repair.artifact_kind||payload.artifact_kind||'deliverable';
+    const artifactStatus=payload.artifact_required&&payload.artifact_included
+      ?'<div><b>'+(APP_LANG==='ko'?'필수 결과물':'Required artifact')+'</b><div>'+esc(kind)+' '+(APP_LANG==='ko'?'포함됨':'included')+'</div></div>':'';
+    const repairHtml=repair.available?'<div class="leaf-workspace-partial"><span>'+
+      (APP_LANG==='ko'?'이전 인계에는 요약만 있고, 원본 '+esc(kind)+' 결과물이 빠져 있어요.':'This older handoff contains only a summary; its original '+esc(kind)+' artifact is missing.')+
+      '</span><button type="button" data-repair-handoff="'+esc(item.id)+'">'+
+      (APP_LANG==='ko'?'누락된 결과물 복원':'Restore missing artifact')+'</button></div>':'';
     return '<section class="leaf-workspace-card leaf-workspace-handoff"><div class="leaf-workspace-card-title">'+
       (APP_LANG==='ko'?'이전 Leaf에서 승인된 인계':'Approved handoff from an earlier Leaf')+'</div><div class="leaf-workspace-handoff-source">'+
       esc(item.source_title||'')+' → '+esc(item.destination_title||'')+'</div><div class="leaf-workspace-handoff-material">'+
@@ -7571,7 +7607,7 @@ function leafWorkspaceIncomingHtml(handoffs){
       (constraints.length?'<div><b>'+(APP_LANG==='ko'?'제약':'Constraints')+'</b><div>'+esc(constraints.join(' · '))+'</div></div>':'')+
       (payload.unresolved_questions?'<div><b>'+(APP_LANG==='ko'?'열린 질문':'Open question')+'</b><div>'+esc(payload.unresolved_questions)+'</div></div>':'')+
       (payload.suggested_start?'<div><b>'+(APP_LANG==='ko'?'여기서 시작':'Start here')+'</b><div>'+esc(payload.suggested_start)+'</div></div>':'')+
-      '</div></section>';
+      artifactStatus+'</div>'+repairHtml+'</section>';
   }).join('');
 }
 
@@ -7618,6 +7654,9 @@ function renderLeafCoach(){
   leafWorkspaceBindActions();
   const prepareHandoff=$('leaf-workspace-prepare-handoff');
   if(prepareHandoff) prepareHandoff.onclick=prepareMissingLeafHandoff;
+  document.querySelectorAll('#leaf-workspace-incoming [data-repair-handoff]').forEach(button=>{
+    button.onclick=()=>repairLeafWorkspaceHandoff(button);
+  });
   leafWorkspaceSetEnabled(true);
   const scroller=document.querySelector('#leaf-step-coach .leaf-coach-scroll');
   if(scroller) scroller.scrollTop=scroller.scrollHeight;
@@ -7654,6 +7693,37 @@ function prepareMissingLeafHandoff(){
   }).catch(error=>{
     if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
     leafWorkspaceSetLoading(false);
+    if(button) button.disabled=false;
+    leafCoachSetError(String(error.message||error),run);
+  });
+  run();
+}
+
+function repairLeafWorkspaceHandoff(button){
+  if(!leafCoachView||leafWorkspaceSending||!api()||
+      !pywebview.api.goal_leaf_workspace_repair_handoff) return;
+  const leafId=leafCoachView.leaf_id, handoffId=button&&button.dataset.repairHandoff;
+  const nonce=leafWorkspaceRequestNonce;
+  if(!handoffId) return;
+  leafWorkspaceSending=true;
+  leafWorkspaceSetEnabled(true);
+  button.disabled=true;
+  leafCoachSetError('');
+  leafWorkspaceSetLoading(true,APP_LANG==='ko'?'이전 Leaf의 원본 결과물을 복원하는 중…':'Restoring the original artifact from the earlier Leaf…');
+  const run=()=>pywebview.api.goal_leaf_workspace_repair_handoff(leafId,handoffId).then(result=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    const view=leafWorkspaceResult(result);
+    if(!view) throw new Error(APP_LANG==='ko'?'복원된 인계를 불러오지 못했어요.':'The repaired handoff is missing.');
+    leafCoachView=view;
+    leafWorkspaceSending=false;
+    leafWorkspaceSetLoading(false);
+    leafCoachSetError('');
+    renderLeafCoach();
+  }).catch(error=>{
+    if(nonce!==leafWorkspaceRequestNonce||String(leafCoachLeafId)!==String(leafId)) return;
+    leafWorkspaceSending=false;
+    leafWorkspaceSetLoading(false);
+    leafWorkspaceSetEnabled(true);
     if(button) button.disabled=false;
     leafCoachSetError(String(error.message||error),run);
   });
@@ -7801,6 +7871,14 @@ function leafWorkspaceBindActions(){
       },APP_LANG==='ko'?answers.length+'개 답변 제출됨 · 생각하는 중…':answers.length+' answers submitted · thinking…');
     };
     update();
+  });
+  document.querySelectorAll('#leaf-coach-messages [data-retry-partial]:not(:disabled)').forEach(button=>button.onclick=()=>{
+    const messageId=button.dataset.retryPartial;
+    button.disabled=true;
+    sendLeafCoachMessage(
+      APP_LANG==='ko'?'잘린 답변 전체를 다시 생성해 주세요.':'Please regenerate the cut-off response in full.',
+      {kind:'retry_partial_response',message_id:messageId},
+      APP_LANG==='ko'?'전체 답변을 다시 생성하는 중…':'Regenerating the full response…');
   });
   document.querySelectorAll('#leaf-coach-messages [data-proposal-edit]').forEach(button=>button.onclick=()=>{
     const card=button.closest('.leaf-workspace-proposal'), editor=card&&card.querySelector('.leaf-workspace-proposal-editor');
