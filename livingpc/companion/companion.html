@@ -258,6 +258,7 @@ function renderChats(){ const list=document.getElementById('chatList'); list.inn
     b.onclick=()=>openChat(chat.id);
     const del=document.createElement('button'); del.className='chat-delete'; del.textContent='×';
     del.title='Delete conversation'; del.onclick=e=>{ e.stopPropagation(); deleteChat(chat.id, chat.title||'New chat'); };
+    row.oncontextmenu=e=>{ e.preventDefault(); deleteChat(chat.id, chat.title||'New chat'); };
     row.appendChild(b); row.appendChild(del); list.appendChild(row); }); }
 function applyChatState(state){ if(!state||state.ok===false)return;
   activeChatId=state.active_chat_id; chats=state.chats||[];

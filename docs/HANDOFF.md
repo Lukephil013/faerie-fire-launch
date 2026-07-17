@@ -6,28 +6,22 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 ## Start Here
 
 - Branch: `main`
-- Parent HEAD: `8cda30e`
-- Generated UTC: `2026-07-16T23:24:04+00:00`
-- Changed areas: diagnostics, review
+- Parent HEAD: `55c6cd3`
+- Generated UTC: `2026-07-17T03:38:08+00:00`
+- Changed areas: companion, filing
 - Read the latest commit message, then run the narrow context command below.
 - Do not scan README, FEATURES, design documents, or devlogs unless the task requires history.
 
 ## Changed Files In This Commit
 
-- `bats/New Test Instance.bat`
-- `gui.py`
-- `livingpc/ui/memory.html`
-- `livingpc/ui_preferences.py`
-- `smoke_test_unified.py`
-- `tests/test_memory_html_ui.py`
-- `tests/test_new_test_instance_launcher.py`
-- `tests/test_ui_bridges.py`
-- `tests/test_ui_preferences.py`
+- `livingpc/companion/brain.py`
+- `livingpc/companion/companion.html`
+- `tests/test_companion.py`
 
 ## Context Commands
 
-- `python tools/project_context.py diagnostics`
-- `python tools/project_context.py review`
+- `python tools/project_context.py companion`
+- `python tools/project_context.py filing`
 
 ## Verification
 
@@ -37,6 +31,6 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 
 ## Recent History Before This Commit
 
+- 55c6cd3 your message
 - 8cda30e Update 2026-07-16
 - 8780818 Update 2026-07-16
-- 623b79c Update 2026-07-16

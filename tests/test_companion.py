@@ -2420,6 +2420,116 @@ def test_main_chat_prompt_exposes_project_signal_action_and_current_marker():
         companion.close()
 
 
+def test_imitation_proposal_card_is_flagged_and_typed_yes_is_answered_honestly():
+    """A reply that mimics a rendered card without emitting the machine block
+    stages nothing. The user must see that, and a typed "yes" must never fall
+    through to the model to role-play a success confirmation."""
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        imitation = (
+            "— proposed —\n"
+            "97% confidence — delete **Old Leaf** and everything under it\n"
+            "Why: it is now a duplicate.\n\n"
+            "Reply “yes” (or click Approve) to do it, or tell me more and "
+            "I'll refine it.")
+        companion = Companion(cfg=cfg, chat=ScriptedChat(imitation))
+        rendered = companion.reply("please remove the old leaf")
+        assert "no real approval card was staged" in rendered
+        assert companion.pending_proposals() == []
+        # ScriptedChat has no second reply: if "yes" reached the model this
+        # would raise. It must be answered deterministically instead.
+        answer = companion.reply("yes")
+        assert "no live card to approve" in answer
+        companion.close()
+
+
+def test_plain_reply_is_not_flagged_as_imitation_card():
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        companion = Companion(cfg=cfg, chat=ScriptedChat(
+            "The tree looks healthy — nothing needs to change right now."))
+        rendered = companion.reply("how does the tree look?")
+        assert "no real approval card was staged" not in rendered
+        companion.close()
+
+
+def test_reclassify_proposal_changes_branch_semantic_role_in_place():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        branch = goals.create("subgoal", "Career & Building Things", parent_id=root)
+        goals._set_semantic_role(
+            branch, "project", rationale="Initially misfiled.", source="user")
+        goals.set_project_signal(branch, "currently_working")
+        parent_before = goals.get(branch)["parent_id"]
+        goals.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"reclassify_node",'
+            '"label":"Career & Building Things → Area",'
+            '"directive":"This is an ongoing life direction, not a deliverable.",'
+            '"reasoning":"The user said it should be an Area, not a Project.",'
+            f'"confidence":0.97,"target_node_id":{branch},"semantic_role":"area"}}\n'
+            'faerie_proposal>>>')
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply("this should be an area instead of a project")
+        assert "reclassify" in rendered
+        assert len(companion.pending_proposals()) == 1
+        applied = companion.approve_proposal(0)
+        assert "Reclassified" in applied
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            assert goals.semantic_role(branch)["role"] == "area"
+            # Reclassify never moves the node, and a non-Project cannot keep
+            # Project attention markers.
+            assert goals.get(branch)["parent_id"] == parent_before
+            assert goals.project_signals()["currently_working"] is None
+        finally:
+            goals.close()
+        companion.close()
+
+
+def test_reclassify_accepts_model_alias_and_rejects_noop_role():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        branch = goals.create("subgoal", "Career & Building Things", parent_id=root)
+        goals._set_semantic_role(
+            branch, "project", rationale="Explicit test Project.", source="user")
+        goals.close()
+        alias = (
+            '<<<faerie_proposal\n{"action":"set_semantic_role",'
+            '"label":"Career & Building Things → Area",'
+            '"directive":"Ongoing direction.","reasoning":"User asked.",'
+            f'"confidence":0.97,"target_node_id":{branch},"semantic_role":"area"}}\n'
+            'faerie_proposal>>>')
+        noop = (
+            '<<<faerie_proposal\n{"action":"reclassify_node",'
+            '"label":"Career & Building Things → Project",'
+            '"directive":"Same role.","reasoning":"Already a Project.",'
+            f'"confidence":0.97,"target_node_id":{branch},"semantic_role":"project"}}\n'
+            'faerie_proposal>>>')
+        companion = Companion(cfg=cfg, chat=ScriptedChat(alias, noop))
+        companion.reply("make it an area")
+        assert companion.pending_proposals()[0]["action"] == "reclassify_node"
+        companion.dismiss_proposal(0)
+        rendered = companion.reply("reclassify it as a project")
+        # Setting the role a Branch already has is a no-op card: dropped.
+        assert companion.pending_proposals() == []
+        assert "couldn't be staged" in rendered
+        companion.close()
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

@@ -543,7 +543,7 @@ class Companion:
             "<<<faerie_proposal\n"
             "{\"action\": one of \"attach_existing\" | \"create_branch\" | "
             "\"create_root_branch\" | \"create_leaf\" | \"rename_node\" | "
-            "\"delete_node\" | \"move_node\" | \"replan_project\" | \"start_investigation\" | "
+            "\"delete_node\" | \"move_node\" | \"reclassify_node\" | \"replan_project\" | \"start_investigation\" | "
             "\"set_project_signal\" | "
             "\"add_investigation_context\" | \"start_exploration\" | "
             "\"rename_investigation\" | \"merge_investigations\" | "
@@ -552,7 +552,7 @@ class Companion:
             " \"directive\": \"the underlying question, note, or current-state dump, in their words\",\n"
             " \"reasoning\": \"one sentence on why it fits there\",\n"
             " \"confidence\": a number 0-1 (REQUIRED for every action except start_investigation),\n"
-            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/replan_project/set_project_signal),\n"
+            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/reclassify_node/replan_project/set_project_signal),\n"
             " \"signal_kind\": \"highest_priority\"|\"currently_working\" "
             "(REQUIRED for set_project_signal),\n"
             " \"enabled\": true|false (set_project_signal only; true marks the "
@@ -577,7 +577,7 @@ class Companion:
             " \"url\": the complete HTTPS page URL (REQUIRED for browser_task),\n"
             " \"source_context\": only the user-provided facts to map into fields (REQUIRED for browser_task),\n"
             " \"priority\": \"low\"|\"normal\"|\"high\" (optional, create_leaf only),\n"
-            " \"semantic_role\": \"area\"|\"project\"|\"stage\" (optional, create_branch only),\n"
+            " \"semantic_role\": \"area\"|\"project\"|\"stage\" (optional for create_branch; REQUIRED for reclassify_node),\n"
             " \"root_title\"/\"root_description\": (create_root_branch only),\n"
             " \"branch_title\"/\"branch_description\": (create_root_branch only, optional — a Branch under the new Root),\n"
             " \"new_title\": the replacement title (REQUIRED for rename_node/rename_investigation),\n"
@@ -586,7 +586,10 @@ class Companion:
             "You also have full authority to restructure the tree itself when the user "
             "asks — rename_node renames a node in place, delete_node archives a node "
             "and everything under it (soft/reversible, never a true data loss), and "
-            "move_node re-parents a node elsewhere in the tree. Use these freely when "
+            "move_node re-parents a node elsewhere in the tree, and reclassify_node "
+            "changes a Branch's semantic role (Area/Project/Stage) in place — use it, "
+            "never rename_node or move_node, when the user says something like 'this "
+            "should be an Area instead of a Project'. Use these freely when "
             "the user is directly asking you to reorganize, rename, or remove "
             "something — you are their only interface for these changes; there is no "
             "manual edit UI for them to fall back on.\n"
@@ -673,6 +676,7 @@ class Companion:
             "user over-split earlier, say so and propose the merge yourself.\n"
             f"HARD CONFIDENCE GATE: only emit attach_existing/create_branch/"
             f"create_root_branch/create_leaf/rename_node/delete_node/move_node/"
+            f"reclassify_node/"
             f"replan_project/set_project_signal/add_investigation_context/start_exploration/"
             f"rename_investigation/merge_investigations/archive_investigation/"
             f"record_goal_progress/set_project_signal/browser_task at "
@@ -1489,7 +1493,8 @@ class Companion:
         "네", "넵", "응", "그래", "그래요", "좋아요", "좋아", "승인", "진행해줘", "진행",
     }
     _PLACEMENT_ACTIONS = {"attach_existing", "create_branch", "create_root_branch", "create_leaf"}
-    _STRUCTURAL_ACTIONS = {"rename_node", "delete_node", "move_node"}
+    _STRUCTURAL_ACTIONS = {"rename_node", "delete_node", "move_node",
+                           "reclassify_node"}
     _REPLAN_ACTIONS = {"replan_project"}
     _PROJECT_SIGNAL_ACTIONS = {"set_project_signal"}
     _LEAF_GROWTH_ACTIONS = {
@@ -2115,6 +2120,11 @@ class Companion:
             "set_current_project": "set_project_signal",
             "clear_project_priority": "set_project_signal",
             "clear_current_project": "set_project_signal",
+            "set_semantic_role": "reclassify_node",
+            "change_semantic_role": "reclassify_node",
+            "change_node_role": "reclassify_node",
+            "reclassify_branch": "reclassify_node",
+            "reclassify": "reclassify_node",
         }.get(action, action)
         normalized["action"] = action
         if action == "set_project_signal":
@@ -2303,10 +2313,21 @@ class Companion:
             return f"{kind} **{node['title']}** ({node['type']})"
         if action == "create_root_branch":
             return lang_T("as a new Root", "새로운 Root로 추가돼요")
-        if action in {"rename_node", "delete_node", "move_node"}:
+        if action in {"rename_node", "delete_node", "move_node", "reclassify_node"}:
             node = self._catalog_lookup(proposal.get("target_node_id"))
             if not node:
                 return lang_T("(target node not found)", "(대상 노드를 찾을 수 없어요)")
+            if action == "reclassify_node":
+                role = str(proposal.get("semantic_role") or "").strip().lower()
+                current = str(node.get("semantic_role") or "").strip() or lang_T(
+                    "unclassified", "미분류")
+                role_ko = {"area": "Area", "project": "Project",
+                           "stage": "Stage"}.get(role, role)
+                return lang_T(
+                    f"reclassify **{node['title']}** (Branch) from "
+                    f"{current.title()} to **{role.title()}**",
+                    f"**{node['title']}** (Branch)의 분류를 {current}에서 "
+                    f"**{role_ko}**(으)로 변경해요")
             if action == "rename_node":
                 new_title = str(proposal.get("new_title") or "").strip()
                 return lang_T(
@@ -2482,6 +2503,14 @@ class Companion:
 
     _PROPOSAL_BLOCK_RE = re.compile(
         r"<<<faerie_proposal\s*(\{.*?\})\s*faerie_proposal>>>", re.DOTALL)
+    # Matches the visible fingerprint of a rendered card. A model reply that
+    # carries this fingerprint without a machine block is an imitation card:
+    # nothing is staged, no Approve button exists, and a typed "yes" would
+    # reach the model, which historically role-played a success message.
+    _PROPOSAL_CARD_SIGNATURE_RE = re.compile(
+        r"—\s*(?:proposed|제안)\s*—"
+        r"|Reply [“\"]yes[”\"] \(or click Approve\)"
+        r"|[“\"]네[”\"]라고 답하거나 승인을 누르면")
 
     def _valid_leaf_structural_proposal(
             self, proposal: dict, reservations: list[dict] | None, *,
@@ -2589,6 +2618,15 @@ class Companion:
                 valid = self._valid_leaf_structural_proposal(
                     proposal, reservations,
                     exclude_current_chat=exclude_current_chat)
+            if valid and proposal["action"] == "reclassify_node":
+                # Only a Branch carries a semantic role, and a card that
+                # would set the role it already has is a no-op the user
+                # should never be asked to approve.
+                target = self._catalog_lookup(proposal.get("target_node_id"))
+                role = str(proposal.get("semantic_role") or "").strip().lower()
+                valid = (bool(target) and target["type"] == "Branch"
+                         and role in {"area", "project", "stage"}
+                         and str(target.get("semantic_role") or "") != role)
             if valid and proposal["action"] == "create_leaf":
                 # A Leaf can never parent another Leaf; catching it here keeps
                 # a doomed card from reaching approve and raising ValueError.
@@ -2743,6 +2781,29 @@ class Companion:
                 "리플랜으로 합쳐 달라고 말씀해 주세요.)_")
             cleaned = (cleaned + "\n\n" + note).strip() if cleaned else note
         return cleaned
+
+    def _flag_imitation_proposal_card(self, text: str) -> str:
+        """Append a visible warning when a reply mimics a rendered proposal
+        card without staging one. A card-shaped message with no durable
+        pending proposal has no Approve button, and approving it by text
+        would do nothing — silence here reads as a staged, working card."""
+        if (not text or self._pending_proposals
+                or not self._PROPOSAL_CARD_SIGNATURE_RE.search(text)):
+            return text
+        note = lang_T(
+            "_(Heads up — the message above describes a change but no real "
+            "approval card was staged, so nothing will happen if you approve "
+            "it. Say “propose that again” and I'll stage an actual card.)_",
+            "_(참고 — 위 메시지는 변경을 설명하지만 실제 승인 카드가 준비되지 "
+            "않아서 승인해도 아무 일도 일어나지 않아요. “다시 제안해줘”라고 "
+            "하시면 실제 카드를 준비할게요.)_")
+        return (text + "\n\n" + note).strip()
+
+    def _last_assistant_text(self) -> str:
+        for message in reversed(self.history):
+            if message.get("role") == "assistant":
+                return str(message.get("content") or "")
+        return ""
 
     def pending_proposals(self) -> list[dict]:
         return list(self._pending_proposals)
@@ -3196,6 +3257,31 @@ class Companion:
                         f"이동했어요 — **{target['title']}**을(를) **{new_parent['title']}** "
                         "아래로 옮겼어요.")
 
+                if action == "reclassify_node":
+                    target = goals.get(int(proposal.get("target_node_id")))
+                    if not target or target.get("status") == "archived":
+                        return gone
+                    if target.get("type") != "subgoal":
+                        return lang_T(
+                            "Only a Branch can be reclassified — Roots, Leaves, "
+                            "and the Soul don't carry Area/Project/Stage roles.",
+                            "Branch만 재분류할 수 있어요 — Root, Leaf, Soul에는 "
+                            "Area/Project/Stage 분류가 없어요.")
+                    role = str(proposal.get("semantic_role") or "").strip().lower()
+                    previous = (goals.resolved_semantic_role(int(target["id"]))
+                                or lang_T("unclassified", "미분류"))
+                    goals._set_semantic_role(
+                        int(target["id"]), role, rationale=reasoning, source="chat")
+                    role_ko = {"area": "Area", "project": "Project",
+                               "stage": "Stage"}.get(role, role)
+                    return lang_T(
+                        f"Reclassified — **{target['title']}** is now an "
+                        f"**{role.title()}** (was {str(previous).title()}). "
+                        "Its position in the tree didn't change.",
+                        f"재분류했어요 — **{target['title']}**은(는) 이제 "
+                        f"**{role_ko}**예요 (이전: {previous}). 트리에서의 위치는 "
+                        "바뀌지 않았어요.")
+
                 return lang_T("I wasn't sure how to apply that, so nothing changed — want to tell me again?",
                              "어떻게 적용할지 확실하지 않아서 아무것도 바꾸지 않았어요 — 다시 한번 말씀해 주시겠어요?")
             finally:
@@ -3240,10 +3326,24 @@ class Companion:
         UI card buttons call ``approve_proposal`` with an exact index. A bare
         "yes" cannot safely choose among several independently gated cards.
         """
+        if user_text.strip().lower() not in self._PROPOSAL_APPROVAL_WORDS:
+            return None
         proposals = list(self._pending_proposals)
         if not proposals:
-            return None
-        if user_text.strip().lower() not in self._PROPOSAL_APPROVAL_WORDS:
+            # An approval aimed at a card-shaped message that never staged a
+            # proposal must be answered deterministically. Passing the "yes"
+            # to the model lets it invent a success confirmation for a change
+            # that never ran.
+            if self._PROPOSAL_CARD_SIGNATURE_RE.search(self._last_assistant_text()):
+                return lang_T(
+                    "There's no live card to approve — my previous message "
+                    "described a change but never staged a real proposal, so "
+                    "nothing was applied. Say “propose that again” and I'll "
+                    "stage an actual card you can approve.",
+                    "승인할 수 있는 카드가 없어요 — 이전 메시지가 변경을 "
+                    "설명했지만 실제 제안이 준비되지 않아서 아무것도 적용되지 "
+                    "않았어요. “다시 제안해줘”라고 하시면 승인할 수 있는 실제 "
+                    "카드를 준비할게요.")
             return None
         if len(proposals) > 1:
             return lang_T(
@@ -3391,6 +3491,7 @@ class Companion:
                 scouted = self._run_proposal_scout(user_text)
                 if scouted:
                     text = (text.rstrip() + "\n\n" + scouted).strip()
+                text = self._flag_imitation_proposal_card(text)
                 text = self._offer_filing(user_text, text)
             except Exception as e:  # never crash the UI on a model/db hiccup
                 text = self._friendly_model_error(e)
