@@ -658,7 +658,7 @@ def test_text_is_selectable_and_right_click_has_copy_paste_menu():
     assert "text_select=True" in gui
     assert "SetClipboardData(13, handle)" in gui
     assert "GetClipboardData(13)" in gui
-    assert "confirmed resolutions will remain" in script
+    assert "approved handoffs remain" in script
 
 
 def test_leaf_coach_close_stays_fixed_and_uses_an_accessible_x():
@@ -861,16 +861,15 @@ def test_leaf_workspace_scope_nonce_ignores_late_leaf_results():
     assert "leafCoachView=null" in closed
 
 
-def test_leaf_workspace_clear_copy_preserves_approved_state_in_both_languages():
+def test_leaf_workspace_clear_copy_warns_full_reset_in_both_languages():
     script = _script()
     clear = _function_body(script, "clearLeafWorkspaceConversation")
 
     assert "goal_leaf_workspace_clear" in clear
-    assert "Clear only this Leaf’s conversation?" in clear
-    assert "approved agreement, plan, progress, and confirmed resolutions will remain" in clear
-    assert "이 Leaf의 대화만 지울까요?" in clear
-    assert "승인된 합의, 계획, 진행 상태와 확인된 해결 기록은 유지돼요" in clear
-    assert "openLeafCoach" not in clear
+    assert "Reset this Leaf’s workspace?" in clear
+    assert "Completion records, evidence, and approved handoffs remain" in clear
+    assert "이 Leaf의 작업 공간을 초기화할까요?" in clear
+    assert "완료 기록, 증거, 승인된 인계는 유지돼요" in clear
 
 
 def test_leaf_workspace_legacy_history_is_collapsed_and_read_only():
@@ -1896,3 +1895,68 @@ def test_investigation_loading_buttons_keep_visible_labels_and_restore_after_fai
     assert "const originalButtonHtml=button.innerHTML" in session
     assert "button.innerHTML=originalButtonHtml" in session
     assert "const originalButtonHtml=button?button.innerHTML:''" in generate
+
+
+def test_investigation_card_offers_direct_add_note_input():
+    """The Investigation card must let the user steer it without a chat
+    round-trip: a note panel wired to the curiosity_add_note bridge."""
+    script = _script()
+    card = _function_body(script, "curCardHtml")
+    note = _function_body(script, "curAddNoteHtml")
+    bind = _function_body(script, "bindCurCard")
+
+    assert "curAddNoteHtml(cur)" in card
+    assert "cur-note-text" in note
+    assert "cur-note-save" in note
+    assert "pywebview.api.curiosity_add_note(cur.id,note)" in bind
+    # An empty note must never reach the backend.
+    assert "Write a note first." in bind
+
+
+def test_chat_logs_support_ctrl_wheel_zoom_with_persisted_scale():
+    script = _script()
+    assert "bindChatZoom('cc-log')" in script
+    assert "bindChatZoom('leaf-coach-messages')" in script
+    zoom = _function_body(script, "bindChatZoom")
+    assert "if(!e.ctrlKey) return;" in zoom
+    assert "e.preventDefault();" in zoom
+    assert "{passive:false}" in zoom
+    assert "localStorage.setItem(key,String(scale))" in zoom
+    # Bounded so a runaway wheel can't make the chat unreadable.
+    assert "Math.min(2,Math.max(.6," in zoom
+
+
+def test_leaf_completion_triggers_background_debrief_in_main_chat():
+    """Approving a completion must automatically ask the main-chat companion
+    to analyze the path (DEBRIEF MOMENT), without yanking the user out of
+    Growth: background command_send plus a clickable notice."""
+    script = _script()
+    debrief = _function_body(script, "debriefLeafCompletionInChat")
+    refresh = _function_body(script, "refreshAfterLeafCompletion")
+
+    assert "pywebview.api.command_send(message,[])" in debrief
+    assert "[Leaf completed]" in debrief
+    assert "switchView('self')" in debrief
+    # Each debrief opens its own chat so it never buries a conversation.
+    assert "command_new_chat(true)" in debrief
+    # The debrief explicitly invites NEW Investigations for surfaced tensions.
+    assert "propose a NEW Investigation" in debrief
+    assert "if(!recoveredHandoff) debriefLeafCompletionInChat(leafId);" in refresh
+
+
+def test_clear_leaf_conversation_is_a_full_reset_that_restarts_automatically():
+    script = _script()
+    clear = _function_body(script, "clearLeafWorkspaceConversation")
+    assert "all related working data is reset" in clear
+    assert "This cannot be undone." in clear
+    assert "pywebview.api.goal_leaf_workspace_open(leafId)" in clear
+
+
+def test_chat_markdown_renders_nested_bold_italics_and_headings():
+    script = _script()
+    body = _function_body(script, "conversationHtml")
+    # Bold must tolerate single asterisks inside it (nested italics).
+    assert r"\*\*((?:[^*\n]|\*(?!\*))+)\*\*" in body
+    # Single-asterisk italics and #-headings render instead of showing raw.
+    assert "<em>$2</em>" in body
+    assert "chat-heading" in body

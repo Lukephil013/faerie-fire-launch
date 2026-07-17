@@ -198,6 +198,9 @@ class Companion:
         # context — only their menu rides in every prompt; a body is injected
         # (dynamic block) once the model requests it or the user types /name.
         self._active_skills: list[str] = []
+        # Completed/archived Leaf records the model explicitly pulled into
+        # this chat via <<<faerie_leaf_recall N>>> — id -> bounded text block.
+        self._recalled_leaves: dict[int, str] = {}
         # Soul Calibration (see livingpc/soul_calibration.py): a standalone
         # popout drawer walks the fixed FIELDS list deterministically
         # (no model involvement per-question) — see calibration_save/
@@ -483,6 +486,15 @@ class Companion:
             "\n\nCUSTOM SKILL COMMANDS INSTALLED (also real; suggest them "
             "when relevant, and `/teach <idea>` drafts a new one for the "
             "user's approval):\n" + self._skills_block()
+            + "\n\nOUTWARD DRAFTS — VOICE AND HONESTY: before drafting "
+            "anything the user will send to another person as themselves "
+            "(a proposal, email, message, reply, post), load the "
+            "house-writing-style skill first if it is not already active — "
+            "never draft outward text from your default voice. Regardless of "
+            "voice: never invent experience, credentials, clients, prices, "
+            "timelines, or infrastructure in a draft. Facts you cannot "
+            "confirm become [bracketed placeholders] plus a question to the "
+            "user."
             + "\n\nBROWSER FORM ASSISTANCE — EXPLICIT AND APPROVAL-GATED: when the "
             "user directly asks you to open a website and fill a form, and provides "
             "a complete HTTPS URL plus the information to use, propose browser_task. "
@@ -536,6 +548,24 @@ class Companion:
             "twice with slightly different wording.\n"
             "Here is the current tree, so you can reference real nodes by id (bounded "
             "list, not the full tree):\n" + self._catalog_block() + "\n"
+            "COMPLETED LEAF RECALL — A REAL CAPABILITY YOU HAVE: the tree list "
+            "includes completed Leaves, and you can pull any Leaf's durable "
+            "record (its confirmed outcome, its handoff material such as a "
+            "pasted posting or drafted artifact, and a bounded tail of its "
+            "workspace conversation) into this chat. Emit exactly "
+            "<<<faerie_leaf_recall LEAF_ID>>> anywhere in your reply (up to "
+            "three; the app strips it, loads the records, and asks you to "
+            "answer again with them in context — they stay available for the "
+            "rest of this chat). Use it whenever a completed Leaf's actual "
+            "content matters — a replan that should reference what was found, "
+            "a proposal that builds on a finished draft. NEVER tell the user a "
+            "completed Leaf's content is beyond your visible window, and never "
+            "ask them to re-paste material a completed Leaf already holds, "
+            "without recalling it first. When a Leaf already appears under "
+            "RECALLED LEAF RECORDS, do NOT emit its marker again — answer "
+            "directly from the record, and stage any proposal in that same "
+            "reply. Never send a reply consisting only of markers or blocks: "
+            "always include at least one user-visible sentence.\n"
             "To propose something, include, anywhere in your reply, an exact block "
             "of this form (the app parses and silently removes it, replacing it with "
             "a formatted card — never describe or explain this syntax to the user, "
@@ -549,7 +579,11 @@ class Companion:
             "\"rename_investigation\" | \"merge_investigations\" | "
             "\"archive_investigation\" | \"record_goal_progress\" | \"browser_task\",\n"
             " \"label\": \"short name\",\n"
-            " \"directive\": \"the underlying question, note, or current-state dump, in their words\",\n"
+            " \"directive\": \"the underlying question, note, or current-state dump, in their words\","
+            " For record_goal_progress the directive IS the stored evidence: it must contain the"
+            " concrete facts that happened (the actual URL, the actual decision, the actual reason,"
+            " in the user's words) — never a template or plan describing what should be logged."
+            " If the concrete facts aren't in the conversation yet, ask for them instead of proposing.\n"
             " \"reasoning\": \"one sentence on why it fits there\",\n"
             " \"confidence\": a number 0-1 (REQUIRED for every action except start_investigation),\n"
             " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/reclassify_node/replan_project/set_project_signal),\n"
@@ -693,6 +727,16 @@ class Companion:
             "question, or, if it's more of an open question than something ready to "
             "place, propose start_investigation instead (that action never needs "
             "confidence/target_node_id).\n"
+            "SELF-REFERENCE BOUNDARY: the user is also this app's developer. A "
+            "message describing Faerie Fire's own internals — bug reports, "
+            "postmortems, code fixes, tests, prompts, handoff machinery, UI "
+            "changes — is about the tool, not about the user's life or their "
+            "projects. Never record such content as goal progress, Investigation "
+            "context, or tree changes on unrelated projects (e.g. freelance "
+            "work), and never conflate a fix in Faerie's code with progress on "
+            "work the user does *with* Faerie. Respond conversationally instead; "
+            "stage a card only if their tree has an explicit project about "
+            "building Faerie itself and the message advances that project.\n"
             "Propose at most three distinct items in one response, and only when something "
             "real is on the table — not every passing comment. Multiple proposals are "
             "appropriate when the user explicitly wants several independent patterns "
@@ -730,6 +774,7 @@ class Companion:
               "chain above it still makes sense and propose a replan if not):\n"
             + self._horizon_block()
             + self._workflow_bodies_block()
+            + self._recalled_leaves_block()
         )
         if self.proposals_enabled:
             dynamic += (
@@ -1077,6 +1122,90 @@ class Companion:
 
     _SKILL_BLOCK_RE = re.compile(
         r"<<<faerie_skill\s*(\{.*?\})\s*faerie_skill>>>", re.DOTALL)
+
+    _LEAF_RECALL_RE = re.compile(r"<<<faerie_leaf_recall\s+(\d+)\s*>>>")
+
+    def _extract_leaf_recalls(self, text: str) -> tuple[str, list[int]]:
+        """Pulls every <<<faerie_leaf_recall N>>> marker out of a model reply.
+        Returns (text with markers stripped, requested Leaf ids). A marker for
+        an already-recalled Leaf still counts: stripping it silently while the
+        model waits on the fetch produced empty replies."""
+        ids = []
+        for raw in self._LEAF_RECALL_RE.findall(text):
+            try:
+                leaf_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if leaf_id not in ids:
+                ids.append(leaf_id)
+        return self._LEAF_RECALL_RE.sub("", text).strip(), ids[:3]
+
+    def _recall_leaf(self, leaf_id: int) -> bool:
+        """Load one Leaf's durable record (outcome, handoff material, bounded
+        conversation tail) into this chat's dynamic context."""
+        if leaf_id in self._recalled_leaves:
+            return True
+        try:
+            from ..goals import GoalStore
+            from ..goal_ai import GoalAgentStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            agents = GoalAgentStore(self.cfg.memory_db_path)
+            try:
+                node = goals.get(int(leaf_id))
+                if not node or node.get("type") != "task":
+                    return False
+                lines = [f"LEAF {leaf_id}: {node.get('title', '')} "
+                         f"[{node.get('status', '')}]"]
+                if node.get("description"):
+                    lines.append("Description: " + str(node["description"])[:600])
+                outcomes = goals.outcomes(int(leaf_id))
+                if outcomes:
+                    latest = outcomes[0]
+                    for key, label in (("what_happened", "What happened"),
+                                       ("changed_understanding", "Lesson"),
+                                       ("next_adjustment", "Next adjustment")):
+                        if latest.get(key):
+                            lines.append(f"{label}: " + str(latest[key])[:800])
+                for handoff in agents.outgoing_leaf_handoffs(int(leaf_id), 1):
+                    payload = handoff.get("payload") or {}
+                    if payload.get("output_summary"):
+                        lines.append("Handoff summary: "
+                                     + str(payload["output_summary"])[:800])
+                    if payload.get("working_material"):
+                        lines.append("Handoff working material:\n"
+                                     + str(payload["working_material"])[:5000])
+                messages = agents.leaf_workspace_messages(int(leaf_id), 12)
+                if messages:
+                    tail, budget = [], 2500
+                    for message in reversed(messages):
+                        content = str(message.get("content") or "").strip()
+                        if not content:
+                            continue
+                        chunk = f"{message.get('role')}: {content[:700]}"
+                        if budget - len(chunk) < 0:
+                            break
+                        budget -= len(chunk)
+                        tail.append(chunk)
+                    if tail:
+                        lines.append("Workspace conversation (most recent last):\n"
+                                     + "\n".join(reversed(tail)))
+                self._recalled_leaves[int(leaf_id)] = "\n".join(lines)[:9000]
+                while len(self._recalled_leaves) > 3:
+                    self._recalled_leaves.pop(next(iter(self._recalled_leaves)))
+                return True
+            finally:
+                agents.close(); goals.close()
+        except Exception as error:
+            log_diag("leaf-recall",
+                     f"recall failed leaf_id={leaf_id} error={type(error).__name__}")
+            return False
+
+    def _recalled_leaves_block(self) -> str:
+        if not self._recalled_leaves:
+            return ""
+        return ("\n\nRECALLED LEAF RECORDS (durable results you explicitly "
+                "pulled in — cite them instead of asking the user to re-paste):\n"
+                + "\n\n".join(self._recalled_leaves.values()))
 
     def _extract_skill_loads(self, text: str) -> tuple[str, list[str]]:
         """Pulls every <<<faerie_skill ...>>> block out of the model's raw
@@ -3362,6 +3491,28 @@ class Companion:
                 replies.append(self._apply_proposal(proposal))
         return "\n\n".join(replies)
 
+    @staticmethod
+    def _looks_like_pasted_material(text: str) -> bool:
+        """A long message that is mostly third-party content (a job posting,
+        an article, someone else's email) is reference material for THIS
+        conversation, not a brain-dump worth filing."""
+        lowered = f" {text.casefold()} "
+        for marker in ("we're looking for", "we are looking for", "deliverables",
+                       "how we like to work", "start your message with",
+                       "posted ", "only freelancers", "budget is", "job description",
+                       "requirements:", "responsibilities:", "fixed-price",
+                       "hourly", "project type",
+                       # Faerie's own UI quoted back for discussion/debugging
+                       # is never a brain-dump.
+                       "✦", "@today", "active threads", "questions answered",
+                       "estimated understanding", "(or click approve)",
+                       "waiting for approval", "waiting for you"):
+            if marker in lowered:
+                return True
+        first_person = len(re.findall(r"\bi\b|\bi'\w+\b|\bmy\b", lowered))
+        third_party = len(re.findall(r"\bwe\b|\bwe'\w+\b|\bour\b", lowered))
+        return third_party >= 5 and third_party > first_person * 1.5
+
     def _offer_filing(self, user_text: str, reply_text: str) -> str:
         """Long, brain-dump-shaped messages get a gentle offer to file them."""
         if not getattr(self.cfg, "filing_auto_offer", True):
@@ -3375,6 +3526,19 @@ class Companion:
         min_chars = int(getattr(self.cfg, "filing_offer_min_chars", 600))
         if len(stripped) < min_chars or stripped.startswith("/"):
             return reply_text
+        # App-generated messages (the automatic Leaf-completion debrief) are
+        # never the user's own brain-dump.
+        if stripped.startswith("[Leaf completed]") or stripped.startswith("[Leaf 완료]"):
+            return reply_text
+        if self._looks_like_pasted_material(stripped):
+            return reply_text
+        # At most one offer per chat: even a misjudged nudge should never nag.
+        offered = getattr(self, "_filing_offer_chats", None)
+        if offered is None:
+            offered = self._filing_offer_chats = set()
+        if self.chat_id in offered:
+            return reply_text
+        offered.add(self.chat_id)
         self._pending_dump = user_text
         return (reply_text
                 + "\n\n_(That read like material worth keeping — send `/file` "
@@ -3472,19 +3636,29 @@ class Companion:
                 )
                 text = self.chat.reply(system, messages)
                 text, loads = self._extract_skill_loads(text)
-                if loads:
+                text, recalls = self._extract_leaf_recalls(text)
+                recalled = [leaf_id for leaf_id in recalls
+                            if self._recall_leaf(leaf_id)]
+                if loads or recalled:
                     for name in loads:
                         self._activate_skill(name)
-                    log_diag("skills", f"workflow loaded={loads}")
-                    # One re-call with the skill bodies now in the dynamic
-                    # block (the static prefix is a cache hit). Loads emitted
-                    # by the re-call itself still activate but only take
-                    # effect next turn — never a third call.
+                    if loads:
+                        log_diag("skills", f"workflow loaded={loads}")
+                    if recalled:
+                        log_diag("leaf-recall", f"recalled leaf_ids={recalled}")
+                    # One re-call with the skill bodies / recalled Leaf records
+                    # now in the dynamic block (the static prefix is a cache
+                    # hit). Loads and recalls emitted by the re-call itself
+                    # still register but only take effect next turn — never a
+                    # third call.
                     system = self.system_blocks(retrieval_context)
                     text = self.chat.reply(system, messages)
                     text, late = self._extract_skill_loads(text)
                     for name in late:
                         self._activate_skill(name)
+                    text, late_recalls = self._extract_leaf_recalls(text)
+                    for leaf_id in late_recalls:
+                        self._recall_leaf(leaf_id)
                 text = self._extract_filing_facts(text)
                 text = self._extract_proposal(
                     text, preserve_pending=bool(retired_proposals))
@@ -3495,6 +3669,15 @@ class Companion:
                 text = self._offer_filing(user_text, text)
             except Exception as e:  # never crash the UI on a model/db hiccup
                 text = self._friendly_model_error(e)
+        if not str(text or "").strip():
+            # A reply must never render as an empty bubble: if stripping
+            # markers/blocks consumed everything, say so and invite a retry.
+            log_diag("companion", "empty reply after extraction; fallback sent")
+            text = lang_T(
+                "(My reply came back empty after processing — say “try again” "
+                "and I'll answer in full.)",
+                "(처리 후 답변이 비어 있었어요 — “다시 시도”라고 하시면 온전히 "
+                "답할게요.)")
         self.history.append({"role": "assistant", "content": text})
         self.chats.append(self.chat_id, "assistant", text)
         self._turns_since_reflection += 1
@@ -3508,6 +3691,7 @@ class Companion:
         self.history = []
         self._turns_since_reflection = 0
         self._active_skills = []
+        self._recalled_leaves = {}
         self.proposals_enabled = bool(proposals_enabled)
         self._pending_proposals = self.chats.pending_proposals(self.chat_id)
         return self.chat_id
@@ -3519,6 +3703,7 @@ class Companion:
         self.history = self.chats.messages(chat_id)
         self._turns_since_reflection = 0
         self._active_skills = []
+        self._recalled_leaves = {}
         self.proposals_enabled = self.chats.proposals_enabled(chat_id)
         self._pending_proposals = self.chats.pending_proposals(chat_id)
         return True

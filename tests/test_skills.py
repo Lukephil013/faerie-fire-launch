@@ -449,8 +449,11 @@ class TestWorkflowActivation(unittest.TestCase):
                            "---\nname: style\ndescription: d\n"
                            "disable-model-invocation: true\n---\nStyle rules")
             c._skill_registry(reload=True)
-            self.assertNotIn("style", c.system_blocks()[0].split("WORKFLOW SKILLS")[-1]
-                             .split("<<<")[0])
+            # The hidden skill must not be listed in the workflow menu. (The
+            # static prompt legitimately mentions "house-writing-style"
+            # elsewhere, so match the menu-entry form, not the substring.)
+            self.assertNotIn("style — d", c.system_blocks()[0]
+                             .split("WORKFLOW SKILLS")[-1].split("<<<")[0])
             out = c.reply("/style")
             self.assertIn("(stub)", out)
             self.assertIn("style", c._active_skills)
@@ -552,7 +555,9 @@ class TestBuiltinSkills(unittest.TestCase):
                          "house-writing-style"):
                 self.assertIn(name, registry)
                 self.assertFalse(registry[name].error, registry[name].error)
-            self.assertFalse(registry["house-writing-style"].model_invocable)
+            # The voice guide must be model-invocable: the companion is
+            # required to load it before drafting outward text.
+            self.assertTrue(registry["house-writing-style"].model_invocable)
 
     def test_remind_set_list_cancel(self):
         with tempfile.TemporaryDirectory() as tmp:

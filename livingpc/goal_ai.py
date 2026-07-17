@@ -292,19 +292,34 @@ def _normalize_leaf_handoff(value: dict | None) -> dict:
     }
 
 
-_HANDOFF_CREATION_WORDS = {
+def _stem_handoff_word(raw: str) -> str:
+    """Light plural stemming so "postings" matches "posting". Applied to both
+    free text and the word sets below, so self-inconsistent stems (e.g.
+    analysis → analysi) still match themselves."""
+    return raw[:-1] if len(raw) > 4 and raw.endswith("s") else raw
+
+
+_HANDOFF_CREATION_WORDS = {_stem_handoff_word(w) for w in {
     "draft", "write", "create", "build", "prepare", "compose", "design",
     "collect", "brainstorm", "develop", "make", "produce", "finalize",
-}
-_HANDOFF_USE_WORDS = {
+    # Selection work produces an artifact too: a scan that picked a posting
+    # hands its finding to the Leaf that applies to it.
+    "scan", "find", "identify", "research", "choose", "pick",
+}}
+_HANDOFF_USE_WORDS = {_stem_handoff_word(w) for w in {
     "publish", "post", "submit", "apply", "use", "review", "evaluate",
     "select", "implement", "launch", "send", "present", "upload", "ship",
-}
-_HANDOFF_ARTIFACT_WORDS = {
+    # A Leaf that drafts/writes something FROM its predecessor's finding
+    # (scan → draft the proposal) consumes that artifact just as surely as
+    # one that publishes it.
+    "draft", "write", "compose", "prepare", "respond",
+}}
+_HANDOFF_ARTIFACT_WORDS = {_stem_handoff_word(w) for w in {
     "profile", "draft", "document", "report", "proposal", "template", "copy",
-    "resume", "portfolio", "plan", "list", "examples", "design", "code",
+    "resume", "portfolio", "plan", "list", "example", "design", "code",
     "analysis", "brief", "guide", "email", "application", "headline",
-}
+    "posting", "listing", "job",
+}}
 _HANDOFF_STOP_WORDS = {
     "the", "a", "an", "and", "or", "to", "for", "of", "in", "on", "with",
     "this", "that", "first", "next", "leaf", "project", "now", "tentative",
@@ -312,8 +327,12 @@ _HANDOFF_STOP_WORDS = {
 
 
 def _handoff_words(value: str) -> set[str]:
-    return {word for word in re.findall(r"[a-z0-9]+", str(value or "").casefold())
-            if len(word) > 2 and word not in _HANDOFF_STOP_WORDS}
+    words = set()
+    for raw in re.findall(r"[a-z0-9]+", str(value or "").casefold()):
+        word = _stem_handoff_word(raw)
+        if len(word) > 2 and word not in _HANDOFF_STOP_WORDS:
+            words.add(word)
+    return words
 
 
 def _leaf_handoff_artifact_dependency(source: dict, destination: dict) -> dict:
@@ -363,7 +382,9 @@ def _leaf_handoff_artifact_candidate(source: dict, destination: dict,
     ranked = []
     for index, raw_message in enumerate(messages or []):
         message = _readable_leaf_workspace_message(raw_message)
-        if message.get("role") != "assistant":
+        # User messages count: pasted source material (a job posting, a
+        # client email) is often the very artifact the next Leaf consumes.
+        if message.get("role") not in {"assistant", "user"}:
             continue
         if (message.get("payload") or {}).get("recovered_partial"):
             continue
@@ -2923,6 +2944,23 @@ def _leaf_workspace_document_context(db_path: str, node_id: int, *,
         documents.close()
 
 
+def _voice_profile_block(max_chars: int = 6500) -> str:
+    """The user's writing-voice rules (skills/house-writing-style/SKILL.md
+    body), bounded, for drafts written in their name. Empty when absent."""
+    try:
+        from .config import APP_DIR
+        path = os.path.join(APP_DIR, "skills", "house-writing-style", "SKILL.md")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        if text.startswith("---"):
+            closing = text.find("---", 3)
+            if closing != -1:
+                text = text[closing + 3:]
+        return text.strip()[:max_chars]
+    except OSError:
+        return ""
+
+
 def build_leaf_workspace_context(goals: GoalStore, agents: GoalAgentStore,
                                  node_id: int, *, max_chars: int = 10000,
                                  attachment_query: str = "") -> dict:
@@ -3033,6 +3071,7 @@ def build_leaf_workspace_context(goals: GoalStore, agents: GoalAgentStore,
         "incoming_handoffs": incoming_handoffs,
         "attached_investigations": curiosity_details,
         "attached_documents": attached_documents,
+        "voice_profile": _voice_profile_block(),
     }
     if len(_json(context)) > max_chars:
         context["attached_documents"]["excerpts"] = str(
@@ -3068,18 +3107,31 @@ def build_leaf_workspace_context(goals: GoalStore, agents: GoalAgentStore,
                                "constraints", "confirmed", "result", "lesson"}
                 },
             },
-            "incoming_handoffs": incoming_handoffs[-1:],
+            # The handoff shrinks to a share of the budget here so this tier
+            # actually fits — before, an oversized artifact cascaded to the
+            # deeper tiers, which drop the handoff AND everything else.
+            "incoming_handoffs": [
+                {**handoff, "payload": {
+                    **handoff["payload"],
+                    "working_material": str(handoff["payload"].get(
+                        "working_material") or "")[:max(2000, int(max_chars) // 3)],
+                }} for handoff in incoming_handoffs[-1:]],
             "attached_documents": {
                 "files": attached_documents.get("files", [])[:8],
                 "excerpts": str(attached_documents.get("excerpts") or "")[:
-                    max(400, int(max_chars) // 4)],
+                    max(400, int(max_chars) // 8)],
             },
+            # The user's standing voice instruction survives truncation —
+            # a budget squeeze must not silently revert drafts to the
+            # model's default voice.
+            "voice_profile": _voice_profile_block(max_chars=1400),
             "prompt_budget_truncated": True,
         }
     if len(_json(context)) > max_chars:
         context["workspace"] = {"phase": state["phase"], "kind": state["kind"]}
         context["leaf"] = {"id": int(node_id),
                            "title": str(node.get("title") or "")[:80]}
+        context["attached_documents"] = {"files": [], "excerpts": ""}
     if len(_json(context)) > max_chars:
         context = {"leaf_id": int(node_id), "prompt_budget_truncated": True}
     if len(_json(context)) > max_chars:
@@ -3223,8 +3275,17 @@ def _draft_leaf_handoff(config, goals: GoalStore, agents: GoalAgentStore,
 
 def _leaf_handoff_record_artifact_dependency(
         goals: GoalStore, agents: GoalAgentStore, handoff: dict) -> dict:
-    source = goals.get(int(handoff.get("source_leaf_id") or 0)) or {}
-    destination = goals.get(int(handoff.get("destination_leaf_id") or 0)) or {}
+    source = dict(goals.get(int(handoff.get("source_leaf_id") or 0)) or {})
+    destination = dict(goals.get(int(handoff.get("destination_leaf_id") or 0)) or {})
+    # Titles alone are fragile — a rename ("Apply to postings" → "Draft the
+    # proposal") can hide a real dependency. The stored handoff's own words
+    # describe what the source produced and what the destination starts
+    # from, so let them inform the match.
+    payload = dict(handoff.get("payload") or {})
+    source["notes"] = (str(source.get("notes") or "") + "\n"
+                       + str(payload.get("output_summary") or ""))[:2400]
+    destination["notes"] = (str(destination.get("notes") or "") + "\n"
+                            + str(payload.get("suggested_start") or ""))[:2400]
     messages = agents.leaf_workspace_messages(int(source.get("id") or 0), 100)
     return _leaf_handoff_artifact_candidate(source, destination, messages)
 
@@ -3279,7 +3340,30 @@ def _prepare_leaf_completion_handoff(config, goals: GoalStore,
             config, goals, agents, node_id, destination, payload)
         payload["handoff"] = drafted
     else:
-        payload.pop("handoff", None)
+        # No open next Leaf exists yet, but the completion itself may create
+        # one (adaptive_horizon.next_provisional). Draft the handoff against
+        # that pending Leaf now, while a model call is still permitted —
+        # approval is deterministic and cannot draft it later. Without this,
+        # a Leaf born from its predecessor's completion starts empty-handed.
+        pending_raw = (payload.get("adaptive_horizon")
+                       if isinstance(payload.get("adaptive_horizon"), dict) else {})
+        pending_next = (pending_raw.get("next_provisional")
+                        if isinstance(pending_raw.get("next_provisional"), dict) else {})
+        pending_title = str(pending_next.get("title") or "").strip()
+        pending_source = goals.get(int(node_id)) or {}
+        if pending_title and pending_raw.get("project_continues") is not False:
+            pending_destination = {
+                "leaf_id": None,
+                "project_id": int(pending_source.get("parent_id") or 0),
+                "title": pending_title,
+                "description": str(pending_next.get("description") or ""),
+                "pending_creation": True,
+            }
+            payload["handoff_target"] = pending_destination
+            payload["handoff"] = _draft_leaf_handoff(
+                config, goals, agents, node_id, pending_destination, payload)
+        else:
+            payload.pop("handoff", None)
     source = goals.get(int(node_id))
     project_id = int(source["parent_id"]) if source and source.get("parent_id") else None
     raw_adaptive = (dict(payload.get("adaptive_horizon") or {})
@@ -3826,6 +3910,7 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
             if proposal["type"] == "complete_leaf" else None)
         completion_target = None
         recovery_target = None
+        pending_completion_target = None
         if proposal["type"] in {"complete_leaf", "handoff_recovery"}:
             current_target = _leaf_handoff_target(goals, int(node_id))
             presented_target = (proposal.get("payload") or {}).get("handoff_target")
@@ -3839,6 +3924,17 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
                     completion_target = current_target
                 else:
                     recovery_target = current_target
+            elif (proposal["type"] == "complete_leaf"
+                  and isinstance(presented_target, dict)
+                  and presented_target.get("pending_creation")):
+                # The handoff was drafted against a Leaf this very completion
+                # will create. If a real next Leaf appeared meanwhile, the
+                # drafted handoff no longer matches reality.
+                if current_target:
+                    raise ValueError(
+                        "the next Leaf changed after this handoff was drafted; "
+                        "refresh the completion proposal before approving it")
+                pending_completion_target = presented_target
         # Proposal resolution and every resulting semantic mutation share one
         # SQLite transaction. A crash cannot leave an applied proposal open and
         # accidentally apply it a second time.
@@ -3952,6 +4048,39 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
                     })
                 goals.retire_pending_leaf_operations(
                     int(completion_plan["project_id"]), exclude_refs=current_ref)
+                created_ids = list(
+                    (completion_replan_result or {}).get("created_leaf_ids") or [])
+                if pending_completion_target and created_ids:
+                    # The replan just created the Leaf this handoff was
+                    # drafted for; wire the handoff in the same transaction so
+                    # the new Leaf never opens empty-handed.
+                    created_id = int(created_ids[-1])
+                    handoff_payload = _normalize_leaf_handoff(payload.get("handoff"))
+                    if not handoff_payload["output_summary"]:
+                        handoff_payload["output_summary"] = str(
+                            payload.get("result") or "").strip()
+                    if not handoff_payload["working_material"]:
+                        handoff_payload["working_material"] = str(
+                            payload.get("what_happened") or payload.get("result") or "").strip()
+                    if not handoff_payload["suggested_start"]:
+                        handoff_payload["suggested_start"] = (
+                            "Begin " + str((goals.get(created_id) or {}).get("title")
+                                           or "the next Leaf") +
+                            " using this approved result.")
+                    handoff = agents.add_leaf_handoff(
+                        int(node_id), created_id,
+                        int(completion_plan["project_id"]),
+                        int(completion_outcome_id), handoff_payload, commit=False)
+                    completion_handoff_id = int(handoff["id"])
+                    agreement["handoff_id"] = completion_handoff_id
+                    agreement["handoff_destination_id"] = created_id
+                    agents.update_leaf_workspace(
+                        node_id, phase="reflecting", agreement=agreement,
+                        commit=False)
+                    agents.conn.execute(
+                        "UPDATE goal_agent_state SET dirty=1,dirty_reason=?,"
+                        "deferred=0,updated_at=? WHERE node_id=?",
+                        ("approved incoming Leaf handoff", now, created_id))
             elif proposal["type"] == "handoff_recovery":
                 if node.get("status") != "completed" or not recovery_target:
                     raise ValueError("a completed Leaf with a downstream Leaf is required")
@@ -4013,6 +4142,29 @@ def decide_leaf_workspace_proposal(config, node_id: int, proposal_id: int,
             agents.conn.rollback()
             raise
         if completion_outcome_id is not None:
+            # An approved completion is explicit, verified effort: award XP.
+            # Idempotent per Leaf (unique source key), so reopen/re-complete
+            # cannot farm the economy. Never blocks the completion itself.
+            try:
+                from .curiosity_metrics import (
+                    MetricStore, LEAF_COMPLETION_XP, PROJECT_COMPLETION_XP)
+                linked_curiosity, _item = goals._outcome_links(int(node_id))
+                metrics = MetricStore(config.memory_db_path)
+                try:
+                    project_done = not (
+                        (completion_replan_result or {}).get("open_leaf_ids"))
+                    metrics.record_event(
+                        int(linked_curiosity or 0), "milestone",
+                        f"leaf-completion:{int(node_id)}",
+                        xp=(PROJECT_COMPLETION_XP if project_done
+                            else LEAF_COMPLETION_XP),
+                        confidence=1.0)
+                finally:
+                    metrics.close()
+            except Exception as error:
+                log_diag("goal-ai",
+                         f"completion XP award failed node_id={node_id} "
+                         f"error={type(error).__name__}")
             try:
                 from .goals import propagate_experiment_outcome
                 propagate_experiment_outcome(config, int(completion_outcome_id))
@@ -4079,10 +4231,24 @@ def clear_leaf_workspace_messages(config, node_id: int) -> dict:
             agents.conn.execute(
                 "UPDATE goal_leaf_workspace_proposal SET status='rejected',resolved_at=? "
                 "WHERE node_id=? AND status='open'", (_now(), int(node_id)))
+            # Clearing is a full workspace reset: the agreement and approved
+            # plan describe a conversation that no longer exists. Durable node
+            # records (completion outcomes, evidence, approved handoffs) stay.
+            agents.conn.execute(
+                "DELETE FROM goal_leaf_workspace_plan_item WHERE plan_id IN "
+                "(SELECT id FROM goal_leaf_workspace_plan WHERE node_id=?)",
+                (int(node_id),))
+            agents.conn.execute(
+                "DELETE FROM goal_leaf_workspace_plan WHERE node_id=?",
+                (int(node_id),))
             agents.update_leaf_workspace(
-                node_id, working={"current_focus": "",
-                                  "selected_suggestion_ids": [],
-                                  "conversation_summary": ""},
+                node_id,
+                phase=("shaping" if node.get("status") != "completed"
+                       else "completed"),
+                agreement={},
+                working={"current_focus": "",
+                         "selected_suggestion_ids": [],
+                         "conversation_summary": ""},
                 commit=False)
             agents.conn.commit()
         except Exception:
@@ -4269,17 +4435,37 @@ asking the user to repeat information already present in the conversation.
 The context.growth_horizon contains only canonical sibling ordering metadata,
 never sibling conversations. Public NOW / TENTATIVE NEXT roles appear only when
 their Project is Highest priority or Currently working; position remains the
-backend sequence otherwise. When this Leaf is the first canonical Leaf, make completion one
-adaptive approval card: optionally include payload.adaptive_horizon.provisional
+backend sequence otherwise. Every complete_leaf is one adaptive approval card:
+optionally include payload.adaptive_horizon.provisional
 with the same provisional leaf_id and improved title/description, plus
 payload.adaptive_horizon.next_provisional with one tentative new title/description
 when the Project clearly continues. Set project_continues false when the Project
-is ending. Never propose a separate create_child or sibling mutation for this
+is ending. NARRATION IS NOT CREATION: when no other Leaf of this Project remains
+open and the Project continues — especially when your reply describes handing off
+to, opening, or moving on to a new Leaf — payload.adaptive_horizon.next_provisional
+is REQUIRED in that same complete_leaf payload. Without it no next Leaf exists,
+nothing is created at approval, and the handoff you described silently never
+happens. The same rule covers renaming: if your reply says the user is moving
+to a next Leaf whose name or focus differs from the existing tentative-next
+Leaf (e.g. "moving you to Draft the proposal" when the open Leaf is titled
+"Apply to postings"), you MUST emit that retitle in
+payload.adaptive_horizon.provisional (same leaf_id, new title/description).
+Otherwise the old title survives and the user arrives in a Leaf that does not
+match what you told them. Never propose a separate create_child or sibling mutation for this
 completion; the one completion card will complete NOW, promote or rewrite the
 existing tentative-next Leaf, and add at most one new tentative next after approval.
-When the completion has a next Leaf, a stronger completion pass will add an editable
+When the completion has a next Leaf — including one your next_provisional will
+create — a stronger completion pass will add an editable
 payload.handoff and authoritative payload.handoff_target before presentation. Do not
 choose a destination or claim that a handoff was saved yourself.
+
+OUTWARD DRAFTS — VOICE AND HONESTY: when drafting anything the user will send
+to another person as themselves (a proposal, an email, a message, a reply, a
+post), follow context.voice_profile exactly — it is the user's own voice guide
+and it outranks your default style completely. Regardless of voice: never
+invent experience, credentials, clients, prices, timelines, or infrastructure
+in a draft. A fact not confirmed in this workspace or the voice profile
+becomes a [bracketed placeholder] plus a question to the user.
 
 Return JSON when possible:
 {"message":str,

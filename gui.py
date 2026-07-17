@@ -1489,6 +1489,22 @@ class GuiApi:
         return refine_classification_proposal(
             self.cfg, int(proposal_id), str(note or ""))
 
+    def curiosity_add_note(self, curiosity_id, note) -> dict:
+        """Attach a direct user note to one Investigation, no chat round-trip.
+
+        The note feeds future question/suggestion generation the same way an
+        approved add_investigation_context chat card does."""
+        from livingpc.curiosity import CuriosityStore
+        store = CuriosityStore(self.cfg.memory_db_path)
+        try:
+            saved = store.add_context(
+                int(curiosity_id), str(note or ""), source_kind="user_note")
+            return {"ok": True, "context": saved}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
     def curiosity_metric_approve(self, curiosity_id, dimensions=None,
                                  state_metrics=None) -> dict:
         from livingpc.curiosity_metrics import MetricStore

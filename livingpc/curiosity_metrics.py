@@ -29,6 +29,11 @@ XP_BY_EVENT = {
 }
 DAILY_XP_CAP = 100
 CALIBRATION_DAYS = 7
+# Approved Leaf completions are explicit, user-verified effort — they award
+# XP with a sentinel curiosity_id of 0 when no Investigation is linked, so
+# the global economy sees them while per-Investigation mastery never does.
+LEAF_COMPLETION_XP = 25
+PROJECT_COMPLETION_XP = 50
 
 
 def _now() -> str:

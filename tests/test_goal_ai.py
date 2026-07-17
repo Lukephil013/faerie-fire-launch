@@ -26,6 +26,7 @@ from livingpc.goal_ai import (
     open_leaf_workspace, send_leaf_workspace, decide_leaf_workspace_proposal,
     clear_leaf_workspace_messages, parse_leaf_workspace_reply, reopen_leaf_workspace,
     prepare_missing_leaf_handoff, repair_leaf_handoff_artifact,
+    _leaf_workspace_view,
 )
 from livingpc.goal_ai import (
     get_goal_agent_model, promote_memory_candidate, run_goal_agent,
@@ -2309,6 +2310,130 @@ def test_completion_is_one_adaptive_horizon_card_and_retires_standalone_growth(w
     assert agents.get_proposal(standalone)["status"] == "stale"
 
 
+def test_completing_the_last_leaf_creates_next_leaf_and_wires_its_handoff(world):
+    """When no next Leaf exists, next_provisional both creates it AND the new
+    Leaf receives the completion handoff — a Leaf born from its predecessor's
+    completion must never open empty-handed."""
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Win a first Upwork contract", parent_id=ids["over_a"])
+    last_leaf = goals.create(
+        "task", "Scan postings and pick one", parent_id=project,
+        description="Find one posting worth proposing on.")
+    agents.ensure_agents()
+    findings = ("Chosen posting: healthcare advisory intake automation. "
+                "Budget fixed, few days, wants Claude integration tested on real "
+                "data with a plain-English runbook. Four clarifying questions "
+                "prepared: intake format, monthly volume, tester, sign-off owner.")
+    open_leaf_workspace(cfg, last_leaf, model=RecordingWorkspaceModel([findings]))
+    pending = send_leaf_workspace(
+        cfg, last_leaf, "That's the one. Complete this Leaf and open the proposal draft.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "Scan complete — handing off to the proposal draft.",
+            proposal={"type": "complete_leaf", "payload": {
+                "result": "One posting was selected for a proposal.",
+                "what_happened": findings,
+                "lesson": "Bounded, production-minded postings fit best.",
+                "adaptive_horizon": {
+                    "next_provisional": {
+                        "title": "Draft the advisory-intake proposal",
+                        "description": "Write and send the proposal for the chosen posting.",
+                    },
+                    "project_continues": True,
+                },
+            }, "rationale": "The scan is done and the draft should start from it."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    target = proposal["payload"]["handoff_target"]
+    assert target["pending_creation"] is True
+    assert target["title"] == "Draft the advisory-intake proposal"
+    assert proposal["payload"]["handoff"]["output_summary"]
+
+    completed = decide_leaf_workspace_proposal(
+        cfg, last_leaf, proposal["id"], "approve")
+
+    assert goals.get(last_leaf)["status"] == "completed"
+    created_ids = completed["completion_replan"]["created_leaf_ids"]
+    assert len(created_ids) == 1
+    created = goals.get(created_ids[0])
+    assert created["title"] == "Draft the advisory-intake proposal"
+    assert created["status"] == "active"
+    incoming = agents.incoming_leaf_handoffs(int(created["id"]), 3)
+    assert len(incoming) == 1
+    assert incoming[0]["source_leaf_id"] == last_leaf
+    material = incoming[0]["payload"]["working_material"]
+    assert "healthcare advisory intake automation" in material
+
+
+def test_user_pasted_posting_transfers_from_scan_leaf_to_apply_leaf(world):
+    """The artifact the next Leaf needs is often pasted by the USER (a job
+    posting, a client email) — not written by the assistant. A scan→apply
+    handoff must carry it."""
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Run Upwork micro-test", parent_id=ids["over_a"])
+    scan_leaf = goals.create(
+        "task", "Publish profile and first posting scan", parent_id=project,
+        description="Scan postings and pick one worth applying to.")
+    apply_leaf = goals.create(
+        "task", "Apply to first posting(s) using AI/novelty filter", parent_id=project,
+        description="Submit a real proposal to the chosen posting.")
+    agents.ensure_agents()
+    posting = ("Build a Claude automation that turns our client intakes into a "
+               "clean internal brief. We're a small advisory working privately "
+               "with individuals and families around psychological wellbeing. "
+               "When a new client comes in, their intake should become a clean "
+               "internal writeup: their situation, what they need, practitioners "
+               "to bring in, sensitivities, and opening questions. Built on "
+               "Claude, in our own accounts, with a plain-English runbook, and "
+               "tested on real examples before sign-off. Budget fixed, a few days.")
+    open_leaf_workspace(cfg, scan_leaf, model=RecordingWorkspaceModel(["Let's scan."]))
+    send_leaf_workspace(
+        cfg, scan_leaf, "This posting is the one:\n\n" + posting,
+        model=RecordingWorkspaceModel(["That posting fits your filter well."]))
+    pending = send_leaf_workspace(
+        cfg, scan_leaf, "Complete this Leaf and carry the posting forward.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "Scan complete — handing the chosen posting to the apply Leaf.",
+            proposal={"type": "complete_leaf", "payload": {
+                "result": "One posting was chosen for a proposal.",
+                "what_happened": "Scanned postings and chose the advisory-intake one.",
+                "lesson": "Bounded scope postings fit best.",
+            }, "rationale": "The scan is done."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    drafted = proposal["payload"]["handoff"]
+    assert proposal["payload"]["handoff_target"]["leaf_id"] == apply_leaf
+    assert drafted["artifact_required"] is True
+    assert posting in drafted["working_material"]
+
+    decide_leaf_workspace_proposal(cfg, scan_leaf, proposal["id"], "approve")
+    incoming = agents.incoming_leaf_handoffs(apply_leaf, 3)
+    assert len(incoming) == 1
+    assert posting in incoming[0]["payload"]["working_material"]
+
+
+def test_completing_the_last_leaf_of_a_finished_project_creates_nothing(world):
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Ship the guide", parent_id=ids["over_a"])
+    last_leaf = goals.create("task", "Publish the guide", parent_id=project)
+    agents.ensure_agents()
+    open_leaf_workspace(cfg, last_leaf, model=RecordingWorkspaceModel(["Publishing."]))
+    pending = send_leaf_workspace(
+        cfg, last_leaf, "Published. The project is done.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "Published — this project is finished.",
+            proposal={"type": "complete_leaf", "payload": {
+                "result": "The guide is live.", "lesson": "Shipping small worked.",
+                "adaptive_horizon": {"project_continues": False},
+            }, "rationale": "The project is complete."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    assert not (proposal["payload"].get("handoff_target") or {})
+    completed = decide_leaf_workspace_proposal(
+        cfg, last_leaf, proposal["id"], "approve")
+    assert completed["completion_replan"]["created_leaf_ids"] == []
+    open_rows = goals.conn.execute(
+        "SELECT id FROM goal_node WHERE parent_id=? AND node_type='task' "
+        "AND status IN ('active','paused')", (project,)).fetchall()
+    assert open_rows == []
+
+
 def test_stale_adaptive_completion_applies_nothing_and_retires_its_card(world):
     cfg, goals, agents, _, ids = world
     project = goals.create("subgoal", "Publish notes", parent_id=ids["over_a"])
@@ -2678,7 +2803,10 @@ def test_leaf_workspace_assistant_reply_persists_atomically(world, monkeypatch):
         ids["task_a"])] == ["assistant", "user"]
 
 
-def test_clearing_v2_messages_keeps_approved_plan_and_legacy_history(world):
+def test_clearing_v2_messages_resets_the_workspace_but_keeps_legacy_history(world):
+    """Clear is a full workspace reset (conversation, working state, plan,
+    agreement) while durable records — legacy coach history, outcomes,
+    handoffs — survive."""
     cfg, goals, agents, _, ids = world
     goals.update(ids["task_a"], description="Steps:\n1. Write one sentence.")
     agents.add_coach_message(ids["task_a"], 0, "Write one sentence.", "user",
@@ -2693,10 +2821,12 @@ def test_clearing_v2_messages_keeps_approved_plan_and_legacy_history(world):
     cleared = clear_leaf_workspace_messages(cfg, ids["task_a"])
 
     assert cleared["messages"] == []
-    assert cleared["plan"] and cleared["plan"]["items"][0]["text"] == "Write one sentence."
+    assert cleared["plan"] is None
+    assert cleared["phase"] == "shaping"
     assert cleared["legacy_messages"][0]["content"] == "legacy remains"
     assert cleared["working"] == {
         "current_focus": "", "selected_suggestion_ids": [], "conversation_summary": ""}
+    assert not cleared["agreement"].get("confirmed")
     assert agents.leaf_workspace_proposal(pending["id"])["status"] == "rejected"
 
 
@@ -2735,3 +2865,193 @@ def test_leaf_workspace_private_payloads_are_encrypted_at_rest(tmp_path, monkeyp
         (type(value).__name__, crypto.is_encrypted(value), str(value)[:4]) for value in stored]
     agents.close(); goals.close(); curiosities.close()
     crypto._fernet.cache_clear()
+
+
+def test_renamed_destination_still_detects_and_restores_missing_artifact(world):
+    """A rename ('Apply to postings' → 'Draft proposal for advisory intake
+    automation') must not hide a summary-only handoff's missing artifact: the
+    handoff's own words carry the dependency."""
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Run Upwork micro-test", parent_id=ids["over_a"])
+    source = goals.create(
+        "task", "Publish profile and first posting scan", parent_id=project)
+    destination = goals.create(
+        "task", "Draft proposal for advisory intake automation", parent_id=project,
+        description="Write and send the response for the chosen work.")
+    agents.ensure_agents()
+    agents.ensure_leaf_workspace(goals.get(source))
+    posting = ("Build a Claude automation that turns our client intakes into a "
+               "clean internal brief. Small advisory, privacy matters, fixed "
+               "budget, a few days, tested on real examples with a runbook.")
+    agents.add_leaf_workspace_message(source, "user", "The posting: " + posting)
+    goals.update(source, status="completed")
+    outcome_id = agents.conn.execute(
+        "INSERT INTO experiment_outcome (goal_id,result,what_happened,created_at) "
+        "VALUES (?,?,?,?)",
+        (source, "completed", crypto.enc("Scanned postings and chose one."),
+         "2026-07-17T00:00:00+00:00")).lastrowid
+    # The legacy summary-only handoff, as created before the artifact fixes.
+    agents.add_leaf_handoff(source, destination, project, int(outcome_id), {
+        "output_summary": "You scanned postings and found one that resonates — "
+                          "a bounded Claude automation posting for an advisory.",
+        "working_material": "Positioning and four clarifying questions were prepared.",
+        "constraints": [], "unresolved_questions": "",
+        "suggested_start": "Begin drafting the proposal for the chosen posting.",
+    })
+
+    view = _leaf_workspace_view(goals, agents, destination)
+    repair = view["incoming_handoffs"][0]["artifact_repair"]
+    assert repair["available"] is True
+
+    repaired = repair_leaf_handoff_artifact(
+        cfg, destination, view["incoming_handoffs"][0]["id"])
+    restored = repaired["incoming_handoffs"][0]
+    assert posting in restored["payload"]["working_material"]
+    assert restored["artifact_repair"]["available"] is False
+
+
+def test_prepare_missing_handoff_carries_user_pasted_posting_to_renamed_leaf(world):
+    """Luke's live state: scan Leaf completed with NO handoff ever created,
+    downstream Leaf renamed to 'Draft proposal…'. Prepare Missing Handoff must
+    draft a handoff whose working material includes the user-pasted posting."""
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Run Upwork micro-test", parent_id=ids["over_a"])
+    source = goals.create(
+        "task", "Publish profile and first posting scan", parent_id=project)
+    destination = goals.create(
+        "task", "Draft proposal for advisory intake automation", parent_id=project,
+        description="Submit proposals to one or more postings that pass the "
+                    "cool/novel/techy filter. Use the proposal template from "
+                    "the draft phase.")
+    agents.ensure_agents()
+    agents.ensure_leaf_workspace(goals.get(source))
+    posting = ("Build a Claude automation that turns our client intakes into a "
+               "clean internal brief. Small advisory, privacy matters, fixed "
+               "budget, a few days, tested on real examples with a runbook.")
+    agents.add_leaf_workspace_message(source, "user", "The posting: " + posting)
+    goals.update(source, status="completed")
+    agents.conn.execute(
+        "INSERT INTO experiment_outcome (goal_id,result,what_happened,created_at) "
+        "VALUES (?,?,?,?)",
+        (source, "completed", crypto.enc("Scanned postings and chose one."),
+         "2026-07-17T00:00:00+00:00"))
+    agents.conn.commit()
+
+    view = _leaf_workspace_view(goals, agents, source)
+    assert view["handoff_recovery"]["eligible"] is True
+    assert view["handoff_recovery"]["target"]["leaf_id"] == destination
+
+    prepared = prepare_missing_leaf_handoff(cfg, source)
+    proposal = prepared["messages"][-1]["payload"]["proposal"]
+    assert proposal["type"] == "handoff_recovery"
+    drafted = proposal["payload"]["handoff"]
+    assert drafted["artifact_required"] is True
+    assert posting in drafted["working_material"]
+
+    approved = decide_leaf_workspace_proposal(cfg, source, proposal["id"], "approve")
+    assert approved["recovery_handoff"]["destination_leaf_id"] == destination
+    incoming = agents.incoming_leaf_handoffs(destination, 3)
+    assert posting in incoming[0]["payload"]["working_material"]
+
+
+def test_clearing_a_leaf_workspace_resets_agreement_plan_and_phase(world):
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Reset test project", parent_id=ids["over_a"])
+    leaf = goals.create("task", "Reset me", parent_id=project)
+    agents.ensure_agents()
+    open_leaf_workspace(cfg, leaf, model=RecordingWorkspaceModel(["Shaping."]))
+    pending = send_leaf_workspace(
+        cfg, leaf, "Agree and plan it.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "Here is the agreement.", proposal={"type": "agreement", "payload": {
+                "outcome": "A tidy outcome.", "approach": "Small steps.",
+            }, "rationale": "Shaped."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    decide_leaf_workspace_proposal(cfg, leaf, proposal["id"], "approve")
+    assert agents.leaf_workspace_state(leaf)["agreement"].get("confirmed") is True
+
+    cleared = clear_leaf_workspace_messages(cfg, leaf)
+    assert cleared["messages"] == []
+    state = agents.leaf_workspace_state(leaf)
+    assert state["phase"] == "shaping"
+    assert not state["agreement"].get("confirmed")
+    assert agents.leaf_workspace_plan(leaf) is None
+    # Reopening restarts the conversation with a fresh opening message.
+    reopened = open_leaf_workspace(
+        cfg, leaf, model=RecordingWorkspaceModel(["Fresh start — what fits?"]))
+    assert len(reopened["messages"]) == 1
+
+
+def test_leaf_workspace_context_carries_the_voice_profile(world):
+    cfg, goals, agents, _, ids = world
+    context = build_leaf_workspace_context(goals, agents, ids["task_a"])
+    profile = context.get("voice_profile") or ""
+    assert "Luke's Writing Voice" in profile
+    assert "NEVER invent experience" in profile
+    assert "voice_profile" in LEAF_WORKSPACE_SYSTEM
+    assert "never" in LEAF_WORKSPACE_SYSTEM and "invent experience" in LEAF_WORKSPACE_SYSTEM
+
+
+def test_voice_profile_survives_prompt_budget_truncation(world):
+    """A Leaf with a huge restored handoff must not silently lose the user's
+    voice rules to the context budget."""
+    cfg, goals, agents, _, ids = world
+    project = goals.create("subgoal", "Voice budget project", parent_id=ids["over_a"])
+    source = goals.create("task", "Scan for postings", parent_id=project)
+    destination = goals.create("task", "Draft the proposal", parent_id=project)
+    agents.ensure_agents()
+    agents.conn.execute(
+        "INSERT INTO experiment_outcome (goal_id,result,what_happened,created_at) "
+        "VALUES (?,?,?,?)", (source, "completed", crypto.enc("Chose a posting."),
+                             "2026-07-17T00:00:00+00:00"))
+    agents.conn.commit()
+    goals.update(source, status="completed")
+    agents.add_leaf_handoff(source, destination, project, 1, {
+        "output_summary": "A posting was chosen.",
+        "working_material": "posting detail line\n" * 700,   # ~12KB artifact
+        "constraints": [], "unresolved_questions": "",
+        "suggested_start": "Draft the proposal from the posting.",
+    })
+    context = build_leaf_workspace_context(goals, agents, destination, max_chars=6000)
+    assert context.get("prompt_budget_truncated") is True
+    assert "Luke's Writing Voice" in (context.get("voice_profile") or "")
+
+
+def test_approved_leaf_completion_awards_xp_once(world):
+    cfg, goals, agents, _, ids = world
+    from livingpc.curiosity_metrics import MetricStore
+    project = goals.create("subgoal", "XP project", parent_id=ids["over_a"])
+    leaf = goals.create("task", "Earn some XP", parent_id=project)
+    second = goals.create("task", "Later step", parent_id=project)
+    agents.ensure_agents()
+    open_leaf_workspace(cfg, leaf, model=RecordingWorkspaceModel(["Working."]))
+    pending = send_leaf_workspace(
+        cfg, leaf, "Done. Complete it.",
+        model=RecordingWorkspaceModel([LeafWorkspaceReply(
+            "Complete.", proposal={"type": "complete_leaf", "payload": {
+                "result": "Done.", "lesson": "Small steps."},
+                "rationale": "Finished."})]))
+    proposal = pending["messages"][-1]["payload"]["proposal"]
+    decide_leaf_workspace_proposal(cfg, leaf, proposal["id"], "approve")
+
+    metrics = MetricStore(cfg.memory_db_path)
+    try:
+        rows = metrics.conn.execute(
+            "SELECT xp, source_key FROM curiosity_metric_event").fetchall()
+        assert [(r["xp"], r["source_key"]) for r in rows] == [
+            (25, f"leaf-completion:{leaf}")]
+        assert metrics.global_xp() == 25
+        # Completing the project's last Leaf is milestone-tier.
+        open_leaf_workspace(cfg, second, model=RecordingWorkspaceModel(["Go."]))
+        pending2 = send_leaf_workspace(
+            cfg, second, "Also done — project finished.",
+            model=RecordingWorkspaceModel([LeafWorkspaceReply(
+                "Complete.", proposal={"type": "complete_leaf", "payload": {
+                    "result": "Done.", "lesson": "Ship.",
+                    "adaptive_horizon": {"project_continues": False},
+                }, "rationale": "Project over."})]))
+        proposal2 = pending2["messages"][-1]["payload"]["proposal"]
+        decide_leaf_workspace_proposal(cfg, second, proposal2["id"], "approve")
+        assert metrics.global_xp() == 75  # 25 + 50 milestone
+    finally:
+        metrics.close()

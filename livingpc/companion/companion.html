@@ -245,6 +245,26 @@ function addMessage(role,text){ const d=document.createElement('div');
   traceUi('message',{role:role==='me'?'user':'companion',chars:String(text||'').length}); }
 window.addMessage=addMessage;
 
+(function(){ /* Ctrl+wheel zooms the conversation; Ctrl+0 resets. */
+  const el=document.getElementById('log'); if(!el) return;
+  const key='chatZoom:log'; let scale=1;
+  try{ scale=Math.min(2,Math.max(.6,parseFloat(localStorage.getItem(key))||1)); }catch(e){}
+  const apply=()=>{ el.style.zoom=scale===1?'':String(scale); };
+  apply();
+  el.addEventListener('wheel',e=>{
+    if(!e.ctrlKey) return;
+    e.preventDefault();
+    scale=Math.min(2,Math.max(.6,Math.round((scale-Math.sign(e.deltaY)*.08)*100)/100));
+    apply();
+    try{ localStorage.setItem(key,String(scale)); }catch(err){}
+  },{passive:false});
+  document.addEventListener('keydown',e=>{
+    if(e.ctrlKey&&(e.key==='0'||e.code==='Digit0'||e.code==='Numpad0')){
+      scale=1; apply(); try{ localStorage.removeItem(key); }catch(err){}
+    }
+  });
+})();
+
 function greeting(){ addMessage('ai',"Hi — I'm Faerie. Type a message to get started."); }
 function visibleMessageText(value){
   const text=String(value==null?'':value), marker='\n\n<ATTACHED_DOCUMENT_CONTEXT>';

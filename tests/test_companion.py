@@ -2541,3 +2541,177 @@ if __name__ == "__main__":
             fails += 1; print(f"FAIL {fn.__name__}"); traceback.print_exc()
     print(f"\n{len(fns)-fails}/{len(fns)} passed")
     sys.exit(1 if fails else 0)
+
+
+def test_prompt_draws_a_self_reference_boundary_for_faerie_dev_content():
+    """A postmortem about Faerie's own code must not become goal progress or
+    Investigation context on the user's unrelated projects."""
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"),
+                     memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        prompt = c.system_prompt()
+        assert "SELF-REFERENCE BOUNDARY" in prompt
+        assert "about the tool, not about the user's life" in prompt
+        c.close()
+
+
+def test_leaf_recall_pulls_completed_leaf_record_into_the_chat():
+    """<<<faerie_leaf_recall N>>> loads a completed Leaf's durable record
+    (workspace conversation, outcome) into the dynamic context and re-calls
+    the model once, so it can answer from the real content."""
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+        from livingpc.goal_ai import GoalAgentStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        leaf = goals.create("task", "First posting scan", parent_id=project)
+        agents = GoalAgentStore(cfg.memory_db_path)
+        agents.ensure_leaf_workspace(goals.get(leaf))
+        posting = ("Build a Claude automation that turns client intakes into a "
+                   "clean internal brief for a small advisory.")
+        agents.add_leaf_workspace_message(leaf, "user", "The posting: " + posting)
+        agents.close()
+        goals.update(leaf, status="completed")
+        goals.close()
+
+        class RecallChat:
+            def __init__(self):
+                self.systems = []
+
+            def reply(self, system, messages, max_tokens=400):
+                self.systems.append(system)
+                if len(self.systems) == 1:
+                    return f"Let me pull that Leaf up. <<<faerie_leaf_recall {leaf}>>>"
+                return "Got it — the chosen posting is the advisory intake automation."
+
+        chat = RecallChat()
+        companion = Companion(cfg=cfg, chat=chat)
+        rendered = companion.reply("replan using what the scan leaf found")
+        assert len(chat.systems) == 2                      # exactly one re-call
+        assert "<<<faerie_leaf_recall" not in rendered     # marker stripped
+        second_dynamic = chat.systems[1][-1] if isinstance(chat.systems[1], list) else chat.systems[1]
+        assert "RECALLED LEAF RECORDS" in second_dynamic
+        assert posting in second_dynamic
+        # The record persists for follow-up turns in this chat.
+        assert companion._recalled_leaves
+        companion.close()
+
+
+def test_bare_recall_markers_never_produce_an_empty_bubble():
+    """Regression: a bare re-emitted marker for an already-recalled Leaf used
+    to strip to nothing — no re-call, no proposal, empty chat bubble."""
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+        from livingpc.goal_ai import GoalAgentStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        root = goals.create("overgoal", "Money & Resources")
+        project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
+        leaf = goals.create("task", "First posting scan", parent_id=project)
+        agents = GoalAgentStore(cfg.memory_db_path)
+        agents.ensure_leaf_workspace(goals.get(leaf))
+        agents.add_leaf_workspace_message(leaf, "user", "The posting: intake briefs.")
+        agents.close()
+        goals.update(leaf, status="completed")
+        goals.close()
+
+        marker = f"<<<faerie_leaf_recall {leaf}>>>"
+        # Turn 1: bare marker, then the re-call ALSO returns only a marker.
+        # Turn 2: bare marker again for the already-recalled Leaf.
+        companion = Companion(cfg=cfg, chat=ScriptedChat(
+            marker, marker, marker, "Here is the restructure based on the record."))
+        first = companion.reply("replan from the scan leaf")
+        assert first.strip()                       # never an empty bubble
+        second = companion.reply("okay")
+        # The already-recalled marker still triggers the one re-call, which
+        # this time produces the real answer.
+        assert "restructure based on the record" in second
+        companion.close()
+
+
+def test_companion_prompt_requires_voice_skill_and_bans_fabrication_in_drafts():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=StubChat())
+        prompt = c.system_prompt()
+        assert "OUTWARD DRAFTS" in prompt
+        assert "house-writing-style" in prompt
+        assert "[bracketed placeholders]" in prompt
+        c.close()
+
+
+def test_filing_offer_skips_pasted_third_party_material():
+    """Pasting a job posting is reference material for the conversation, not
+    a brain-dump — the /file nudge must not fire on it."""
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat("Interesting posting.", "Noted."))
+        posting = ("so this one sounds close: Summary. Hi! We're a digital "
+                   "marketing agency looking to fold AI automation into the way "
+                   "we operate. What we need done: we want to stand up an AI "
+                   "agent system connected to our CRM. Deliverables: a "
+                   "functioning automation system, documentation, and a handoff "
+                   "session for our team. We're looking for practical n8n or "
+                   "Make.com experience. How we like to work: we care about "
+                   "clear, proactive communication and our team prefers weekly "
+                   "calls. Start your message with DIGIMARK so we see you read "
+                   "this. " * 2)
+        rendered = c.reply(posting)
+        assert "worth keeping" not in rendered
+        # A long first-person brain-dump still gets the offer.
+        dump = ("I keep noticing that I avoid projects with teams. I think my "
+                "ideal work is bounded, async, and solo. I want to build my "
+                "filter around how much human contact something requires, and "
+                "I noticed my energy drops when a posting mentions weekly "
+                "calls. My plan is to test this on the next ten postings I "
+                "read and see how often I'm right about it. " * 3)
+        rendered = c.reply(dump)
+        assert "worth keeping" in rendered
+        c.close()
+
+
+def test_filing_offer_skips_quoted_faerie_ui_and_never_nags_twice_per_chat():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat("Noted.", "Noted.", "Noted."))
+        ui_paste = ("investigation said this and I think it might be the latter: "
+                    "✦ @Today Draft proposal for advisory intake automation "
+                    "Track outcomes and debrief Active Threads 1 proposal(s) "
+                    "waiting for approval 3 question(s) waiting for you "
+                    "12 questions answered · 0 syntheses · 0 queued "
+                    "Estimated understanding · 51% I want to freelance on Upwork "
+                    "as a stepping stone, but I notice I'd rather build cool "
+                    "things than just any automation work. " * 2)
+        assert "worth keeping" not in c.reply(ui_paste)
+        dump = ("I think my real issue is that I want project-shaped work, not "
+                "relationship-shaped work. I want one handoff, one deliverable, "
+                "and then I'm done. I noticed my energy collapses when a posting "
+                "implies ongoing contact, and I want my filter to treat that as "
+                "an instant disqualifier no matter how interesting the work is. " * 3)
+        first = c.reply(dump)
+        assert "worth keeping" in first
+        # Second qualifying dump in the same chat: no repeat nag.
+        second = c.reply(dump + " Also I keep thinking about how I want my own "
+                                "clients to find me instead of me hunting them.")
+        assert "worth keeping" not in second
+        c.close()
+
+
+def test_filing_offer_never_fires_on_the_automatic_completion_debrief():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat("The path holds."))
+        debrief = ('[Leaf completed] "Reflect on micro-test findings" was just '
+                   'completed and approved. Result: I found a core tension between '
+                   'building inventions and monetization timelines. I want passive '
+                   'income but I also want no obligation, and I now see those are '
+                   'in real tension for the next year of my plan. ' * 3)
+        assert "worth keeping" not in c.reply(debrief)
+        c.close()
