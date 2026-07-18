@@ -248,6 +248,70 @@ def test_investigation_sessions_show_progress_proposals_and_advance_the_queue():
     assert "curProposalReviewHtml" in render and "bindCuriosityProposals" in render
 
 
+def test_investigation_session_forces_repaint_after_answer_and_on_exit():
+    """The Save button spins as 'Saving answer' until loadCuriosity repaints;
+    both the answer path and the exit path must force the reload so an in-flight
+    load's guard can't swallow the repaint (the 'hangs until I switch tabs' bug)."""
+    script = _script()
+    session = _function_body(script, "renderCuriositySession")
+    finish = _function_body(script, "exitCuriositySession")
+
+    assert "loadCuriosity({force:true})" in session
+    assert "loadCuriosity({force:true})" in finish
+    # A plain reload on these paths is what regressed into the hang.
+    assert "saveCuriositySession();loadCuriosity();" not in session
+
+
+def test_investigation_batch_keeps_answered_questions_so_it_does_not_end_early():
+    """makeCuriositySession must keep already-answered questions in the batch so
+    the step index stays aligned and the batch isn't declared complete after a
+    single answer (which skipped the remaining queued questions)."""
+    node = shutil.which("node")
+    if not node:
+        return
+    body = _function_body(_script(), "makeCuriositySession")
+    harness = (
+        "let curiositySession=null;\n"
+        "function loadSavedCuriositySession(){return curiositySession;}\n"
+        "function saveCuriositySession(){}\n"
+        "function makeCuriositySession(cur){" + body + "}\n"
+        "const C=7;\n"
+        "const two=[{id:1},{id:2}];\n"
+        # Fresh session: both questions form the batch.
+        "const fresh=makeCuriositySession({id:C,open_questions:two,resolved:[]});\n"
+        # Simulate having answered Q1 (submit advances the index).
+        "curiositySession={curiosityId:C,batch:[1,2],currentIndex:1,answered:1};\n"
+        "const midCur={id:C,open_questions:[{id:2}],"
+        "resolved:[{id:1,kind:'question',status:'answered'}]};\n"
+        "const mid=makeCuriositySession(midCur);\n"
+        # Simulate having answered Q2 as well.
+        "curiositySession={curiosityId:C,batch:[1,2],currentIndex:2,answered:2};\n"
+        "const doneCur={id:C,open_questions:[],resolved:["
+        "{id:1,kind:'question',status:'answered'},"
+        "{id:2,kind:'question',status:'answered'}]};\n"
+        "const done=makeCuriositySession(doneCur);\n"
+        "console.log(JSON.stringify({fresh:fresh.batch,mid:mid.batch,"
+        "midIndex:mid.currentIndex,done:done.batch}));\n"
+    )
+    result = subprocess.run(
+        [node, "-e", harness], text=True, encoding="utf-8",
+        cwd=ROOT, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    import json
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    # Fresh batch holds both questions.
+    assert out["fresh"] == [1, 2]
+    # After answering Q1, Q1 stays in the batch and the index still points at Q2
+    # (index 1) — the batch is NOT truncated to just [2], which is what ended the
+    # session early before the fix.
+    assert out["mid"] == [1, 2]
+    assert out["midIndex"] == 1
+    # Once every question is answered the reused batch has no open question left,
+    # so it falls through to an empty fresh batch and the session completes.
+    assert out["done"] == []
+
+
 def test_investigation_primary_actions_preserve_existing_engine_and_management_controls():
     script = _script()
     begin = _function_body(script, "beginCuriositySession")
@@ -397,13 +461,86 @@ def test_unsaved_leaves_spawn_in_a_compact_ring_around_their_parent():
     layout = _function_body(script, "buildGoalConstellation")
     compact = _function_body(script, "placeGoalLeavesNearParents")
 
-    assert "nodes.push({node,depth,x,y,angle,parentId})" in layout
+    assert "nodes.push({node,depth,x,y,baseX:x,baseY:y,angle,parentId})" in layout
     assert "placeGoalLeavesNearParents(nodes,width,height)" in layout
     assert "item.node.type!=='task'" in compact
     assert "manuallyPlaced" in compact
     assert "const distance=76+Math.floor(offset/perRing)*38" in compact
     assert "x=parent.x+Math.cos(angle)*distance" in compact
     assert "y=parent.y+Math.sin(angle)*distance" in compact
+
+
+def test_unsaved_nodes_follow_the_nearest_dragged_ancestor():
+    """Freshly generated Projects/Branches (no saved position yet) should ride
+    along with the nearest ancestor the user dragged, so they spawn beside their
+    parent instead of at the default center-relative slot."""
+    node = shutil.which("node")
+    if not node:
+        return
+    layout = _function_body(_script(), "buildGoalConstellation")
+    follow = _function_body(_script(), "placeGoalNodesNearMovedAncestor")
+
+    # It runs before leaves are placed, and only shifts unsaved non-leaf nodes.
+    assert "placeGoalNodesNearMovedAncestor(nodes,width,height)" in layout
+    assert "item.hasSaved=true" in layout
+    assert "item.node.type==='task'" in follow  # tasks are skipped (leaves handled elsewhere)
+
+    harness = (
+        "function placeGoalNodesNearMovedAncestor(nodes,width,height){" + follow + "}\n"
+        # root (moved), area (moved via saved), project (fresh, no saved pos)
+        "const root={node:{id:1,type:'overgoal'},parentId:null,baseX:100,baseY:100,x:100,y:100,hasSaved:false};\n"
+        "const area={node:{id:2,type:'subgoal'},parentId:1,baseX:150,baseY:150,x:400,y:360,hasSaved:true};\n"
+        "const proj={node:{id:3,type:'subgoal'},parentId:2,baseX:180,baseY:180,x:180,y:180,hasSaved:false};\n"
+        "const leaf={node:{id:4,type:'task'},parentId:3,baseX:200,baseY:200,x:200,y:200,hasSaved:false};\n"
+        "const nodes=[root,area,proj,leaf];\n"
+        "placeGoalNodesNearMovedAncestor(nodes,1100,720);\n"
+        "console.log(JSON.stringify({projX:proj.x,projY:proj.y,leafX:leaf.x,leafY:leaf.y}));\n"
+    )
+    result = subprocess.run(
+        [node, "-e", harness], text=True, encoding="utf-8",
+        cwd=ROOT, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    import json
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    # Area was dragged by (+250,+210); the fresh Project follows by the same
+    # delta: 180+250=430, 180+210=390.
+    assert out["projX"] == 430 and out["projY"] == 390
+    # The Leaf is a task — left untouched here (placeGoalLeavesNearParents owns it).
+    assert out["leafX"] == 200 and out["leafY"] == 200
+
+
+def test_sibling_projects_get_numbered_order_badges():
+    """Multiple sibling Projects get 1..N order badges; a lone Project gets none."""
+    node = shutil.which("node")
+    if not node:
+        return
+    script = _script()
+    seq = _function_body(script, "goalProjectSequenceMap")
+    render = _function_body(script, "renderGoalConstellation")
+
+    assert "const projectSeq=goalProjectSequenceMap(tree)" in render
+    assert "project-seq-badge" in render
+
+    harness = (
+        "function goalVisibleChildren(node){return (node&&node.children)||[];}\n"
+        "function goalIsProject(node){return !!(node&&node.type==='subgoal'&&node.semantic_role==='project');}\n"
+        "function goalProjectSequenceMap(tree){" + seq + "}\n"
+        "const P=(id)=>({id,type:'subgoal',semantic_role:'project',children:[]});\n"
+        "const area={id:10,type:'subgoal',semantic_role:'area',children:[P(11),P(12),P(13)]};\n"
+        "const loneArea={id:20,type:'subgoal',semantic_role:'area',children:[P(21)]};\n"
+        "const tree={id:1,type:'umbrella',children:[area,loneArea]};\n"
+        "console.log(JSON.stringify(goalProjectSequenceMap(tree)));\n"
+    )
+    result = subprocess.run(
+        [node, "-e", harness], text=True, encoding="utf-8",
+        cwd=ROOT, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    import json
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    # The three siblings are numbered in order; the lone Project is not numbered.
+    assert out == {"11": 1, "12": 2, "13": 3}
 
 
 def test_growth_map_is_viewport_locked_compact_and_gold_framed():
@@ -1939,8 +2076,10 @@ def test_leaf_completion_triggers_background_debrief_in_main_chat():
     assert "switchView('self')" in debrief
     # Each debrief opens its own chat so it never buries a conversation.
     assert "command_new_chat(true)" in debrief
-    # The debrief explicitly invites NEW Investigations for surfaced tensions.
+    # The debrief explicitly invites NEW Investigations for surfaced tensions
+    # and new Branch/Project structure when learnings outgrow the project.
     assert "propose a NEW Investigation" in debrief
+    assert "create_branch" in debrief
     assert "if(!recoveredHandoff) debriefLeafCompletionInChat(leafId);" in refresh
 
 
@@ -1960,3 +2099,49 @@ def test_chat_markdown_renders_nested_bold_italics_and_headings():
     # Single-asterisk italics and #-headings render instead of showing raw.
     assert "<em>$2</em>" in body
     assert "chat-heading" in body
+
+
+def test_main_chat_renders_clickable_reply_choices_scoped_to_their_chat():
+    script = _script()
+    render = _function_body(script, "renderCommandChat")
+    send = _function_body(script, "sendCommandMessage")
+
+    assert "cc-reply-choice" in render
+    assert "ccReplyChoicesChat" in render               # scoped to the right chat
+    assert "sendCommandMessage();" in render            # click sends the answer
+    assert "ccReplyChoices=(r.reply_choices)||[];" in send
+    assert "ccReplyChoices=[]; ccReplyChoicesChat=null;" in send
+
+
+def test_every_selection_button_has_a_copy_to_input_edit_affordance():
+    """Each clickable answer (main-chat pills, Leaf suggestions, multi-select
+    items, question options) carries a pencil button that copies its text into
+    the input box for editing instead of sending it as-is."""
+    script = _script()
+    render = _function_body(script, "renderCommandChat")
+    coach = _function_body(script, "leafCoachMessageHtml")
+    questions = _function_body(script, "leafWorkspaceQuestionSetHtml")
+    bind = _function_body(script, "leafWorkspaceBindActions")
+
+    assert "data-cc-choice-edit" in render
+    assert "input.focus()" in render                      # edit copies, never sends
+    assert coach.count("leafSuggestionEditButtonHtml()") == 2   # single + multi
+    assert "leafSuggestionEditButtonHtml()" in questions        # choice options
+    assert "[data-edit-suggestion]" in bind
+    assert "input.value=value+' '" in bind
+
+
+def test_switching_tabs_never_stomps_an_in_flight_chat_send():
+    """Reloading Command Center state while a reply is mid-flight used to wipe
+    the thinking status and optimistic message, making the send look
+    cancelled. The reload now defers to the in-flight send."""
+    script = _script()
+    load = _function_body(script, "loadCommandChat")
+    send = _function_body(script, "sendCommandMessage")
+
+    assert "if(ccSendInFlight()) return;" in load
+    assert "ccSendInFlightSince=Date.now();" in send
+    assert send.count("ccSendInFlightSince=0;") == 2       # success + failure
+    # The guard self-expires so a hung reply can't block reloads forever.
+    guard = _function_body(script, "ccSendInFlight")
+    assert "180000" in guard

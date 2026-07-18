@@ -3055,3 +3055,11 @@ def test_approved_leaf_completion_awards_xp_once(world):
         assert metrics.global_xp() == 75  # 25 + 50 milestone
     finally:
         metrics.close()
+
+
+def test_leaf_prompt_prefers_choice_questions_over_typing():
+    assert "QUESTIONS PREFER CLICKS OVER TYPING" in LEAF_WORKSPACE_SYSTEM
+    assert "single_choice or multi_select" in LEAF_WORKSPACE_SYSTEM
+    # Enumerated answers written inside prose must become structured options.
+    assert "PROSE QUESTIONS ARE NOT QUESTIONS" in LEAF_WORKSPACE_SYSTEM
+    assert "emit ALL of them in the questions array" in LEAF_WORKSPACE_SYSTEM

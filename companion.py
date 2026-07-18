@@ -92,6 +92,7 @@ class Api:
                 "chats": c.list_chats() if c else [],
                 "pending_proposal": c.pending_proposal() if c else None,
                 "pending_proposals": c.pending_proposals() if c else [],
+                "reply_choices": getattr(c, "last_reply_choices", []) if c else [],
                 "browser_tasks": browser_state.get("tasks", [])}
 
     # --- text path --------------------------------------------------------

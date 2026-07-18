@@ -2424,9 +2424,11 @@ class GuiApi:
                         raise ValueError("archive handoff is no longer available")
                 finally:
                     agents.close()
+            orphaned = store.orphaned_curiosities_for_archive(int(goal_id))
             count = store.delete_subtree(int(goal_id))
             return {"ok": True, "archived_count": count,
                     "parent_id": node.get("parent_id"), "handoff": handoff,
+                    "orphaned_investigations": orphaned,
                     "tree": store.tree()}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
@@ -2518,6 +2520,17 @@ class GuiApi:
             else:
                 store.unlink_curiosity(int(goal_id), int(curiosity_id))
             return {"ok": True, "tree": store.tree()}
+        except Exception as error:
+            return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+        finally:
+            store.close()
+
+    def goal_reroute_curiosity(self, curiosity_id, new_parent_id) -> dict:
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.cfg.memory_db_path)
+        try:
+            result = store.reroute_curiosity(int(curiosity_id), int(new_parent_id))
+            return {"ok": True, "reroute": result, "tree": store.tree()}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
         finally:

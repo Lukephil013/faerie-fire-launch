@@ -2412,6 +2412,76 @@ class GoalStore:
         self._mark_goal_ai_dirty(int(goal_id))
         self.conn.commit()
 
+    def orphaned_curiosities_for_archive(self, goal_id: int) -> list[dict]:
+        """Investigations that would be left without an active home if this
+        subtree were archived: linked to a node inside the subtree and to no
+        non-archived node outside it. Call this BEFORE delete_subtree, while
+        the subtree is still active. Returns [{"id","label","goal_id"}] where
+        goal_id is the in-subtree node they were attached to (for messaging)."""
+        tables = {row["name"] for row in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {"curiosity", "goal_curiosity_link"}.issubset(tables):
+            return []
+        subtree = self._subtree_ids(int(goal_id))
+        placeholders = ",".join("?" for _ in subtree)
+        rows = self.conn.execute(
+            f"SELECT l.curiosity_id,l.goal_id,c.label FROM goal_curiosity_link l "
+            f"JOIN curiosity c ON c.id=l.curiosity_id "
+            f"WHERE l.goal_id IN ({placeholders}) AND c.status!='archived' "
+            f"ORDER BY l.curiosity_id", subtree).fetchall()
+        orphans: list[dict] = []
+        seen: set[int] = set()
+        for row in rows:
+            cid = int(row["curiosity_id"])
+            if cid in seen:
+                continue
+            seen.add(cid)
+            survivor = self.conn.execute(
+                f"SELECT 1 FROM goal_curiosity_link l JOIN goal_node g ON g.id=l.goal_id "
+                f"WHERE l.curiosity_id=? AND g.status!='archived' "
+                f"AND l.goal_id NOT IN ({placeholders}) LIMIT 1",
+                [cid, *subtree]).fetchone()
+            if survivor:
+                continue
+            orphans.append({"id": cid, "goal_id": int(row["goal_id"]),
+                            "label": crypto.dec(row["label"]) or ""})
+        return orphans
+
+    def reroute_curiosity(self, curiosity_id: int, new_goal_id: int) -> dict:
+        """Re-home an Investigation onto a new active goal node, dropping its
+        links to any archived nodes so it stops dangling under a dead parent.
+        Links to other active nodes are preserved."""
+        target = self.get(int(new_goal_id))
+        if not target or target["status"] == "archived":
+            raise ValueError("the new home must be an active goal node")
+        if target["type"] == "umbrella":
+            raise ValueError("attach an Investigation to a Root or Branch, not the Soul")
+        if not self.conn.execute(
+                "SELECT 1 FROM curiosity WHERE id=?", (int(curiosity_id),)).fetchone():
+            raise ValueError("curiosity not found")
+        archived_links = [int(r["goal_id"]) for r in self.conn.execute(
+            "SELECT l.goal_id FROM goal_curiosity_link l "
+            "JOIN goal_node g ON g.id=l.goal_id "
+            "WHERE l.curiosity_id=? AND g.status='archived'",
+            (int(curiosity_id),)).fetchall()]
+        now = _now()
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            for gid in archived_links:
+                self.conn.execute(
+                    "DELETE FROM goal_curiosity_link WHERE goal_id=? AND curiosity_id=?",
+                    (gid, int(curiosity_id)))
+            self.conn.execute(
+                "INSERT OR IGNORE INTO goal_curiosity_link VALUES (?,?,?)",
+                (int(new_goal_id), int(curiosity_id), now))
+            self._mark_goal_ai_dirty(int(new_goal_id), *archived_links)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return {"curiosity_id": int(curiosity_id), "new_goal_id": int(new_goal_id),
+                "removed_from": archived_links}
+
     def _auto_attach_matching_root_curiosities(self) -> int:
         """Link one unambiguous exact-name curiosity to its matching Root."""
         if not self.conn.execute(
@@ -3310,14 +3380,76 @@ due_date, children. Keep descriptions short so the JSON reply never exceeds
 """
 
 
+def _strip_json_fence(text: str) -> str:
+    raw = (text or "").strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, re.DOTALL)
+    return fence.group(1).strip() if fence else raw
+
+
 def _json_object(text: str) -> dict:
-    match = re.search(r"\{.*\}", (text or "").strip(), re.DOTALL)
-    if not match:
+    """Best-effort extraction of a JSON object from a model reply.
+
+    Tolerates a ```json fence, prose wrapped around the object, and trailing
+    text that itself contains braces. Returns {} only when no complete object
+    can be recovered (e.g. the reply was truncated mid-object)."""
+    raw = _strip_json_fence(text)
+    if not raw:
         return {}
     try:
-        return json.loads(match.group(0))
+        whole = json.loads(raw)
+        if isinstance(whole, dict):
+            return whole
     except json.JSONDecodeError:
-        return {}
+        pass
+    # Scan for the first balanced, string-aware {...} object.
+    start = raw.find("{")
+    while start != -1:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(raw)):
+            ch = raw[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        obj = json.loads(raw[start:i + 1])
+                    except json.JSONDecodeError:
+                        break  # malformed here — advance to the next '{'
+                    if isinstance(obj, dict):
+                        return obj
+                    break
+        start = raw.find("{", start + 1)
+    return {}
+
+
+def _salvage_planner_message(text: str) -> str:
+    """Recover a usable conversational reply when strict JSON parsing failed.
+
+    Handles two model failure modes for the chat-style planner calls: a plain
+    prose reply (no JSON at all), and a JSON reply truncated before it closed
+    but whose "message" field is intact. Returns "" when nothing is usable."""
+    raw = _strip_json_fence(text)
+    if not raw:
+        return ""
+    match = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+    if match:
+        try:
+            return str(json.loads('"' + match.group(1) + '"'))
+        except json.JSONDecodeError:
+            return match.group(1)
+    # No JSON object at all — treat the whole prose reply as the message.
+    return "" if raw.lstrip().startswith("{") else raw
 
 
 class StubGoalPlanner:
@@ -3593,20 +3725,28 @@ class ClaudeGoalPlanner:
         self.client = Anthropic(api_key=key,
                                 timeout=getattr(config, "llm_timeout_seconds", 60.0))
 
-    def _call(self, system: str, prompt: str) -> dict:
+    def _call(self, system: str, prompt: str, *, allow_prose: bool = False) -> dict:
         log_diag("prompt", f"surface=goal-planner model={self.model} input_chars={len(prompt)}")
         msg = self.client.messages.create(
-            model=self.model, max_tokens=4000, system=system,
+            model=self.model, max_tokens=8000, system=system,
             messages=[{"role": "user", "content": prompt}])
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        if getattr(msg, "stop_reason", None) == "max_tokens":
+        truncated = getattr(msg, "stop_reason", None) == "max_tokens"
+        if truncated:
             log_diag("prompt", f"surface=goal-planner model={self.model} "
-                     "reply truncated at max_tokens=4000")
+                     "reply truncated at max_tokens=8000")
         data = _json_object(text)
-        if not data:
-            raise ValueError("the planner reply could not be read — nothing was "
-                             "saved, please try again")
-        return data
+        if data:
+            return data
+        # For the chat-style planner turns, a prose or truncated reply must not
+        # throw away the user's message — salvage a conversational reply so the
+        # session keeps its draft and the user can simply keep going.
+        if allow_prose:
+            salvaged = _salvage_planner_message(text)
+            if salvaged:
+                return {"message": salvaged}
+        raise ValueError("the planner reply could not be read — nothing was "
+                         "saved, please try again")
 
     @staticmethod
     def _today() -> str:
@@ -3644,7 +3784,7 @@ class ClaudeGoalPlanner:
         data = self._call(PLANNER_SYSTEM,
                           f"TODAY: {self._today()}\nTARGET TYPE: {target['type']}\n"
                           f"APPROVED PLACEMENT: {json.dumps(placement or {}, ensure_ascii=False)}\n"
-                          f"SUGGESTION: {suggestion}")
+                          f"SUGGESTION: {suggestion}", allow_prose=True)
         return str(data.get("message") or "What outcome do you want?"), data.get("draft") or {}
 
     def reply(self, session: dict, answer: str, target: dict) -> tuple[str, dict]:
@@ -3652,7 +3792,7 @@ class ClaudeGoalPlanner:
         data = self._call(PLANNER_SYSTEM,
                           f"TODAY: {self._today()}\nTARGET TYPE: {target['type']}\n"
                           f"DRAFT: {json.dumps(session['draft'])}"
-                          f"\nDIALOGUE:\n{transcript}\nuser: {answer}")
+                          f"\nDIALOGUE:\n{transcript}\nuser: {answer}", allow_prose=True)
         return str(data.get("message") or "What should we decide next?"), data.get("draft") or session["draft"]
 
     def summarize(self, session: dict, target: dict) -> tuple[str, dict]:

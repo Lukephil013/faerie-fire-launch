@@ -2004,6 +2004,57 @@ def test_chat_can_rename_merge_and_archive_investigations():
         companion.close()
 
 
+def test_archiving_a_node_prompts_to_reroute_attached_investigation():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        store = CuriosityStore(cfg.memory_db_path)
+        try:
+            lukes_life = goals.create("overgoal", "Luke's Life")
+            health = goals.create("overgoal", "Health & Energy")
+            agency = store.add_curiosity(
+                "The rage underneath.", "Agency as a Physiological Signal")
+            goals.link_curiosity(lukes_life, agency)
+        finally:
+            store.close()
+            goals.close()
+
+        archive = (
+            '<<<faerie_proposal\n{"action":"delete_node",'
+            f'"label":"Luke\'s Life","target_node_id":{lukes_life},'
+            '"confidence":0.9}\nfaerie_proposal>>>')
+        reroute = (
+            '<<<faerie_proposal\n{"action":"reroute_investigation",'
+            '"label":"Agency as a Physiological Signal",'
+            f'"investigation_id":{agency},"new_parent_id":{health},'
+            '"confidence":0.9}\nfaerie_proposal>>>')
+        companion = Companion(cfg=cfg, chat=ScriptedChat(archive, reroute))
+
+        companion.reply("Archive Luke's Life.")
+        archived_msg = companion.approve_proposal(0)
+        assert "Agency as a Physiological Signal" in archived_msg
+        assert "without a home" in archived_msg
+
+        companion.reply("Move it under Health & Energy.")
+        rerouted_msg = companion.approve_proposal(0)
+        assert "Rerouted" in rerouted_msg
+        assert "Health & Energy" in rerouted_msg
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            links = {row["goal_id"] for row in goals.conn.execute(
+                "SELECT goal_id FROM goal_curiosity_link WHERE curiosity_id=?",
+                (agency,))}
+            assert links == {health}
+        finally:
+            goals.close()
+        companion.close()
+
+
 def test_approving_context_runs_an_immediate_fresh_round():
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.curiosity import CuriosityStore
@@ -2714,4 +2765,22 @@ def test_filing_offer_never_fires_on_the_automatic_completion_debrief():
                    'income but I also want no obligation, and I now see those are '
                    'in real tension for the next year of my plan. ' * 3)
         assert "worth keeping" not in c.reply(debrief)
+        c.close()
+
+
+def test_reply_choices_block_becomes_clickable_answers_payload():
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
+        c = Companion(cfg=cfg, chat=ScriptedChat(
+            'What monthly income would you need to leave your job?\n'
+            '<<<faerie_choices\n{"choices": ["$2k/month", "$5k/month", '
+            '"$10k+/month", "Something else — I\'ll type it"]}\nfaerie_choices>>>',
+            "Understood."))
+        rendered = c.reply("help me plan the exit")
+        assert "faerie_choices" not in rendered            # block stripped
+        assert c.last_reply_choices == [
+            "$2k/month", "$5k/month", "$10k+/month", "Something else — I'll type it"]
+        # The next turn resets the choices instead of leaving stale buttons.
+        c.reply("$5k/month")
+        assert c.last_reply_choices == []
         c.close()

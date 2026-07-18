@@ -659,6 +659,21 @@
     background:rgba(2,12,9,.48); color:var(--cyan); font:inherit; }
   .chat-note { color:var(--muted); font-style:italic; }
   .chat-heading { display:block; margin:8px 0 3px; }
+  .cc-reply-choices { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;
+    margin:2px 0 6px; }
+  .cc-reply-choice-wrap { display:inline-flex; gap:4px; align-items:stretch; }
+  .leaf-workspace-suggestions li { display:flex; gap:6px; align-items:stretch; }
+  .leaf-workspace-suggestions li > .leaf-workspace-suggestion { flex:1; min-width:0; }
+  .leaf-suggestion-edit,.cc-reply-choice-edit { flex:0 0 auto; background:none;
+    border:1px solid var(--line2); border-radius:8px; color:var(--muted);
+    padding:0 9px; cursor:pointer; font-size:12px; }
+  .leaf-suggestion-edit:hover,.cc-reply-choice-edit:hover { color:var(--green);
+    border-color:var(--green); }
+  .cc-reply-choice { background:rgba(83,231,192,.08); border:1px solid rgba(83,231,192,.4);
+    color:var(--green); border-radius:999px; padding:7px 14px; font-size:12.5px;
+    cursor:pointer; }
+  .cc-reply-choice:hover { background:rgba(83,231,192,.16);
+    box-shadow:0 0 10px rgba(47,227,160,.25); }
   .chat-proposed-label { display:inline-block; font-size:10.5px; font-style:normal;
     letter-spacing:.16em; text-transform:uppercase; color:var(--cyan);
     border:1px solid rgba(83,231,192,.32); border-radius:999px; padding:1px 10px 2px;
@@ -1691,6 +1706,10 @@
     stroke:rgba(255,209,102,.92); stroke-width:.9; }
   .constellation-node .project-signal-badge text { fill:#ffe9a9; font-size:6.3px;
     font-weight:900; letter-spacing:.45px; paint-order:normal; stroke:none; }
+  .constellation-node .project-seq-badge circle { fill:rgba(34,24,6,.98);
+    stroke:rgba(255,209,102,.95); stroke-width:.9; }
+  .constellation-node .project-seq-badge text { fill:#ffe9a9; font-size:7px;
+    font-weight:900; paint-order:normal; stroke:none; }
   .constellation-node.project-current circle.glow { fill:rgba(83,231,192,.28); }
   .constellation-node.project-highest circle.core { stroke:#ffe289; stroke-width:2.2; }
   .constellation-node.paused,.constellation-node.completed { opacity:.58; }
@@ -4868,16 +4887,44 @@ function renderCommandChat(state){
   }
   const log=$('cc-log');
   if(log){
-    log.innerHTML=messages.length?messages.map(m=>
+    const lastMessage=messages[messages.length-1];
+    const showChoices=ccReplyChoices.length&&lastMessage&&lastMessage.role!=='user'&&
+      String(ccReplyChoicesChat||'')===String(active||'');
+    const editTitle=APP_LANG==='ko'?'입력창에 복사해 수정 후 보내기':'Copy into the box to edit before sending';
+    const choicesHtml=showChoices
+      ?'<div class="cc-reply-choices">'+ccReplyChoices.map((choice,index)=>
+        '<span class="cc-reply-choice-wrap"><button type="button" class="cc-reply-choice" data-cc-choice="'+index+'">'+
+        esc(choice)+'</button><button type="button" class="cc-reply-choice-edit" data-cc-choice-edit="'+index+
+        '" title="'+editTitle+'" aria-label="'+editTitle+'">✎</button></span>').join('')+'</div>':'';
+    log.innerHTML=messages.length?(messages.map(m=>
       '<div class="cc-message '+(m.role==='user'?'user':'assistant')+'">'+
-      commandConversationHtml(commandMessageText(m))+'</div>').join(''):
+      commandConversationHtml(commandMessageText(m))+'</div>').join('')+choicesHtml):
       '<div class="cc-empty">Start here. Ask a question, paste a thought, attach a file, or use <b>/file</b> to turn a brain dump into a project note.</div>';
     bindCommandCopyBlocks(log);
+    log.querySelectorAll('[data-cc-choice]').forEach(btn=>{
+      btn.onclick=()=>{
+        const value=ccReplyChoices[parseInt(btn.dataset.ccChoice,10)];
+        if(!value) return;
+        const input=$('cc-input');
+        if(input){ input.value=value; autoGrow(input); }
+        sendCommandMessage();
+      };
+    });
+    log.querySelectorAll('[data-cc-choice-edit]').forEach(btn=>{
+      btn.onclick=()=>{
+        const value=ccReplyChoices[parseInt(btn.dataset.ccChoiceEdit,10)];
+        if(!value) return;
+        const input=$('cc-input');
+        if(input){ input.value=value+' '; autoGrow(input); input.focus(); }
+      };
+    });
     log.scrollTop=log.scrollHeight;
   }
   renderPendingProposal();
   renderBrowserTasks((commandChatState&&commandChatState.browser_tasks)||[]);
 }
+let ccReplyChoices=[], ccReplyChoicesChat=null;
+
 function renderPendingProposal(){
   const box=$('cc-proposal'); if(!box) return;
   let proposals=(commandChatState&&commandChatState.pending_proposals)||[];
@@ -5017,7 +5064,15 @@ function loadBrowserTasks(){
     if(result&&result.ok!==false){updateBrowserTaskState(result.tasks||[]);renderBrowserPermissions(result.permissions||[]);}
   }).catch(()=>{});
 }
+let ccSendInFlightSince=0;
+function ccSendInFlight(){
+  // Safety valve: a reply stuck for >3 minutes stops blocking reloads.
+  return ccSendInFlightSince&&(Date.now()-ccSendInFlightSince)<180000;
+}
 function loadCommandChat(){
+  if(ccSendInFlight()) return; // a reply is mid-flight — the view still holds
+                               // the optimistic message + thinking status;
+                               // reloading now would make it look cancelled.
   if(!api()||!pywebview.api.command_chat_state){
     if($('cc-status')) $('cc-status').textContent='Restart Faerie Fire to load the Command Center bridge.';
     if($('cc-chat-list')) $('cc-chat-list').innerHTML='<div class="hint">Bridge update needed.</div>';
@@ -5057,6 +5112,7 @@ function sendCommandMessage(){
   if(!text && !attachmentsForSend.length){ input.focus(); return; }
   // Show the user's message immediately — don't wait on the model round-trip.
   input.value=''; autoGrow(input); hideCommandMenu();
+  ccReplyChoices=[]; ccReplyChoicesChat=null;
   commandAttachments=[];
   renderCommandAttachments();
   // Set the thinking status and disable state *before* rendering the chat log,
@@ -5065,6 +5121,7 @@ function sendCommandMessage(){
   // in and shrinks the log's visible height, and the just-sent message ends
   // up clipped out of view.
   $('cc-send').disabled=true;
+  ccSendInFlightSince=Date.now();
   $('cc-status').innerHTML=thinkingDotsHtml(APP_LANG==='ko'?'페어리가 답변을 만드는 중…':'Faerie is crafting a response…');
   setFaerieMascotState('thinking');
   renderCommandChat({ok:true,
@@ -5078,10 +5135,13 @@ function sendCommandMessage(){
       {role:'user',content:text}
     ])});
   pywebview.api.command_send(text, attachmentsForSend).then(r=>{
+    ccSendInFlightSince=0;
     $('cc-send').disabled=false;
     $('cc-status').textContent='';
     if(!r||r.ok===false){ setFaerieMascotState('error',1100); toast((r&&r.message)||'Command Center failed.',true); return; }
     setFaerieMascotState('reply',1200);
+    ccReplyChoices=(r.reply_choices)||[];
+    ccReplyChoicesChat=r.active_chat_id||null;
     renderCommandChat({ok:true,active_chat_id:r.active_chat_id,chats:r.chats,
       proposals_enabled:r.proposals_enabled,
       pending_proposal:r.pending_proposal,
@@ -5097,6 +5157,7 @@ function sendCommandMessage(){
     loadSelf();
     refreshNodeLinkIndex();
   }).catch(e=>{
+    ccSendInFlightSince=0;
     $('cc-send').disabled=false;
     $('cc-status').textContent='';
     setFaerieMascotState('error',1100);
@@ -7416,6 +7477,12 @@ function leafWorkspacePartialRetry(messageId){
   });
 }
 
+function leafSuggestionEditButtonHtml(){
+  const title=APP_LANG==='ko'?'입력창에 복사해 수정 후 보내기':'Copy into the box to edit before sending';
+  return '<button type="button" class="leaf-suggestion-edit" data-edit-suggestion title="'+title+
+    '" aria-label="'+title+'">✎</button>';
+}
+
 function leafWorkspaceQuestionSetHtml(message,questions){
   if(!questions.length) return '';
   const submitted=leafWorkspaceQuestionSubmission(message.id), answers={};
@@ -7438,7 +7505,8 @@ function leafWorkspaceQuestionSetHtml(message,questions){
         return '<li><label class="leaf-workspace-suggestion '+(checked?'selected':'')+'"><input type="'+inputType+
           '" name="leaf-question-'+esc(message.id)+'-'+esc(question.id)+'" value="'+esc(option.id)+
           '" data-question-option'+(checked?' checked':'')+disabled+'><span class="leaf-workspace-suggestion-copy"><span>'+esc(option.label)+
-          '</span>'+(option.description?'<small>'+esc(option.description)+'</small>':'')+'</span></label></li>';
+          '</span>'+(option.description?'<small>'+esc(option.description)+'</small>':'')+'</span></label>'+
+          leafSuggestionEditButtonHtml()+'</li>';
       }).join('')+'</ul></fieldset>';
   }).join('');
   return '<section class="leaf-workspace-question-set '+(submitted?'submitted':'')+'" data-question-message="'+esc(message.id)+'">'+
@@ -7577,13 +7645,15 @@ function leafCoachMessageHtml(message){
       '<ul class="leaf-workspace-suggestions">'+suggestions.map(item=>
         '<li><label class="leaf-workspace-suggestion"><input type="checkbox" data-multi-suggestion="'+esc(item.id)+'">'+
         '<span class="leaf-workspace-suggestion-copy"><span>'+esc(item.label)+'</span>'+
-        (item.description?'<small>'+esc(item.description)+'</small>':'')+'</span></label></li>').join('')+'</ul>'+
+        (item.description?'<small>'+esc(item.description)+'</small>':'')+'</span></label>'+
+        leafSuggestionEditButtonHtml()+'</li>').join('')+'</ul>'+
       '<button type="button" class="accent leaf-workspace-submit-suggestions" data-submit-suggestions disabled>'+
       (APP_LANG==='ko'?'선택 항목 제출':'Submit selected')+'</button></fieldset>'
     :'<ul class="leaf-workspace-suggestions" aria-label="'+(APP_LANG==='ko'?'제안':'Suggestions')+'">'+suggestions.map(item=>
       '<li><button type="button" class="leaf-workspace-suggestion" data-message-id="'+esc(message.id)+
       '" data-suggestion-id="'+esc(item.id)+'"><span>'+esc(item.label)+'</span>'+
-      (item.description?'<small>'+esc(item.description)+'</small>':'')+'</button></li>').join('')+'</ul>';
+      (item.description?'<small>'+esc(item.description)+'</small>':'')+'</button>'+
+      leafSuggestionEditButtonHtml()+'</li>').join('')+'</ul>';
   const questionsHtml=leafWorkspaceQuestionSetHtml(message,questions);
   const partialHtml=!partial?'':'<div class="leaf-workspace-partial"><span>'+
     (APP_LANG==='ko'?'이 답변은 모델 제한으로 중간에 잘렸어요.':'This response was cut off by the model limit.')+'</span><button type="button" data-retry-partial="'+esc(message.id)+'"'+
@@ -7806,6 +7876,16 @@ function clearLeafWorkspaceProposalDraft(proposalId){
 }
 
 function leafWorkspaceBindActions(){
+  document.querySelectorAll('#leaf-coach-messages [data-edit-suggestion]').forEach(btn=>btn.onclick=()=>{
+    const li=btn.closest('li'); if(!li) return;
+    const labelNode=li.querySelector('.leaf-workspace-suggestion-copy > span')||
+      li.querySelector('button.leaf-workspace-suggestion span');
+    const value=String(labelNode&&labelNode.textContent||'').trim();
+    if(!value) return;
+    const input=$('leaf-coach-input');
+    if(input&&!input.disabled){ input.value=value+' '; input.focus();
+      if(typeof autoGrow==='function') autoGrow(input); }
+  });
   document.querySelectorAll('#leaf-coach-messages .leaf-workspace-proposal').forEach(card=>{
     restoreLeafWorkspaceProposalDraft(card);
     card.querySelectorAll('[data-proposal-field],[data-proposal-handoff-field]').forEach(field=>field.addEventListener('input',()=>saveLeafWorkspaceProposalDraft(card)));
@@ -7974,10 +8054,10 @@ function debriefLeafCompletionInChat(leafId){
   const message=(APP_LANG==='ko'
     ?'[Leaf 완료] "'+title+'" Leaf를 방금 완료하고 승인했어요.'
       +(result?' 결과: '+result:'')+(lesson?' 배운 점: '+lesson:'')
-      +' 경로를 검토해 주세요: 필요한 경우에만 탐구 맥락 추가, 리플랜, 재분류를 제안하고, 이 완료가 열린 긴장이나 반복될 질문을 드러냈다면 새로운 탐구(start_investigation)도 제안해 주세요. 아니라면 경로가 유효하다고 짧게 답해 주세요.'
+      +' 경로를 검토해 주세요: 필요한 경우에만 탐구 맥락 추가, 리플랜, 재분류를 제안하고, 이 완료가 열린 긴장이나 반복될 질문을 드러냈다면 새로운 탐구(start_investigation)도, 배운 것이 현재 프로젝트를 넘어 새로운 방향을 열었다면 새 Branch/Project(create_branch)도 제안해 주세요. 아니라면 경로가 유효하다고 짧게 답해 주세요.'
     :'[Leaf completed] "'+title+'" was just completed and approved.'
       +(result?' Result: '+result:'')+(lesson?' Lesson: '+lesson:'')
-      +' Review the path: propose Investigation context, a replan, or reclassification only if warranted — and if this completion surfaced an open tension, unresolved question, or pattern worth tracking over time, propose a NEW Investigation for it in this same reply. Otherwise reply briefly that the path holds.');
+      +' Review the path: propose Investigation context, a replan, or reclassification only if warranted — if this completion surfaced an open tension, unresolved question, or pattern worth tracking over time, propose a NEW Investigation for it in this same reply — and if what was learned outgrows the current project and clearly implies one or more new directions (e.g. splitting into separate Projects), propose the new Branch/Project structure (create_branch) too. Otherwise reply briefly that the path holds.');
   /* Each completion debrief opens its own chat so it never buries an
      in-progress conversation. */
   (pywebview.api.command_new_chat?pywebview.api.command_new_chat(true):Promise.resolve())
@@ -9234,7 +9314,7 @@ function buildGoalConstellation(tree){
     const wobble=((Number(node.id)||0)%17-8)*1.7;
     const x=depth===0?cx:cx+Math.cos(angle)*(radiusX+wobble);
     const y=depth===0?cy:cy+Math.sin(angle)*(radiusY+wobble*.55);
-    nodes.push({node,depth,x,y,angle,parentId});
+    nodes.push({node,depth,x,y,baseX:x,baseY:y,angle,parentId});
     if(parentId!=null) edges.push({sourceId:parentId,targetId:node.id});
     if(!children.length) return;
     const total=children.reduce((sum,child)=>sum+goalSubtreeWeight(child),0) || children.length;
@@ -9258,8 +9338,10 @@ function buildGoalConstellation(tree){
     if(saved&&Number.isFinite(saved.x)&&Number.isFinite(saved.y)){
       item.x=Math.max(-1200,Math.min(width+1200,Number(saved.x)));
       item.y=Math.max(-900,Math.min(height+900,Number(saved.y)));
+      item.hasSaved=true;
     }
   });
+  placeGoalNodesNearMovedAncestor(nodes,width,height);
   placeGoalLeavesNearParents(nodes,width,height);
   const maxDepth=Math.max(0,...nodes.map(item=>item.depth));
   const rings=Array.from({length:maxDepth},(_,index)=>({
@@ -9268,6 +9350,28 @@ function buildGoalConstellation(tree){
     ry:depthRadiusY[Math.min(index+1,depthRadiusY.length-1)]
   }));
   return {width,height,nodes,edges,rings};
+}
+
+function placeGoalNodesNearMovedAncestor(nodes,width,height){
+  // A node without its own saved position should ride along with the nearest
+  // ancestor the user has dragged, so freshly generated nodes (which have no
+  // saved position yet) appear beside their parent instead of back at the
+  // default center-relative slot. We translate the node by the same offset its
+  // nearest moved ancestor was dragged, keeping the subtree's shape intact.
+  // Leaves are handled separately by placeGoalLeavesNearParents.
+  const byId=Object.fromEntries(nodes.map(item=>[String(item.node.id),item]));
+  nodes.forEach(item=>{
+    if(item.hasSaved||item.parentId==null||item.node.type==='task') return;
+    let ancestor=byId[String(item.parentId)];
+    while(ancestor&&!ancestor.hasSaved){
+      ancestor=ancestor.parentId!=null?byId[String(ancestor.parentId)]:null;
+    }
+    if(!ancestor) return;
+    const dx=ancestor.x-ancestor.baseX, dy=ancestor.y-ancestor.baseY;
+    if(!dx&&!dy) return;
+    item.x=Math.max(-1200,Math.min(width+1200,item.baseX+dx));
+    item.y=Math.max(-900,Math.min(height+900,item.baseY+dy));
+  });
 }
 
 function placeGoalLeavesNearParents(nodes,width,height){
@@ -9308,6 +9412,24 @@ function placeGoalLeavesNearParents(nodes,width,height){
   });
 }
 
+function goalProjectSequenceMap(tree){
+  // Number sibling Projects in their sibling order so the map shows a clear
+  // order of attack (①②③) instead of several equal-looking Projects. Only
+  // groups with more than one Project get numbered — a lone Project needs none.
+  // The order follows the Project's position among its siblings, which the user
+  // can already change via the node panel's "Position among siblings" control.
+  const map={};
+  const walk=node=>{
+    if(!node) return;
+    const children=goalVisibleChildren(node);
+    const projects=children.filter(goalIsProject);
+    if(projects.length>1) projects.forEach((project,index)=>{ map[project.id]=index+1; });
+    children.forEach(walk);
+  };
+  walk(tree);
+  return map;
+}
+
 function renderGoalConstellation(summaryId,treeId,opts){
   opts=opts||{};
   const tree=goalState&&goalState.tree;
@@ -9334,6 +9456,7 @@ function renderGoalConstellation(summaryId,treeId,opts){
     return false;
   };
   markAncestors(tree,selected.id);
+  const projectSeq=goalProjectSequenceMap(tree);
   const orbits=(map.rings||[]).map(ring=>'<ellipse class="solar-orbit" cx="'+
     (map.width/2)+'" cy="'+(map.height/2)+'" rx="'+ring.rx+'" ry="'+ring.ry+
     '" data-depth="'+ring.depth+'"></ellipse>').join('');
@@ -9369,6 +9492,7 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const projectFocus=goalProjectFocus(node);
     const signalClass=(projectFocus.currently_working?' project-current':'')+
       (projectFocus.highest_priority?' project-highest':'');
+    const seqNumber=projectSeq[node.id];
     return '<g class="constellation-node '+esc(node.type)+semanticClass+signalClass+status+selectedClass+care+(greatest?' greatest':'')+
       '" tabindex="0" role="button" data-map-goal-id="'+node.id+'" transform="translate('+
       item.x.toFixed(1)+' '+item.y.toFixed(1)+')">'+
@@ -9381,6 +9505,7 @@ function renderGoalConstellation(summaryId,treeId,opts){
       '<circle class="core" r="'+radius+'"></circle>'+
       '<circle class="planet-shine" cx="'+(-radius*.32).toFixed(1)+'" cy="'+(-radius*.34).toFixed(1)+
       '" r="'+Math.max(1.2,radius*.18).toFixed(1)+'"></circle>'+
+      (seqNumber?'<g class="project-seq-badge" transform="translate(0 '+(-(radius+9)).toFixed(1)+')"><circle r="5.6"></circle><text text-anchor="middle" dominant-baseline="central">'+seqNumber+'</text></g>':'')+
       '<text text-anchor="middle" y="'+labelDy+'">'+esc(label)+'</text>'+
       (planningLabel?'<g class="planning-role-badge '+esc(String(node.planning_role||''))+'" transform="translate(0 '+(labelDy+13)+')"><rect x="'+(-planningWidth/2)+'" y="-6" width="'+planningWidth+'" height="12" rx="6"></rect><text text-anchor="middle" dominant-baseline="central">'+esc(planningLabel)+'</text></g>':'')+
       (projectSignal?'<g class="project-signal-badge" transform="translate(0 '+(labelDy+13)+')"><rect x="'+(-projectSignalWidth/2)+'" y="-6" width="'+projectSignalWidth+'" height="12" rx="6"></rect><text text-anchor="middle" dominant-baseline="central">'+esc(projectSignal)+'</text></g>':'')+'</g>';
@@ -9814,7 +9939,7 @@ function renderGoalDetail(){
       (node.type==='task'?'<label class="goal-field">Leaf priority<select id="goal-priority">'+['low','normal','high'].map(x=>
         '<option'+(x===node.priority?' selected':'')+'>'+x+'</option>').join('')+'</select></label>':
         '<input id="goal-priority" type="hidden" value="'+esc(node.priority||'normal')+'">')+'</div>'+
-    (node.type==='task'?'<label class="goal-field">Due date<input id="goal-due" type="date" value="'+esc(node.due_date||'')+'"></label>':
+    (node.type!=='umbrella'?'<label class="goal-field">Due date<input id="goal-due" type="date" value="'+esc(node.due_date||'')+'"></label>':
       '<input id="goal-due" type="hidden" value="'+esc(node.due_date||'')+'">')+
     (goalIsProject(node)?'<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'프로젝트 주의 신호':'Project attention')+'</b><p class="hint">'+
       (APP_LANG==='ko'?'NOW와 잠정 다음 표시는 현재 작업 중이거나 최우선인 프로젝트에만 나타납니다. 각 신호는 전체에서 한 프로젝트만 가질 수 있습니다.':'NOW and TENTATIVE NEXT appear only for a Project marked Currently working or Highest priority. Each signal belongs to one Project globally.')+'</p>'+goalProjectSignalActionsHtml(node)+'</div>':'')+
@@ -10450,8 +10575,12 @@ function loadSavedCuriositySession(){
   if(curiositySession) return curiositySession;
   try{
     const saved=JSON.parse(localStorage.getItem('ffCuriositySession')||'null');
-    if(saved&&Number.isFinite(Number(saved.curiosityId))&&Array.isArray(saved.queue)){
-      curiositySession={...saved,curiosityId:Number(saved.curiosityId),queue:saved.queue.map(Number)};
+    // Sessions are persisted with a `batch` field; older ones used `queue`.
+    // Accept either, or the in-progress batch is lost on every full reload.
+    const list=saved&&(Array.isArray(saved.batch)?saved.batch:
+      Array.isArray(saved.queue)?saved.queue:null);
+    if(saved&&Number.isFinite(Number(saved.curiosityId))&&list){
+      curiositySession={...saved,curiosityId:Number(saved.curiosityId),batch:list.map(Number)};
     }
   }catch(e){}
   return curiositySession;
@@ -12441,10 +12570,23 @@ function makeCuriositySession(cur){
   const questions=(cur.open_questions||[]).map(item=>Number(item.id));
   const saved=loadSavedCuriositySession();
   if(saved&&Number(saved.curiosityId)===Number(cur.id)){
-    const available=new Set((cur.open_questions||[]).map(item=>Number(item.id)));
-    saved.batch=(saved.batch||saved.queue||[]).map(Number).filter(id=>available.has(id));
+    // Keep BOTH still-open and already-answered questions in the batch. An
+    // answered question must stay so the step index (and the batch-complete
+    // check) stays aligned with the questions the user actually saw — dropping
+    // it here would shift every later question left and make the very next
+    // render overshoot the end, ending the batch after a single answer. Only
+    // genuinely removed questions (dismissed or regenerated) fall out.
+    const openIds=new Set((cur.open_questions||[]).map(item=>Number(item.id)));
+    const answeredIds=new Set((cur.resolved||[])
+      .filter(item=>item.kind==='question'&&item.status==='answered')
+      .map(item=>Number(item.id)));
+    saved.batch=(saved.batch||saved.queue||[]).map(Number)
+      .filter(id=>openIds.has(id)||answeredIds.has(id));
     saved.currentIndex=Math.max(0,Math.min(Number(saved.currentIndex)||0,saved.batch.length));
-    if(saved.batch.length){curiositySession=saved;return saved;}
+    // Reuse the saved batch only while it still holds an unanswered question;
+    // once every question in it is answered, fall through so the session
+    // completes (or starts a fresh batch from any newly generated questions).
+    if(saved.batch.some(id=>openIds.has(id))){curiositySession=saved;return saved;}
   }
   curiositySession={curiosityId:Number(cur.id),batch:questions,currentIndex:0,answered:0,startedAt:new Date().toISOString()};
   saveCuriositySession();
@@ -12489,7 +12631,11 @@ function exitCuriositySession(completed){
     }
   }else saveCuriositySession();
   curiosityMode='overview';
-  loadCuriosity();
+  // force:true — exitCuriositySession often runs from inside the render of an
+  // in-flight loadCuriosity(); a plain loadCuriosity() would be short-circuited
+  // by the in-flight guard and the overview would never repaint (leaving the
+  // stale session view, and its spinning Save button, until the next tab switch).
+  loadCuriosity({force:true});
 }
 
 function curSessionUnderstandingProgressHtml(cur,answered){
@@ -12573,7 +12719,7 @@ function renderCuriositySession(cur){
     withDbRetry(()=>pywebview.api.curiosity_answer(item.id,text,null,null,thumb?thumb.dataset.fit:null)).then(r=>{
       if(!r||r.ok===false){button.disabled=false;button.innerHTML=originalButtonHtml;toast((r&&r.message)||'Could not save answer.',true);return;}
       try{localStorage.removeItem(draftKey);}catch(e){}
-      session.answered=(Number(session.answered)||0)+1;session.currentIndex++;saveCuriositySession();loadCuriosity();
+      session.answered=(Number(session.answered)||0)+1;session.currentIndex++;saveCuriositySession();loadCuriosity({force:true});
     }).catch(e=>{button.disabled=false;button.innerHTML=originalButtonHtml;toast('Could not save answer: '+e,true);});
   };
   $('cur-session-continue').onclick=submit;

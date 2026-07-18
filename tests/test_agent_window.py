@@ -104,3 +104,23 @@ def test_native_agent_window_can_minimize_and_close_even_while_working():
 
     source = Path("agent_window.py").read_text(encoding="utf-8")
     assert "text_select=True" in source
+
+
+def test_agent_window_pins_composer_to_the_bottom_across_all_modes():
+    """The reply composer sits in a fixed bottom bar while the conversation
+    scrolls above it, matching the main chats — for every agent mode."""
+    html = Path("livingpc/ui/agent_window.html").read_text(encoding="utf-8")
+
+    # Body is a full-height flex column; the composer is a non-shrinking bottom bar.
+    assert "height:100vh;display:flex;flex-direction:column;overflow:hidden" in html
+    assert ".chat-scroll{flex:1 1 auto;min-height:0;overflow:auto" in html
+    assert ".composer{flex:0 0 auto;border-top:1px solid var(--line)" in html
+
+    # A single shell() wraps scroll content + composer; every mode routes through it.
+    assert "function shell(scrollHtml,composerHtml)" in html
+    assert html.count("app.innerHTML=shell(") == 4  # inference, goal-agent, harvest, planning
+
+    # The reply box lives in the composer, not inline after the messages.
+    assert "id=\"reply\"" in html
+    # Auto-scroll targets the new scroll container, not the messages list.
+    assert "function scrollMsgs(){const m=document.querySelector('.chat-scroll')" in html

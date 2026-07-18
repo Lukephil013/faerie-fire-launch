@@ -413,6 +413,54 @@ class TestGoalGraph(GoalTestCase):
         self.assertEqual(node["curiosities"][0]["label"], "Korean research")
         self.assertEqual(node["evidence"][0]["label"], "Passed a practice test")
 
+    def test_archive_detects_orphaned_investigation(self):
+        root = self.goals.create("overgoal", "Luke's Life")
+        branch = self.goals.create("subgoal", "Inner work", parent_id=root)
+        cid = self.curiosities.add_curiosity(
+            "the rage underneath", "Agency as a Physiological Signal")
+        self.goals.link_curiosity(branch, cid)
+
+        orphans = self.goals.orphaned_curiosities_for_archive(root)
+
+        self.assertEqual([o["id"] for o in orphans], [cid])
+        self.assertEqual(orphans[0]["label"], "Agency as a Physiological Signal")
+        # Detection must not mutate anything.
+        self.assertEqual(self.goals.get(root)["status"], "active")
+
+    def test_investigation_with_another_active_home_is_not_orphaned(self):
+        archived_root = self.goals.create("overgoal", "Luke's Life")
+        active_root = self.goals.create("overgoal", "Health & Energy")
+        cid = self.curiosities.add_curiosity("the rage underneath", "Agency")
+        self.goals.link_curiosity(archived_root, cid)
+        self.goals.link_curiosity(active_root, cid)
+
+        self.assertEqual(
+            self.goals.orphaned_curiosities_for_archive(archived_root), [])
+
+    def test_reroute_curiosity_drops_archived_link_and_attaches_new(self):
+        old_root = self.goals.create("overgoal", "Luke's Life")
+        new_root = self.goals.create("overgoal", "Health & Energy")
+        cid = self.curiosities.add_curiosity("the rage underneath", "Agency")
+        self.goals.link_curiosity(old_root, cid)
+        self.goals.delete_subtree(old_root)
+
+        result = self.goals.reroute_curiosity(cid, new_root)
+
+        self.assertEqual(result["new_goal_id"], new_root)
+        self.assertEqual(result["removed_from"], [old_root])
+        links = {row["goal_id"] for row in self.goals.conn.execute(
+            "SELECT goal_id FROM goal_curiosity_link WHERE curiosity_id=?", (cid,))}
+        self.assertEqual(links, {new_root})
+        node = next(x for x in self.goals.tree()["children"] if x["id"] == new_root)
+        self.assertEqual(node["curiosities"][0]["label"], "Agency")
+
+    def test_reroute_curiosity_rejects_archived_destination(self):
+        dead = self.goals.create("overgoal", "Gone")
+        cid = self.curiosities.add_curiosity("x", "X")
+        self.goals.delete_subtree(dead)
+        with self.assertRaises(ValueError):
+            self.goals.reroute_curiosity(cid, dead)
+
     def test_origin_round_trips_through_get_and_tree(self):
         over = self.goals.create("overgoal", "Mental Health")
         self.goals.set_origin(
@@ -1626,6 +1674,85 @@ class TestGoalNotionExport(GoalTestCase):
         cfg = Config()
         cfg.notion_api_key = ""
         self.assertFalse(export_goal_to_notion(cfg, self.goals, over)["ok"])
+
+
+class TestPlannerReplyParsing(unittest.TestCase):
+    def test_json_object_reads_fenced_prose_wrapped_and_trailing_brace_replies(self):
+        from livingpc.goals import _json_object
+        # Plain object.
+        self.assertEqual(_json_object('{"message":"hi","draft":{}}'),
+                         {"message": "hi", "draft": {}})
+        # Wrapped in a ```json fence.
+        self.assertEqual(_json_object('```json\n{"message":"hi"}\n```'),
+                         {"message": "hi"})
+        # Prose before and after the object, and trailing text with braces.
+        self.assertEqual(
+            _json_object('Sure! {"message":"ok","draft":{"nodes":[]}} (let me know {more})'),
+            {"message": "ok", "draft": {"nodes": []}})
+        # A brace inside a string value must not end the object early.
+        self.assertEqual(_json_object('{"message":"use {curly} braces"}'),
+                         {"message": "use {curly} braces"})
+
+    def test_json_object_returns_empty_on_truncated_object(self):
+        from livingpc.goals import _json_object
+        # Reply cut off before the object closed (the max_tokens failure mode).
+        self.assertEqual(_json_object('{"message":"hi","draft":{"nodes":[{"title":"a"'), {})
+
+    def test_salvage_recovers_message_from_prose_and_truncated_json(self):
+        from livingpc.goals import _salvage_planner_message
+        # Pure prose reply — use it verbatim.
+        self.assertEqual(_salvage_planner_message("Let's expand on the morning block."),
+                         "Let's expand on the morning block.")
+        # Truncated JSON, but the message field is intact and closed.
+        self.assertEqual(
+            _salvage_planner_message('{"message":"Good point — you already do this.","draft":{"nodes":[{'),
+            "Good point — you already do this.")
+        # Escaped quotes inside the message survive.
+        self.assertEqual(
+            _salvage_planner_message('{"message":"He said \\"hi\\" to me","draft":{'),
+            'He said "hi" to me')
+        # Nothing usable (broken JSON with no message field) → empty.
+        self.assertEqual(_salvage_planner_message('{"draft":{"nodes":[{"title":"a"'), "")
+
+    def _fake_planner(self, text, stop="end_turn"):
+        from livingpc.goals import ClaudeGoalPlanner
+
+        class FakeMsg:
+            content = [type("Block", (), {"type": "text", "text": text})()]
+            stop_reason = stop
+
+        class FakeMessages:
+            def create(self, **kwargs):
+                return FakeMsg()
+
+        planner = ClaudeGoalPlanner.__new__(ClaudeGoalPlanner)
+        planner.model = "test"
+        planner.client = type("Client", (), {"messages": FakeMessages()})()
+        return planner
+
+    def test_reply_keeps_the_turn_when_the_model_returns_prose(self):
+        session = {"messages": [{"role": "assistant", "content": "q"}],
+                   "draft": {"nodes": [1]}}
+        planner = self._fake_planner("I already do this — let's expand it.")
+        message, draft = planner.reply(session, "hello", {"type": "subgoal"})
+        self.assertEqual(message, "I already do this — let's expand it.")
+        # The existing draft is preserved rather than wiped.
+        self.assertEqual(draft, {"nodes": [1]})
+
+    def test_reply_salvages_message_from_truncated_json(self):
+        session = {"messages": [{"role": "assistant", "content": "q"}],
+                   "draft": {"nodes": [1]}}
+        planner = self._fake_planner(
+            '{"message":"You already do this.","draft":{"nodes":[{', stop="max_tokens")
+        message, draft = planner.reply(session, "hi", {"type": "subgoal"})
+        self.assertEqual(message, "You already do this.")
+        self.assertEqual(draft, {"nodes": [1]})
+
+    def test_reply_still_raises_when_nothing_is_recoverable(self):
+        session = {"messages": [{"role": "assistant", "content": "q"}], "draft": {}}
+        planner = self._fake_planner('{"draft":{"nodes":[{', stop="max_tokens")
+        with self.assertRaises(ValueError):
+            planner.reply(session, "hi", {"type": "subgoal"})
 
 
 if __name__ == "__main__":

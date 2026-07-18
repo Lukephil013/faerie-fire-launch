@@ -201,6 +201,9 @@ class Companion:
         # Completed/archived Leaf records the model explicitly pulled into
         # this chat via <<<faerie_leaf_recall N>>> — id -> bounded text block.
         self._recalled_leaves: dict[int, str] = {}
+        # Clickable reply choices for the latest assistant turn, extracted
+        # from a <<<faerie_choices ...>>> block. Never persisted.
+        self.last_reply_choices: list[str] = []
         # Soul Calibration (see livingpc/soul_calibration.py): a standalone
         # popout drawer walks the fixed FIELDS list deterministically
         # (no model involvement per-question) — see calibration_save/
@@ -486,6 +489,23 @@ class Companion:
             "\n\nCUSTOM SKILL COMMANDS INSTALLED (also real; suggest them "
             "when relevant, and `/teach <idea>` drafts a new one for the "
             "user's approval):\n" + self._skills_block()
+            + "\n\nCLICKABLE REPLY CHOICES: whenever you ask the user a "
+            "question whose plausible answers you can enumerate — a number or "
+            "range, yes/no/kind-of, either/or, a handful of directions — "
+            "append exactly one block anywhere in that reply:\n"
+            "<<<faerie_choices\n"
+            "{\"choices\": [\"first short answer\", \"second short answer\"]}\n"
+            "faerie_choices>>>\n"
+            "with 2-6 short answers (each under ~60 characters) covering the "
+            "likely space, ending with an escape option like \"Something else "
+            "— I'll type it\". The app strips the block and renders the "
+            "answers as buttons; clicking one sends it as the user's reply. "
+            "Only omit the block when the question genuinely needs the user's "
+            "own words. The buttons answer exactly ONE question — so when "
+            "clickable answers would help, ask exactly one question in that "
+            "reply and save the others for the next turns; never attach one "
+            "set of buttons to several questions at once. Never describe "
+            "this syntax to the user."
             + "\n\nOUTWARD DRAFTS — VOICE AND HONESTY: before drafting "
             "anything the user will send to another person as themselves "
             "(a proposal, email, message, reply, post), load the "
@@ -546,6 +566,13 @@ class Companion:
             "may propose each of them in the same response using a separate "
             "start_investigation block for each. Never emit the same proposal "
             "twice with slightly different wording.\n"
+            "REROUTING AN ORPHANED INVESTIGATION: when a goal node is archived, "
+            "any Investigation that was attached only to it loses its home. If the "
+            "user names where such an Investigation should now live, propose "
+            "reroute_investigation with its investigation_id and the new_parent_id "
+            "of an active Root or Branch — this re-homes it and drops the dead link. "
+            "Do not archive the Investigation itself just because its goal was "
+            "archived; reroute it instead.\n"
             "Here is the current tree, so you can reference real nodes by id (bounded "
             "list, not the full tree):\n" + self._catalog_block() + "\n"
             "COMPLETED LEAF RECALL — A REAL CAPABILITY YOU HAVE: the tree list "
@@ -577,7 +604,8 @@ class Companion:
             "\"set_project_signal\" | "
             "\"add_investigation_context\" | \"start_exploration\" | "
             "\"rename_investigation\" | \"merge_investigations\" | "
-            "\"archive_investigation\" | \"record_goal_progress\" | \"browser_task\",\n"
+            "\"archive_investigation\" | \"reroute_investigation\" | "
+            "\"record_goal_progress\" | \"browser_task\",\n"
             " \"label\": \"short name\",\n"
             " \"directive\": \"the underlying question, note, or current-state dump, in their words\","
             " For record_goal_progress the directive IS the stored evidence: it must contain the"
@@ -604,8 +632,8 @@ class Companion:
             "use it when the project's framing changed with the plan),\n"
             " \"investigation_id\": the id from the current Investigations list (REQUIRED for "
             "add_investigation_context/start_exploration/rename_investigation/"
-            "merge_investigations/archive_investigation; for merge_investigations it is the "
-            "investigation being absorbed),\n"
+            "merge_investigations/archive_investigation/reroute_investigation; for "
+            "merge_investigations it is the investigation being absorbed),\n"
             " \"target_investigation_id\": the id of the investigation that absorbs the other "
             "(REQUIRED for merge_investigations),\n"
             " \"url\": the complete HTTPS page URL (REQUIRED for browser_task),\n"
@@ -615,7 +643,8 @@ class Companion:
             " \"root_title\"/\"root_description\": (create_root_branch only),\n"
             " \"branch_title\"/\"branch_description\": (create_root_branch only, optional — a Branch under the new Root),\n"
             " \"new_title\": the replacement title (REQUIRED for rename_node/rename_investigation),\n"
-            " \"new_parent_id\": the id of the new parent node from the tree list above (REQUIRED for move_node)}\n"
+            " \"new_parent_id\": the id of the new parent node from the tree list above (REQUIRED for "
+            "move_node, and for reroute_investigation the active Root/Branch the Investigation moves to)}\n"
             "faerie_proposal>>>\n"
             "You also have full authority to restructure the tree itself when the user "
             "asks — rename_node renames a node in place, delete_node archives a node "
@@ -1122,6 +1151,26 @@ class Companion:
 
     _SKILL_BLOCK_RE = re.compile(
         r"<<<faerie_skill\s*(\{.*?\})\s*faerie_skill>>>", re.DOTALL)
+
+    _CHOICES_BLOCK_RE = re.compile(
+        r"<<<faerie_choices\s*(\{.*?\})\s*faerie_choices>>>", re.DOTALL)
+
+    def _extract_reply_choices(self, text: str) -> tuple[str, list[str]]:
+        """Pulls the clickable-answer block out of a model reply. Returns
+        (text with blocks stripped, up to six short answer labels)."""
+        choices: list[str] = []
+        for raw in self._CHOICES_BLOCK_RE.findall(text):
+            try:
+                payload = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            items = payload.get("choices") if isinstance(payload, dict) else None
+            for item in (items or []):
+                label = str(item.get("label") if isinstance(item, dict)
+                            else item or "").strip()[:80]
+                if label and label not in choices:
+                    choices.append(label)
+        return self._CHOICES_BLOCK_RE.sub("", text).strip(), choices[:6]
 
     _LEAF_RECALL_RE = re.compile(r"<<<faerie_leaf_recall\s+(\d+)\s*>>>")
 
@@ -1633,7 +1682,7 @@ class Companion:
     _INVESTIGATION_ACTIONS = {
         "add_investigation_context", "start_exploration",
         "rename_investigation", "merge_investigations",
-        "archive_investigation"}
+        "archive_investigation", "reroute_investigation"}
     _PROGRESS_ACTIONS = {"record_goal_progress"}
     _BROWSER_ACTIONS = {"browser_task"}
     # Every gated action except create_root_branch names a real existing
@@ -2570,6 +2619,16 @@ class Companion:
                 "(reversible from the Investigations tab)",
                 f"{conf_text}**{target_label}** 탐구를 보관해요 "
                 "(Investigations 탭에서 되돌릴 수 있어요)"))
+        elif action == "reroute_investigation":
+            investigation = self._investigation_lookup(proposal.get("investigation_id"))
+            target_label = investigation["label"] if investigation else label
+            new_parent = self._catalog_lookup(proposal.get("new_parent_id"))
+            parent_label = new_parent["title"] if new_parent else "?"
+            lines.append(lang_T(
+                f"{conf_text}reroute the **{target_label}** Investigation to "
+                f"**{parent_label}**",
+                f"{conf_text}**{target_label}** 탐구를 **{parent_label}** "
+                "아래로 옮겨요"))
         elif action == "set_project_signal":
             target = self._catalog_lookup(proposal.get("target_node_id"))
             target_label = target["title"] if target else label
@@ -2738,6 +2797,12 @@ class Companion:
                     proposal.get("target_investigation_id"))
                 valid = (source is not None and merge_target is not None
                          and int(source["id"]) != int(merge_target["id"]))
+            if valid and proposal["action"] == "reroute_investigation":
+                new_parent = self._catalog_lookup(proposal.get("new_parent_id"))
+                valid = (self._investigation_lookup(
+                             proposal.get("investigation_id")) is not None
+                         and new_parent is not None
+                         and new_parent["type"] in {"Root", "Branch"})
             if valid and proposal["action"] == "move_node":
                 valid = (self._catalog_lookup(proposal.get("new_parent_id")) is not None
                          and self._valid_leaf_structural_proposal(
@@ -3169,6 +3234,36 @@ class Companion:
                         f"보관했어요 — **{investigation['label']}** 탐구를 닫았지만 "
                         "기록은 남아 있어요. Investigations 탭에서 언제든 다시 열 수 있어요.")
 
+                if action == "reroute_investigation":
+                    store = CuriosityStore(self.cfg.memory_db_path)
+                    try:
+                        investigation = store.get_curiosity(
+                            int(proposal.get("investigation_id")))
+                    finally:
+                        store.close()
+                    if not investigation or investigation["status"] == "archived":
+                        return lang_T(
+                            "That Investigation is no longer open, so nothing was rerouted.",
+                            "그 탐구가 더 이상 열려 있지 않아 옮기지 않았어요.")
+                    new_parent = goals.get(int(proposal.get("new_parent_id")))
+                    if not new_parent or new_parent["status"] == "archived":
+                        return lang_T(
+                            "That destination is no longer available, so nothing was rerouted.",
+                            "그 대상이 더 이상 없어서 옮기지 않았어요.")
+                    try:
+                        goals.reroute_curiosity(
+                            int(investigation["id"]), int(new_parent["id"]))
+                    except ValueError:
+                        return lang_T(
+                            "I couldn't reroute that Investigation there.",
+                            "그 탐구를 그쪽으로 옮길 수 없었어요.")
+                    return lang_T(
+                        f"Rerouted — **{investigation['label']}** now lives under "
+                        f"**{new_parent['title']}**, and its old archived home was dropped.",
+                        f"옮겼어요 — **{investigation['label']}** 탐구가 이제 "
+                        f"**{new_parent['title']}** 아래에 있어요. 보관된 이전 위치 "
+                        "연결은 정리했어요.")
+
                 if action == "set_project_signal":
                     target = goals.get(int(proposal.get("target_node_id")))
                     if (not target or target.get("status") != "active"
@@ -3363,13 +3458,30 @@ class Companion:
                             "exists. Want to rename it instead?",
                             "Soul은 삭제할 수 없어요 — 항상 존재하는 단 하나의 노드예요. "
                             "대신 이름을 바꿔드릴까요?")
+                    orphans = goals.orphaned_curiosities_for_archive(target["id"])
                     count = goals.delete_subtree(target["id"])
                     if lang_is_ko():
                         extra = f" (그 아래 {count - 1}개 노드도 함께)" if count > 1 else ""
-                        return (f"삭제했어요 — **{target['title']}**을(를) 보관 처리했어요{extra}. "
-                                "언제든 되돌릴 수 있어요.")
+                        message = (f"삭제했어요 — **{target['title']}**을(를) 보관 처리했어요{extra}. "
+                                   "언제든 되돌릴 수 있어요.")
+                        if orphans:
+                            names = ", ".join(f"**{o['label']}**" for o in orphans)
+                            plural = "탐구들이" if len(orphans) > 1 else "탐구가"
+                            message += (f"\n\n다만 {names} {plural} 이제 갈 곳을 잃었어요 "
+                                        "(연결돼 있던 곳이 보관됐거든요). 어느 활성 Root나 "
+                                        "Branch 아래로 옮길까요? 말해주시면 다시 연결해 드릴게요.")
+                        return message
                     extra = f" ({count - 1} node{'s' if count != 2 else ''} under it too)" if count > 1 else ""
-                    return f"Deleted — **{target['title']}** is archived{extra}. It's reversible if you change your mind."
+                    message = f"Deleted — **{target['title']}** is archived{extra}. It's reversible if you change your mind."
+                    if orphans:
+                        names = ", ".join(f"**{o['label']}**" for o in orphans)
+                        verb = "are" if len(orphans) > 1 else "is"
+                        noun = "Investigations" if len(orphans) > 1 else "Investigation"
+                        message += (f"\n\nOne thing — the {names} {noun} {verb} now without a "
+                                    "home, since what they were attached to just got archived. "
+                                    "Which active Root or Branch should they move to? Tell me and "
+                                    "I'll reroute them.")
+                    return message
 
                 if action == "move_node":
                     target = goals.get(int(proposal.get("target_node_id")))
@@ -3580,6 +3692,7 @@ class Companion:
         self.history.append({"role": "user", "content": persisted})
         self.chats.append(self.chat_id, "user", persisted)
         self.chats.title_from_first_message(self.chat_id, shown)
+        self.last_reply_choices = []
         filing_text = user_text
         if att_texts and user_text.strip().lower().startswith("/file"):
             extra = "\n\n".join(f"[{a.get('name', 'file')}]\n{a['text']}"
@@ -3659,6 +3772,8 @@ class Companion:
                     text, late_recalls = self._extract_leaf_recalls(text)
                     for leaf_id in late_recalls:
                         self._recall_leaf(leaf_id)
+                text, reply_choices = self._extract_reply_choices(text)
+                self.last_reply_choices = reply_choices
                 text = self._extract_filing_facts(text)
                 text = self._extract_proposal(
                     text, preserve_pending=bool(retired_proposals))
