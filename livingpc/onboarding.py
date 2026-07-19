@@ -27,6 +27,42 @@ from .lang import T
 
 _KEY_FILE = os.path.join(DATA_DIR, "api_key.secret")
 _MARKER_FILE = os.path.join(DATA_DIR, ".onboarding_complete")
+_RESTORE_AUTH_MARKER = os.path.join(DATA_DIR, ".restore_auth_required")
+
+
+def restore_auth_required() -> bool:
+    """Whether a restored profile still needs new local credentials."""
+    return os.path.exists(_RESTORE_AUTH_MARKER)
+
+
+def _clear_inherited_credentials() -> None:
+    """Keep credentials inherited from the old process out of a restore."""
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    os.environ.pop("NOTION_API_KEY", None)
+
+
+def mark_restore_auth_required() -> None:
+    """Persist the post-restore authentication gate before dropping old keys."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    partial = _RESTORE_AUTH_MARKER + ".partial"
+    with open(partial, "w", encoding="utf-8") as handle:
+        handle.write("1")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(partial, _RESTORE_AUTH_MARKER)
+    _clear_inherited_credentials()
+    try:
+        os.remove(_KEY_FILE)
+    except FileNotFoundError:
+        pass
+
+
+def clear_restore_auth_required() -> None:
+    """Clear the gate after a newly supplied Anthropic key is saved."""
+    try:
+        os.remove(_RESTORE_AUTH_MARKER)
+    except FileNotFoundError:
+        pass
 
 
 def has_stored_key() -> bool:
@@ -34,7 +70,9 @@ def has_stored_key() -> bool:
     # so a data/ folder copied from another PC contains a key file that can't
     # decrypt here. Only report a key if it actually loads, so onboarding /
     # the Change API Key flow correctly ask for a new one on a new machine.
-    return os.path.exists(_KEY_FILE) and load_api_key() is not None
+    return (not restore_auth_required()
+            and os.path.exists(_KEY_FILE)
+            and load_api_key() is not None)
 
 
 def load_api_key() -> str | None:
@@ -63,6 +101,9 @@ def apply_stored_key() -> bool:
     Returns True if a key is available in the environment afterward (whether
     it was already set or was just loaded from storage).
     """
+    if restore_auth_required():
+        _clear_inherited_credentials()
+        return False
     if os.environ.get("ANTHROPIC_API_KEY"):
         return True
     key = load_api_key()

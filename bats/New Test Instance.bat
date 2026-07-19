@@ -21,8 +21,22 @@ echo   to:   %DEST%
 echo.
 
 robocopy "%SRC%" "%DEST%" /E /NFL /NDL /NJH /NJS ^
-  /XD data diagnostics reports .git .githooks __pycache__ .pytest_cache ^
-  /XF tray.lock secret.salt .env *.pyc *.pyo
+  /XD data diagnostics reports projects skills vault .git .githooks __pycache__ .pytest_cache ^
+  /XF tray.lock secret.salt personas.json .env *.pyc *.pyo
+
+REM Skills can contain personal instructions and prose. Copy only the files
+REM committed in Git so built-in skills remain available while
+REM locally added or modified skill content is left behind.
+set "FF_SKILLS_ARCHIVE=%TEMP%\faerie-fire-skills-%RANDOM%-%RANDOM%.zip"
+where git >nul 2>nul
+if not errorlevel 1 (
+  git -C "%SRC%" archive --format=zip --output="%FF_SKILLS_ARCHIVE%" HEAD skills >nul 2>nul
+  if not errorlevel 1 (
+    powershell -NoProfile -Command ^
+      "Expand-Archive -LiteralPath $env:FF_SKILLS_ARCHIVE -DestinationPath '%DEST%' -Force"
+  )
+  if exist "%FF_SKILLS_ARCHIVE%" del /q "%FF_SKILLS_ARCHIVE%"
+)
 
 if not exist "%DEST%\gui.py" (
   echo.

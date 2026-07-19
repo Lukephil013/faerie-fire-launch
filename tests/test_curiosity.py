@@ -284,6 +284,21 @@ class TestCuriosityStore(unittest.TestCase):
         self.store.mark_suggestion_resolved(iid, "not_helpful_light")
         self.assertEqual(self.store.get_item(iid)["status"], "not_helpful_light")
 
+    def test_deduplicate_open_suggestions_repairs_an_existing_stack(self):
+        cid = self.store.add_curiosity("a", "a")
+        weaker = self.store.add_item(
+            cid, "suggestion", "Block the morning for creative work.", confidence=.85)
+        stronger = self.store.add_item(
+            cid, "suggestion", "Take a walk before opening work chat.", confidence=.92)
+        question = self.store.add_item(cid, "question", "What interrupts you?")
+
+        dismissed = self.store.deduplicate_open_suggestions(cid)
+
+        self.assertEqual(dismissed, [weaker])
+        self.assertEqual(self.store.get_item(weaker)["status"], "dismissed")
+        self.assertEqual(self.store.get_item(stronger)["status"], "open")
+        self.assertEqual(self.store.get_item(question)["status"], "open")
+
     def test_stats(self):
         cid = self.store.add_curiosity("a", "a")
         self.store.add_item(cid, "question", "q1")
@@ -593,6 +608,38 @@ class TestGeneration(unittest.TestCase):
         suggestions = [item for item in self.store.open_items(cid)
                        if item["kind"] == "suggestion"]
         self.assertEqual([item["text"] for item in suggestions], [clearer])
+
+    def test_distinct_suggestions_are_still_limited_to_best_one(self):
+        cid = self.store.add_curiosity("protect recovery time", "Recovery")
+        model = _FakeModel([
+            GeneratedItem("suggestion", "Block the first hour for creative work.", .91),
+            GeneratedItem("suggestion", "Take a walk before opening work chat.", .89),
+        ])
+
+        created = generate_items(self.mem, self.inf, self.store, cid, model, limit=3)
+
+        self.assertEqual(created, 1)
+        suggestions = [item for item in self.store.open_items(cid)
+                       if item["kind"] == "suggestion"]
+        self.assertEqual([item["text"] for item in suggestions],
+                         ["Block the first hour for creative work."])
+
+    def test_open_suggestion_blocks_another_but_not_new_questions(self):
+        cid = self.store.add_curiosity("protect recovery time", "Recovery")
+        self.store.add_item(
+            cid, "suggestion", "Keep the first hour for creative work.", confidence=.85)
+        model = _FakeModel([
+            GeneratedItem("suggestion", "Disable work notifications until lunch.", .99),
+            GeneratedItem("question", "Which interruption changes your state most?", .90),
+        ])
+
+        created = generate_items(self.mem, self.inf, self.store, cid, model, limit=3)
+
+        self.assertEqual(created, 1)
+        items = self.store.open_items(cid)
+        self.assertEqual(sum(item["kind"] == "suggestion" for item in items), 1)
+        self.assertIn("Which interruption changes your state most?",
+                      {item["text"] for item in items})
 
     def test_limit_keeps_highest_confidence_first(self):
         cid = self.store.add_curiosity("fitness goals", "fitness")

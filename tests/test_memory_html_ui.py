@@ -470,6 +470,101 @@ def test_unsaved_leaves_spawn_in_a_compact_ring_around_their_parent():
     assert "y=parent.y+Math.sin(angle)*distance" in compact
 
 
+def test_planning_roles_mark_a_single_order_based_focus_path():
+    """goalDerivePlanningRoles follows the lowest-position active child at each
+    level to a single FOCUS Project and marks its one open Leaf as NOW."""
+    node = shutil.which("node")
+    if not node:
+        return
+    body = _function_body(_script(), "goalDerivePlanningRoles")
+    harness = (
+        "function goalIsProject(n){return !!(n&&n.type==='subgoal'&&n.semantic_role==='project');}\n"
+        "function goalProjectFocus(n){return (n&&n.project_focus)||{};}\n"
+        "function goalDerivePlanningRoles(node){" + body + "}\n"
+        "const leaf1={id:100,type:'task',status:'active',position:0,children:[]};\n"
+        "const leaf2={id:101,type:'task',status:'active',position:1,children:[]};\n"
+        "const projA={id:30,type:'subgoal',semantic_role:'project',status:'active',position:0,"
+        "project_focus:{},children:[leaf1,leaf2]};\n"
+        "const projB={id:31,type:'subgoal',semantic_role:'project',status:'active',position:1,"
+        "project_focus:{},children:[]};\n"
+        "const branch={id:20,type:'subgoal',semantic_role:'area',status:'active',position:0,"
+        "children:[projA,projB]};\n"
+        "const root1={id:10,type:'overgoal',status:'active',position:0,children:[branch]};\n"
+        "const root2={id:11,type:'overgoal',status:'active',position:1,children:[]};\n"
+        "const soul={id:1,type:'umbrella',children:[root1,root2]};\n"
+        "goalDerivePlanningRoles(soul);\n"
+        "console.log(JSON.stringify({focusA:!!projA.project_focus.focus,"
+        "focusB:!!projB.project_focus.focus,now1:leaf1.planning_role,now2:leaf2.planning_role}));\n"
+    )
+    result = subprocess.run(
+        [node, "-e", harness], text=True, encoding="utf-8",
+        cwd=ROOT, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    import json
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    assert out["focusA"] is True and out["focusB"] is False
+    assert out["now1"] == "now"
+    assert out["now2"] in (None, "", "null") or out["now2"] is None
+
+
+def test_focus_refresh_preserves_an_open_restructure_proposal():
+    """Alt-tabbing away and back must not wipe an in-review restructure/intake
+    panel: the window focus handler skips loadGoals() while one is open."""
+    script = _script()
+    guard = _function_body(script, "goalDetailHasOpenEditor")
+
+    assert "goal-restructure-panel" in guard
+    assert ".goal-intake-panel" in guard and ".goal-root-starters-panel" in guard
+    # It also treats an unsaved node-detail field edit as an open editor.
+    assert "goalDetailHasUnsavedEdits()" in guard
+    # The window focus handler gates its growth reload on the guard, so an
+    # alt-tab no longer wipes an open proposal.
+    focus = script[script.index("window.addEventListener('focus'"):]
+    focus = focus[:focus.index("});") + 3]
+    assert "goalState && !goalDetailHasOpenEditor()" in focus
+    assert "if(goalState) loadGoals();" not in focus
+
+
+def test_unsaved_node_detail_edits_block_the_focus_refresh():
+    """A half-typed Title/Description/Notes edit counts as an open editor so
+    the focus refresh won't revert it."""
+    node = shutil.which("node")
+    if not node:
+        return
+    script = _script()
+    find = _function_body(script, "goalFind")
+    dirty = _function_body(script, "goalDetailHasUnsavedEdits")
+
+    harness = (
+        "function goalFind(node,id){" + find + "}\n"
+        "const fields={};\n"
+        "function $(id){return fields[id]||null;}\n"
+        "let goalState={tree:{id:1,title:'T',description:'D',notes:'N',"
+        "status:'active',priority:'normal',due_date:'',children:[]}};\n"
+        "let selectedGoalId=1;\n"
+        "function goalDetailHasUnsavedEdits(){" + dirty + "}\n"
+        # Fields all match the saved node → clean.
+        "fields['goal-title']={value:'T'};fields['goal-description']={value:'D'};\n"
+        "fields['goal-notes']={value:'N'};fields['goal-node-status']={value:'active'};\n"
+        "fields['goal-priority']={value:'normal'};fields['goal-due']={value:''};\n"
+        "const clean=goalDetailHasUnsavedEdits();\n"
+        # User types into Description → dirty.
+        "fields['goal-description']={value:'D and more'};\n"
+        "const edited=goalDetailHasUnsavedEdits();\n"
+        "console.log(JSON.stringify({clean,edited}));\n"
+    )
+    result = subprocess.run(
+        [node, "-e", harness], text=True, encoding="utf-8",
+        cwd=ROOT, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    import json
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    assert out["clean"] is False
+    assert out["edited"] is True
+
+
 def test_unsaved_nodes_follow_the_nearest_dragged_ancestor():
     """Freshly generated Projects/Branches (no saved position yet) should ride
     along with the nearest ancestor the user dragged, so they spawn beside their
@@ -539,8 +634,9 @@ def test_sibling_projects_get_numbered_order_badges():
     assert result.returncode == 0, result.stderr or result.stdout
     import json
     out = json.loads(result.stdout.strip().splitlines()[-1])
-    # The three siblings are numbered in order; the lone Project is not numbered.
-    assert out == {"11": 1, "12": 2, "13": 3}
+    # Order-based model: sibling Projects are numbered 1..N; the lone Project is
+    # not numbered. The focus Project shows FOCUS instead (rendered separately).
+    assert out == {"11": "1", "12": "2", "13": "3"}
 
 
 def test_growth_map_is_viewport_locked_compact_and_gold_framed():
@@ -654,6 +750,18 @@ def test_command_center_rail_uses_large_nav_icons_and_keeps_today_first():
     assert "command-widget-milestone" not in render
     assert "Current State" not in render
     assert "Next Milestone" not in render
+
+
+def test_today_widget_keeps_only_completions_from_the_current_local_day():
+    script = _script()
+    completed = _function_body(script, "selfCompletedToday")
+    render = _function_body(script, "selfProfileWidgetsHtml")
+
+    assert "task.completed_at" in completed
+    assert "selfLocalDateKey(task.completed_at)===selfLocalDateKey(now||new Date())" in completed
+    assert "tasks.filter(t=>selfCompletedToday(t))" in render
+    assert "tasks.filter(t=>t.status==='completed')" not in render
+    assert "selfDashboardDate" in script and "},60000);" in script
 
 
 def test_command_center_level_bar_uses_global_xp_remainder():
@@ -1457,7 +1565,10 @@ def test_skipping_api_key_still_requires_naming_the_soul():
 
     assert "onboardShowStep('soul')" in skip_handler
     assert "onboarding_skip" not in skip_handler
-    assert "closeOnboardingAndEnter" not in skip_handler
+    assert "if(restoreAuthMode)" in skip_handler
+    assert skip_handler.index("closeOnboardingAndEnter") < skip_handler.index("onboardShowStep('soul')")
+    restore_branch = skip_handler[skip_handler.index("if(restoreAuthMode)"):skip_handler.index("onboardShowStep('soul')")]
+    assert "return;" in restore_branch
     assert "if(!title)" in soul_handler
     assert "Name your Soul before continuing." in soul_handler
 
@@ -1484,7 +1595,7 @@ def test_suggestions_review_overlap_before_creating_or_adapting_a_goal_node():
     assert "Data stays attached" in script
     assert "Existing steps, completion, coaching history, evidence, outcomes, and children remain attached" in script
     assert "No clear existing goal match was found" in script
-    assert "Choose placement" in script
+    assert "Clarify & plan in chat" in script
     assert "curiosity_suggestion_propose_update" in adapt
     assert "This does not create a new node" in adapt
     assert "same node" in adapt
@@ -1498,13 +1609,17 @@ def test_suggestions_review_overlap_before_creating_or_adapting_a_goal_node():
     assert "트리에 이미 있는 작업과 겹칠 수 있어요" in script
 
 
-def test_new_suggestion_requires_semantic_placement_review_before_planning():
+def test_new_suggestion_plans_in_chat_before_final_placement_review():
     script = _script()
     placement = _function_body(script, "renderSuggestionPlacement")
     request = _function_body(script, "reviewSuggestionPlacement")
+    chat_first = _function_body(script, "startSuggestionPlannerBeforePlacement")
     planner = _function_body(script, "openGoalPlanner")
 
     assert "goal_plan_placement" in request
+    assert "goal_plan_placement" in chat_first and "openGoalPlanner" in chat_first
+    assert "user_confirmed:false" in chat_first and "review_required:true" in chat_first
+    assert "After you summarize the plan" in chat_first
     assert "Finding the best place in your Growth tree" in request
     assert "Where should this plan live?" in placement
     assert "not merely similar wording" in placement
@@ -1517,6 +1632,8 @@ def test_new_suggestion_requires_semantic_placement_review_before_planning():
     assert "만들어질 경로" in placement
     assert "배치 분석 중" in request
     assert "goal_plan_start(itemId,targetParentId,placement||{})" in planner
+    review = _function_body(script, "reviewSuggestionImplementation")
+    assert "startSuggestionPlannerBeforePlacement" in review
 
 
 def test_growth_restructure_flow_previews_preserved_data_before_approval():
@@ -1597,13 +1714,14 @@ def test_nested_branch_roles_render_as_area_project_and_stage_in_both_languages(
     constellation = _function_body(script, "renderGoalConstellation")
 
     assert "node.semantic_role" in labels
-    assert "area:'Area'" in semantic and "project:'Project'" in semantic and "stage:'Stage'" in semantic
-    assert "area:'영역'" in semantic and "project:'프로젝트'" in semantic and "stage:'단계'" in semantic
+    # The "area" role renders as "Branch" (Root -> Branch -> Project -> Leaf).
+    assert "area:'Branch'" in semantic and "project:'Project'" in semantic and "stage:'Stage'" in semantic
+    assert "area:'가지'" in semantic and "project:'프로젝트'" in semantic and "stage:'단계'" in semantic
     assert "goalTypeLabel(node.type,node)" in constellation
-    assert 'class="legend-area">◇ Area' in html
+    assert 'class="legend-area">◇ Branch' in html
     assert 'class="legend-project">◇ Project' in html
     assert 'class="legend-stage">◇ Stage' in html
-    assert "'◇ Area':'◇ 영역'" in script
+    assert "'◇ Branch':'◇ 가지'" in script
     assert "'◇ Project':'◇ 프로젝트'" in script
     assert "'◇ Stage':'◇ 단계'" in script
     assert "semantic-area" in html and "semantic-project" in html and "semantic-stage" in html
@@ -1629,30 +1747,29 @@ def test_growth_creation_uses_optional_roots_and_plain_language_ai_intake():
     assert "goal_create('overgoal'" in controls
 
 
-def test_growth_map_removes_number_badges_and_exposes_project_attention_controls():
+def test_growth_map_uses_order_based_focus_and_priority_dropdown():
     html = _html()
     script = _script()
-    focus = _function_body(script, "renderGoalFocusPanel")
     constellation = _function_body(script, "renderGoalConstellation")
     actions = _function_body(script, "goalProjectSignalActionsHtml")
-    binding = _function_body(script, "bindGoalProjectSignalControls")
-    edit_actions = _function_body(script, "goalEditNodeActionsHtml")
+    order_field = _function_body(script, "goalPriorityOrderFieldHtml")
+    derive = _function_body(script, "goalDerivePlanningRoles")
+    signal_label = _function_body(script, "goalProjectSignalLabel")
 
-    assert "goalExecutionOrder" not in script
-    assert "goalExecutionBadge" not in script
-    assert "execution-order-badge" not in constellation
-    assert "recommended execution order" not in constellation
     assert "structurePrefix" in constellation and "goalTypeLabel(node.type,node)" in constellation
-    assert "NOW / TENTATIVE NEXT = selected Project horizon" in html
-    assert "currently_working" in actions and "highest_priority" in actions
-    assert 'type="checkbox"' in actions
-    assert "Currently working" in actions and "Highest priority" in actions
-    assert "Stop marking as currently working" not in actions
-    assert "Clear highest priority" not in actions
-    assert "goal_set_project_signal" in binding
-    assert "control.onchange" in binding and "control.checked" in binding
-    assert "goalProjectSignalActionsHtml(node)" in focus
-    assert "goalLifecycleButtonHtml(node)" in edit_actions
+    # Legend reflects the order-based model.
+    assert "NOW = the single focus Leaf · numbers = priority order" in html
+    # The priority/current signal checkboxes are retired.
+    assert "currently_working" not in actions and "highest_priority" not in actions
+    assert 'type="checkbox"' not in actions
+    # Priority is set by a per-node order dropdown that reorders via goal_move.
+    assert 'id="goal-position"' in order_field and "Priority order" in order_field
+    assert "<select" in order_field
+    assert "goal_move(node.id,parseInt($('goal-parent').value,10)" in script
+    # A single order-based FOCUS Project + its one NOW Leaf.
+    assert "project_focus.focus=true" in derive
+    assert "leaves[0].planning_role='now'" in derive
+    assert "'FOCUS'" in signal_label
 
 
 def test_constellation_badges_fit_their_rendered_text():
@@ -1683,20 +1800,21 @@ def test_growth_horizon_roles_are_visible_and_position_controls_sequence():
     assert "priority" not in ordering and "due_date" not in ordering
     assert "['active','paused']" in active
     assert "goalSortedActiveLeaves(node)" in next_action
-    assert "'NOW'" in label and "'TENTATIVE NEXT'" in label
+    # One-Leaf model: NOW is the only planning role — no TENTATIVE NEXT.
+    assert "'NOW'" in label and "TENTATIVE NEXT" not in label
     assert "node.planning_role" in label and "goal-planning-role" in chip
+    # Order-based focus: a single focus Project derived from sibling order.
     assert "['active','paused']" in derive
     assert "leaves[0].planning_role='now'" in derive
-    assert "leaves[1].planning_role='provisional'" in derive
-    assert "goalIsProject(node)" in derive
-    assert "focus.highest_priority||focus.currently_working" in derive
+    assert "leaves[1].planning_role" not in derive
+    assert "focusProject" in derive and "collect(focusProject)" in derive
+    assert "currentProject" not in derive and "priorityArea" not in derive
     assert "goalPlanningRoleChip(node)" in focus
     assert "goalPlanningRoleChip(leaf)" in focus
     assert "goalPlanningRoleChip(node)" in detail
     assert "planning-role-badge" in constellation
     assert "goalPlanningRoleLabel(node)" in constellation
     assert ".goal-planning-role.now" in html
-    assert ".goal-planning-role.provisional" in html
 
 
 def test_leaf_workspace_reveals_sections_only_when_they_have_meaning():

@@ -47,6 +47,9 @@ def cfg_for(directory):
     cfg.goal_ai_backend = "stub"
     cfg.inference_backend = "stub"
     cfg.goal_ai_batch_size = 12
+    # GoalAI mechanics (leaf normalization, completion cards) are exercised at a
+    # 2-Leaf horizon; the product default is one Leaf (config.goal_ai_leaf_horizon).
+    cfg.goal_ai_leaf_horizon = 2
     return cfg
 
 

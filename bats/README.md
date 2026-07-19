@@ -13,7 +13,8 @@ Everyday use:
   stop the always-on capture (with its tray icon) directly.
 - **Memory GUI.bat**, **Companion.bat**, **Ask Assistant.bat** — open the apps.
   The GUI has two tabs: Inferences (Yes/No review of hypotheses) and Memory. The
-  nightly pass (triage + inference + backups) runs in the background daemon.
+  nightly pass (triage + inference + a legacy local memory checkpoint) runs in
+  the background daemon.
 
 Knowledge tools:
 
@@ -26,6 +27,15 @@ Setup / maintenance:
   this project's processes; narrower than the Force-Stop in Capture Control).
 - **Collect Diagnostics.bat** / **Collect Companion Diagnostics.bat** — privacy-safe
   troubleshooting bundles (metadata only).
+- **Backup Memory.bat** — create the legacy local `memory.db` checkpoint. This is
+  not a portable disaster-recovery backup.
+- **Portable Backup.bat** — create a verified encrypted whole-profile
+  `.ffbackup`. First configure an absolute primary destination and recovery
+  passphrase under **Settings & Tools → Backup & Restore**; that setup also
+  registers the separate per-user daily Windows task.
+- **Restore Backup.bat** — securely prompt for the passphrase, validate the
+  archive, and replace the whole profile. Close Faerie Fire first; restore is
+  also available before API-key/Soul creation and from Settings.
 - **Git Setup.bat** / **Git Push.bat** — initialize the repo / commit and push.
 
 These files compute the project directory from their own location, so the folder

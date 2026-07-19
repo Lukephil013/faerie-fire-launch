@@ -109,8 +109,13 @@ opens the review GUI.
 - **Backfill Inferences.bat** — seed inference evidence from already-captured history.
 - **Import Journals.bat** — chronological backfill of exported journals
   (`data\notion\`) into memory, facts dated by their entries. `--dry-run` first.
-- **Backup Memory.bat** — snapshot memory.db into `data\backups\` (rotating set;
-  also runs automatically every night).
+- **Backup Memory.bat** — create the legacy local `memory.db` checkpoint in
+  `data\backups\`. It also runs with nightly hygiene, but it is not a portable
+  disaster-recovery backup.
+- **Portable Backup.bat** — create a verified, encrypted whole-profile
+  `.ffbackup` after portable backups have been configured in Settings.
+- **Restore Backup.bat** — validate and restore a `.ffbackup` as a whole-profile
+  replacement. Close the running app first when using this launcher.
 - **Consolidate Memory.bat** — memory hygiene: merge duplicate facts (older
   copies closed, never deleted) and prune stale rejections/evidence; `--dry-run`
   previews. Also runs automatically every night.
@@ -125,10 +130,41 @@ double-click experience with no build step.)
 The background daemon (`tray.py`) runs a nightly pass at `inference_nightly_hour`
 (default 21:00, local): it forms inferences, distils the day into **confident
 facts** (auto-committed; low-confidence facts are dropped, not queued),
-consolidates memory (dedupe + pruning), snapshots memory.db into the rotating
-backup set. No Windows task or manual approval needed — just
+consolidates memory (dedupe + pruning), and creates the legacy rotating local
+`memory.db` checkpoint. This nightly checkpoint is useful for small local
+mistakes, but it is not sufficient to move the profile to another Windows
+user or PC. No Windows task or manual approval is needed for this pass — just
 keep Faerie Fire running in the evening. Run triage on demand with
 `python run_triage.py --generate`.
+
+## Portable encrypted backup & recovery
+
+Configure portable backups under **Settings & Tools → Backup & Restore**. Pick
+an absolute primary destination, optionally add a secondary external or
+cloud-synced mirror, and save the recovery passphrase in a password manager.
+There is no passphrase reset or backdoor. Once configured, Faerie Fire creates
+verified encrypted `faerie-fire-*.ffbackup` generations at 20:00 by default,
+uses a per-user Windows task that starts when next available, catches up on app
+startup when overdue, and retries transient failures hourly while open. Use
+**Back up now**, **Portable Backup.bat**, or
+`python tools/backup_instance.py create` for an immediate generation.
+
+A portable backup uses SQLite's online backup API for both databases and
+contains the original automatic database key and salt inside the authenticated
+encrypted payload, plus portraits, projects and history, journals and dumps,
+personas, custom skills, and portable preferences. Credentials, browser state,
+diagnostics, logs, caches, and machine-specific paths are excluded. Screenshots
+are excluded by default while their activity/OCR records are preserved.
+
+Restore is available before API-key/Soul setup in onboarding and under
+Settings. It validates and stages the archive before replacing the whole
+profile, re-protects the original database key for the destination Windows
+user, and requires a verified rollback backup before replacing a non-empty
+profile. Explicit Forget advances a repository privacy epoch and purges managed
+generations; an offline destination remains visibly purge-pending and blocked.
+Manually copied archives and cloud-provider version history must be removed
+separately. See [Portable Backup and Recovery](docs/BACKUP_RECOVERY.md) for the
+complete contents, exclusions, restore flow, and privacy boundary.
 
 ## At-rest encryption (optional)
 
@@ -159,7 +195,7 @@ key set, nothing is encrypted and everything works as before.
 - Re-running triage on the *same day* will still surface similar facts — the input
   hasn't changed. The intended rhythm is once per day (the nightly scheduler).
 
-## Backups (git) & dev log
+## Code backups (git) & dev log
 
 - **Git Setup.bat** (run once) initializes a local git repo and walks you through
   pushing to a private GitHub repo. **Git Push.bat** backs up your changes daily

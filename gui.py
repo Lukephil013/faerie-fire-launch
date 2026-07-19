@@ -75,12 +75,19 @@ class GuiApi:
         # object can make it evaluate JS before the main window exists.
         self._window = None
         self._command_companion = None
+        self._selected_backup_primary = None
+        self._selected_backup_secondary = None
+        self._selected_restore_path = None
+        self._pending_restore_token = None
+        self._restore_apply_requested = False
+        self._backup_runtime = None
 
     def app_bootstrap(self) -> dict:
         """Small public UI bootstrap: profile + initial view only, no payloads."""
         log_diag("gui_bootstrap", f"app_bootstrap called cwd={os.getcwd()}")
         try:
             profile = getattr(self.cfg, "profile", "personal")
+            restore_auth = onboarding.restore_auth_required()
             result = {
                 "ok": True,
                 "profile": profile,
@@ -90,9 +97,10 @@ class GuiApi:
                 # Unified build: the UI enables the Korean layer when "ko".
                 "language": app_language(),
                 "language_set": is_language_set(),
-                # Onboarding only exists for launch profile — a personal install
-                # always manages its own key via the environment, as before.
-                "needs_onboarding": profile == "launch" and not onboarding.is_complete(),
+                # Restored profiles need credentials on this Windows identity,
+                # regardless of whether content onboarding is already complete.
+                "restore_auth_required": restore_auth,
+                "needs_onboarding": restore_auth or (profile == "launch" and not onboarding.is_complete()),
             }
             log_diag("gui_bootstrap", f"app_bootstrap ok profile={profile}")
             return result
@@ -106,6 +114,7 @@ class GuiApi:
                 "initial_view": self.initial_view,
                 "backend": "?", "inference_backend": "?",
                 "needs_onboarding": False,
+                "restore_auth_required": False,
                 "bootstrap_error": f"{type(error).__name__}: {error}",
             }
 
@@ -203,6 +212,7 @@ class GuiApi:
             "ok": True,
             "has_key": bool(os.environ.get("ANTHROPIC_API_KEY")) or onboarding.has_stored_key(),
             "complete": onboarding.is_complete(),
+            "restore_auth_required": onboarding.restore_auth_required(),
         }
 
     def onboarding_validate_key(self, key) -> dict:
@@ -214,15 +224,36 @@ class GuiApi:
         if not ok:
             return {"ok": False, "message": message}
         try:
+            finishing_restore = onboarding.restore_auth_required()
             onboarding.save_api_key(str(key))
-            return {"ok": True}
+            if finishing_restore:
+                onboarding.clear_restore_auth_required()
+            return {"ok": True, "restore_auth_completed": finishing_restore}
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
+    def onboarding_finish_restore_auth(self) -> dict:
+        """Leave the restore gate only after a fresh local key was persisted."""
+        if not onboarding.restore_auth_required():
+            return {"ok": True}
+        if not onboarding.has_stored_key():
+            return {"ok": False, "message": T(
+                "Save a new Anthropic API key first.",
+                "먼저 새 Anthropic API 키를 저장해 주세요.",
+            )}
+        onboarding.clear_restore_auth_required()
+        return {"ok": True}
+
+
 
     def onboarding_create_soul(self, title, purpose) -> dict:
         """The 'create-your-Soul moment': name and describe the umbrella node
         that already auto-exists (GoalStore._ensure_root creates it as
         'Actualized Self' on first open), then seed one starter investigation."""
+        if onboarding.restore_auth_required():
+            return {"ok": False, "message": T(
+                "This restored profile already has a Soul. Reconnect it instead.",
+                "복원된 프로필에는 이미 Soul이 있어요. 새로 만들지 말고 다시 연결해 주세요.",
+            )}
         from livingpc.goals import GoalStore
         store = GoalStore(self.cfg.memory_db_path)
         try:
@@ -1894,39 +1925,37 @@ class GuiApi:
             tree = goals.tree()
             stale_days = int(getattr(self.cfg, "goal_relevance_stale_days", 30))
 
+            by_id = {}
             def enrich(node):
-                children = node.get("children", [])
-                direct_open_leaves = sorted(
-                    (
-                        child for child in children
-                        if child.get("type") == "task"
-                        and child.get("status") in {"active", "paused"}
-                    ),
-                    key=lambda child: (
-                        int(child.get("position") or 0), int(child["id"])),
-                )
-                for child in children:
-                    if child.get("type") == "task":
-                        child["planning_role"] = None
-                project_focus = node.get("project_focus") or {}
-                show_horizon = (
-                    node.get("type") == "subgoal"
-                    and node.get("semantic_role") == "project"
-                    and (project_focus.get("highest_priority")
-                         or project_focus.get("currently_working")))
-                if show_horizon:
-                    for planning_role, leaf in zip(
-                            ("now", "provisional"), direct_open_leaves):
-                        leaf["planning_role"] = planning_role
+                by_id[int(node["id"])] = node
+                if node.get("type") == "task":
+                    node["planning_role"] = None
                 node["relevance"] = goal_relevance_view(
                     goals, agents, node["id"], stale_days=stale_days)
                 node["leaf_workspace"] = (
                     agents.leaf_workspace_summary(node["id"])
                     if node.get("type") == "task" else {})
-                for child in children:
+                for child in node.get("children", []):
                     enrich(child)
 
             enrich(tree)
+            effective_project = goals.effective_current_project_id()
+            project_node = by_id.get(int(effective_project or 0))
+            if project_node:
+                ordered_leaves = []
+                def collect(parent):
+                    children = sorted(parent.get("children", []), key=lambda child: (
+                        int(child.get("position") or 0), int(child["id"])))
+                    for child in children:
+                        if (child.get("type") == "task" and
+                                child.get("status") in {"active", "paused"}):
+                            ordered_leaves.append(child)
+                        elif not (child.get("type") == "subgoal" and
+                                  child.get("semantic_role") == "project"):
+                            collect(child)
+                collect(project_node)
+                for planning_role, leaf in zip(("now", "provisional"), ordered_leaves):
+                    leaf["planning_role"] = planning_role
             return {"ok": True, "tree": tree,
                     "project_signals": goals.project_signals(),
                     "curiosities": curiosities.list_curiosities(),
@@ -2763,6 +2792,270 @@ class GuiApi:
         except Exception as error:
             return {"ok": False, "message": f"{type(error).__name__}: {error}"}
 
+    # --- encrypted whole-instance backup and restore ----------------------
+    @staticmethod
+    def _backup_result_dict(result) -> dict:
+        """Turn engine dataclasses into plain bridge values."""
+        if isinstance(result, dict):
+            data = dict(result)
+        else:
+            try:
+                data = asdict(result)
+            except (TypeError, ValueError):
+                data = dict(vars(result)) if hasattr(result, "__dict__") else {}
+        data.setdefault("ok", True)
+        return data
+
+    @classmethod
+    def _safe_backup_result(cls, result) -> dict:
+        """Remove restore credentials and opaque activation tokens from UI data."""
+        blocked = {
+            "token", "passphrase", "repository_key", "database_key",
+            "secret", "secret_key", "wrapper", "passphrase_wrapper",
+        }
+
+        def scrub(value):
+            if isinstance(value, dict):
+                return {str(key): scrub(item) for key, item in value.items()
+                        if (str(key).lower() not in blocked
+                            and str(key).lower() != "path"
+                            and not str(key).lower().endswith(
+                                ("_path", "_dir", "_folder")))}
+            if isinstance(value, (list, tuple)):
+                return [scrub(item) for item in value]
+            return value
+
+        return scrub(cls._backup_result_dict(result))
+
+    @staticmethod
+    def _backup_failure(operation: str, error: Exception) -> dict:
+        # Do not send exception text to the page: filesystem paths and device
+        # names can appear in it. The engine's own result carries safe codes.
+        return {
+            "ok": False,
+            "error_code": f"{operation}_{type(error).__name__}",
+            "message": "Faerie Fire could not complete that backup operation.",
+        }
+
+    @staticmethod
+    def _backup_path_label(path: str) -> str:
+        normalized = os.path.normpath(os.path.abspath(path))
+        return os.path.basename(normalized) or os.path.splitdrive(normalized)[0] or "Selected folder"
+
+    def backup_state(self) -> dict:
+        try:
+            from livingpc.instance_backup import backup_status
+            data = self._safe_backup_result(backup_status(self.cfg))
+            if self._backup_runtime is not None:
+                data["runtime"] = self._safe_backup_result(self._backup_runtime.state())
+            return data
+        except Exception as error:
+            return self._backup_failure("backup_status", error)
+
+    def backup_prompt_state(self) -> dict:
+        """Whether to nudge the user to set up backups for their grown data."""
+        try:
+            from livingpc.backup_prompt import prompt_state
+            return prompt_state(self.cfg)
+        except Exception as error:
+            return self._backup_failure("backup_prompt_state", error)
+
+    def backup_prompt_snooze(self) -> dict:
+        try:
+            from livingpc.backup_prompt import snooze_prompt
+            return snooze_prompt(self.cfg)
+        except Exception as error:
+            return self._backup_failure("backup_prompt_snooze", error)
+
+    def backup_prompt_dismiss(self) -> dict:
+        try:
+            from livingpc.backup_prompt import dismiss_prompt
+            return dismiss_prompt(self.cfg)
+        except Exception as error:
+            return self._backup_failure("backup_prompt_dismiss", error)
+
+    def _choose_backup_folder(self, target: str) -> dict:
+        try:
+            if self._window is None:
+                raise RuntimeError("window not ready")
+            import webview
+            paths = self._window.create_file_dialog(
+                webview.FOLDER_DIALOG, allow_multiple=False)
+            if not paths:
+                return {"ok": False, "cancelled": True, "message": ""}
+            path = paths[0] if isinstance(paths, (list, tuple)) else paths
+            path = os.path.abspath(os.fspath(path))
+            if target == "primary":
+                self._selected_backup_primary = path
+            else:
+                self._selected_backup_secondary = path
+            return {"ok": True, "label": self._backup_path_label(path)}
+        except Exception as error:
+            return self._backup_failure("backup_folder", error)
+
+    def backup_choose_primary(self) -> dict:
+        return self._choose_backup_folder("primary")
+
+    def backup_choose_secondary(self) -> dict:
+        return self._choose_backup_folder("secondary")
+
+    def backup_clear_secondary(self) -> dict:
+        self._selected_backup_secondary = ""
+        return {"ok": True, "label": "Not configured"}
+
+    def backup_configure(self, passphrase, confirmation, include_blobs=False) -> dict:
+        recovery_passphrase = str(passphrase or "")
+        confirmation_value = str(confirmation or "")
+        if not recovery_passphrase or recovery_passphrase != confirmation_value:
+            return {"ok": False, "error_code": "passphrase_mismatch",
+                    "message": "The recovery passphrases do not match."}
+        primary = (self._selected_backup_primary if self._selected_backup_primary is not None
+                   else str(getattr(self.cfg, "instance_backup_primary_dir", "") or ""))
+        secondary = (self._selected_backup_secondary if self._selected_backup_secondary is not None
+                     else str(getattr(self.cfg, "instance_backup_secondary_dir", "") or ""))
+        if not primary:
+            return {"ok": False, "error_code": "primary_required",
+                    "message": "Choose a primary backup folder first."}
+        try:
+            from livingpc.instance_backup import configure_instance_backup
+            configured = configure_instance_backup(
+                self.cfg,
+                primary_dir=primary,
+                secondary_dir=secondary,
+                passphrase=recovery_passphrase,
+                include_blobs=bool(include_blobs),
+            )
+            data = self._safe_backup_result(configured)
+            if data.get("ok", True):
+                # Keep the live runtime in sync even when the engine persisted
+                # configuration by replacing config.toml rather than mutating cfg.
+                self.cfg.instance_backup_enabled = True
+                self.cfg.instance_backup_primary_dir = primary
+                self.cfg.instance_backup_secondary_dir = secondary
+                self.cfg.instance_backup_include_blobs = bool(include_blobs)
+                try:
+                    from livingpc.backup_task import register_backup_task
+                    data["scheduled_task"] = self._safe_backup_result(
+                        register_backup_task(self.cfg))
+                except Exception as task_error:
+                    data["scheduled_task"] = self._backup_failure(
+                        "task_register", task_error)
+                self._selected_backup_primary = None
+                self._selected_backup_secondary = None
+            return data
+        except Exception as error:
+            return self._backup_failure("backup_configure", error)
+        finally:
+            recovery_passphrase = ""
+            confirmation_value = ""
+
+    def backup_now(self) -> dict:
+        try:
+            from livingpc.instance_backup import create_instance_backup
+            return self._safe_backup_result(
+                create_instance_backup(self.cfg, reason="user_requested"))
+        except Exception as error:
+            return self._backup_failure("backup_create", error)
+
+    def backup_choose_restore(self) -> dict:
+        try:
+            if self._window is None:
+                raise RuntimeError("window not ready")
+            import webview
+            paths = self._window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=("Faerie Fire backups (*.ffbackup)",),
+            )
+            if not paths:
+                return {"ok": False, "cancelled": True, "message": ""}
+            path = paths[0] if isinstance(paths, (list, tuple)) else paths
+            path = os.path.abspath(os.fspath(path))
+            from livingpc.instance_backup import inspect_backup
+            info = self._safe_backup_result(inspect_backup(path))
+            if not info.get("ok", True):
+                return info
+            if self._pending_restore_token:
+                self.backup_cancel_restore()
+            self._selected_restore_path = path
+            return {"ok": True, "label": os.path.basename(path), "bundle": info}
+        except Exception as error:
+            return self._backup_failure("backup_inspect", error)
+
+    def backup_prepare_restore(self, passphrase) -> dict:
+        recovery_passphrase = str(passphrase or "")
+        if not self._selected_restore_path:
+            return {"ok": False, "error_code": "restore_file_required",
+                    "message": "Choose a Faerie Fire backup first."}
+        if not recovery_passphrase:
+            return {"ok": False, "error_code": "passphrase_required",
+                    "message": "Enter the recovery passphrase."}
+        try:
+            from livingpc.instance_backup import prepare_restore
+            prepared = prepare_restore(
+                self.cfg, self._selected_restore_path, recovery_passphrase)
+            raw = self._backup_result_dict(prepared)
+            if not raw.get("ok", True):
+                return self._safe_backup_result(raw)
+            token = raw.get("token") or getattr(prepared, "token", None)
+            if not token:
+                return {"ok": False, "error_code": "restore_token_missing",
+                        "message": "The restore could not be staged."}
+            self._pending_restore_token = str(token)
+            self._restore_apply_requested = False
+            data = self._safe_backup_result(raw)
+            data["prepared"] = True
+            return data
+        except Exception as error:
+            return self._backup_failure("restore_prepare", error)
+        finally:
+            recovery_passphrase = ""
+
+    def backup_confirm_restore(self) -> dict:
+        if not self._pending_restore_token:
+            return {"ok": False, "error_code": "restore_not_prepared",
+                    "message": "Prepare and verify the backup first."}
+        if self._window is None:
+            return {"ok": False, "error_code": "window_not_ready",
+                    "message": "The Faerie Fire window is not ready."}
+        self._restore_apply_requested = True
+
+        def close_for_restore():
+            try:
+                self._window.destroy()
+            except Exception:
+                self._restore_apply_requested = False
+                log_diag("restore", "window close failed")
+
+        threading.Timer(0.2, close_for_restore).start()
+        return {"ok": True, "closing": True}
+
+    def backup_cancel_restore(self) -> dict:
+        token = self._pending_restore_token
+        self._pending_restore_token = None
+        self._restore_apply_requested = False
+        self._selected_restore_path = None
+        if not token:
+            return {"ok": True}
+        try:
+            from livingpc.instance_backup import discard_prepared_restore
+            discard_prepared_restore(token)
+            return {"ok": True}
+        except Exception as error:
+            return self._backup_failure("restore_discard", error)
+
+    def backup_open_folder(self) -> dict:
+        path = (self._selected_backup_primary or
+                str(getattr(self.cfg, "instance_backup_primary_dir", "") or ""))
+        if not path:
+            return {"ok": False, "error_code": "primary_required",
+                    "message": "Configure a primary backup folder first."}
+        try:
+            self._open_path(path)
+            return {"ok": True}
+        except Exception as error:
+            return self._backup_failure("backup_open_folder", error)
+
     def generate_daily_report(self) -> dict:
         """On-demand markdown report of what was added today. Writes to
         reports/daily/ and opens it."""
@@ -2926,6 +3219,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     log_diag("gui_startup", f"main() starting cwd={os.getcwd()} argv={argv}")
     try:
+        # Finish or reverse any interrupted whole-profile activation before a
+        # bridge opens either SQLite database.
+        from livingpc.config import load as load_config
+        from livingpc.instance_backup import recover_interrupted_restore
+        recovery_result = recover_interrupted_restore(load_config("config.toml"))
+        if not recovery_result.ok:
+            raise RuntimeError(
+                "interrupted restore recovery failed: "
+                + str(recovery_result.error_code or "unknown"))
         api = GuiApi(initial_view=args.view)
         log_diag("gui_startup", f"GuiApi ready profile={getattr(api.cfg,'profile','?')}")
         window = webview.create_window(
@@ -2945,8 +3247,67 @@ def main(argv=None):
     # back to the plain, original call pending real diagnostic data from a
     # console run. See "Undo Last Faerie Fire Change.bat" in bats/ if a
     # future change needs rolling back without waiting on me.
-    webview.start()
+    from livingpc.backup_runtime import BackupRuntime
+    backup_runtime = BackupRuntime(api.cfg)
+    api._backup_runtime = backup_runtime
+    backup_runtime.start()
+    try:
+        webview.start()
+    finally:
+        # A restore can only begin after the WebView and its bridge calls have
+        # returned, and after the fallback scheduler has released its worker.
+        backup_runtime.stop()
 
+    token = api._pending_restore_token
+    apply_restore = bool(api._restore_apply_requested and token)
+    if token and not apply_restore:
+        try:
+            from livingpc.instance_backup import discard_prepared_restore
+            discard_prepared_restore(token)
+        except Exception as error:
+            log_diag("restore", f"staged restore cleanup failed error={type(error).__name__}")
+        return
+    if not apply_restore:
+        return
+
+    # Activation is delegated to a short-lived helper. It waits for this PID to
+    # exit, ensuring WebView, SQLite bridges, and imported stores are gone before
+    # any whole-profile path is replaced.
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "tools", "apply_restore.py")
+    config_path = (getattr(api.cfg, "_config_path", None)
+                   or os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.toml"))
+    kwargs = {"cwd": os.path.dirname(os.path.abspath(__file__)), "close_fds": True}
+    if os.name == "nt":
+        kwargs["creationflags"] = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    try:
+        subprocess.Popen(
+            [
+                sys.executable, helper,
+                "--token", token,
+                "--parent-pid", str(os.getpid()),
+                "--config", config_path,
+                "--view", api.initial_view,
+            ],
+            **kwargs,
+        )
+    except Exception as error:
+        log_diag("restore", f"restore helper launch failed error={type(error).__name__}")
+        try:
+            from livingpc.instance_backup import discard_prepared_restore
+            discard_prepared_restore(token)
+        except Exception:
+            pass
+        try:
+            subprocess.Popen(
+                [sys.executable, os.path.abspath(__file__), "--view", api.initial_view],
+                **kwargs)
+        except Exception as relaunch_error:
+            log_diag("restore", f"restore recovery relaunch failed "
+                     f"error={type(relaunch_error).__name__}")
 
 if __name__ == "__main__":
     main()

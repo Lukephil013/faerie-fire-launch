@@ -221,10 +221,9 @@ def _apply_guarded_leaf_replan(
     plan = goals.validate_replan_project(
         int(project_id), steps, project_update=project_update,
         expected_versions=expected_versions, horizon=horizon)
-    current_open_ids = [int(row["id"]) for row in goals.conn.execute(
-        "SELECT id FROM goal_node WHERE parent_id=? AND node_type='task' "
-        "AND status IN ('active','paused') ORDER BY position,id",
-        (int(project_id),)).fetchall()]
+    current_open_ids = [
+        int(leaf["id"]) for leaf in goals.project_subtree_leaves(int(project_id))
+        if leaf.get("status") in {"active", "paused"}]
     staged = _pending_leaf_reservations(
         goals, agents, int(project_id), exclude_refs=exclude_refs)
     prior: list[dict] = []
@@ -3010,24 +3009,39 @@ def build_leaf_workspace_context(goals: GoalStore, agents: GoalAgentStore,
                 })
         finally:
             curiosities.close()
-    horizon_rows = (goals.conn.execute(
-        "SELECT * FROM goal_node WHERE parent_id=? AND node_type='task' "
-        "AND status IN ('active','paused') ORDER BY position,id",
-        (int(node["parent_id"]),)).fetchall() if node.get("parent_id") else [])
-    project_id = int(node["parent_id"]) if node.get("parent_id") else None
-    project_focus = (goals.project_focus(project_id) if project_id is not None
-                     else {"highest_priority": False,
-                           "currently_working": False})
-    show_planning_roles = bool(
-        project_id is not None
-        and goals.resolved_semantic_role(project_id) == "project"
-        and (project_focus["highest_priority"]
-             or project_focus["currently_working"]))
+    project_id = None
+    ancestor_id = int(node["parent_id"]) if node.get("parent_id") else 0
+    while ancestor_id:
+        ancestor = goals.get(ancestor_id)
+        if not ancestor:
+            break
+        if (ancestor["type"] == "subgoal" and
+                goals.resolved_semantic_role(ancestor_id) == "project"):
+            project_id = ancestor_id
+            break
+        ancestor_id = int(ancestor.get("parent_id") or 0)
+
     horizon_leaves = []
-    for index, row in enumerate(horizon_rows):
-        leaf = goals._row(row)
-        if not leaf:
-            continue
+    def collect_open_leaves(parent_id):
+        collected = []
+        for row in goals.conn.execute(
+                "SELECT * FROM goal_node WHERE parent_id=? AND status!='archived' "
+                "ORDER BY position,id", (int(parent_id),)).fetchall():
+            child = goals._row(row)
+            if not child:
+                continue
+            if child["type"] == "task" and child["status"] in {"active", "paused"}:
+                collected.append(child)
+            elif child["type"] == "subgoal":
+                collected.extend(collect_open_leaves(int(child["id"])))
+        return collected
+
+    horizon_rows = collect_open_leaves(project_id) if project_id is not None else []
+    project_focus = (goals.project_focus(project_id) if project_id is not None else {
+        "highest_priority": False, "currently_working": False, "auto_current": False})
+    show_planning_roles = bool(
+        project_id is not None and goals.effective_current_project_id() == project_id)
+    for index, leaf in enumerate(horizon_rows):
         horizon_leaves.append({
             "id": int(leaf["id"]),
             "planning_role": (("now" if index == 0 else
@@ -3811,13 +3825,13 @@ def _adaptive_completion_replan(
               if isinstance(stored_payload.get("adaptive_horizon"), dict) else {})
     project_id = int(stored.get("project_id") or node.get("parent_id") or 0)
     source_id = int(stored.get("source_leaf_id") or node["id"])
-    if (not project_id or source_id != int(node["id"])
-            or int(node.get("parent_id") or 0) != project_id):
+    if not project_id or source_id != int(node["id"]):
         raise ValueError("the completion horizon no longer matches this Leaf")
-    rows = goals.conn.execute(
-        "SELECT * FROM goal_node WHERE parent_id=? AND node_type='task' "
-        "AND status!='archived' ORDER BY position,id", (project_id,)).fetchall()
-    leaves = [goals._row(row) for row in rows]
+    # The plan spans the project's whole subtree, so a NOW Leaf that still
+    # sits under a Stage participates (and is pulled up by the replan).
+    leaves = goals.project_subtree_leaves(project_id)
+    if int(node["id"]) not in {int(leaf["id"]) for leaf in leaves}:
+        raise ValueError("the completion horizon no longer matches this Leaf")
     source = next((leaf for leaf in leaves if int(leaf["id"]) == source_id), None)
     if not source:
         raise ValueError("the completing Leaf no longer belongs to this Project")
@@ -6006,10 +6020,7 @@ def decide_gardening_proposal(config, proposal_id: int, action: str, *,
                 if len(parts) < 2:
                     raise ValueError("split proposal requires at least two parts")
                 if target["type"] == "task":
-                    direct = [goals._row(row) for row in goals.conn.execute(
-                        "SELECT * FROM goal_node WHERE parent_id=? AND node_type='task' "
-                        "AND status!='archived' ORDER BY position,id",
-                        (int(target["parent_id"]),)).fetchall()]
+                    direct = goals.project_subtree_leaves(int(target["parent_id"]))
                     steps = []
                     for leaf in direct:
                         if int(leaf["id"]) == int(target["id"]):
@@ -6050,10 +6061,7 @@ def decide_gardening_proposal(config, proposal_id: int, action: str, *,
                     final_description = str(
                         data.get("description") or target.get("description") or "")
                     source_ids = {int(source["id"]) for source in sources}
-                    direct = [goals._row(row) for row in goals.conn.execute(
-                        "SELECT * FROM goal_node WHERE parent_id=? AND node_type='task' "
-                        "AND status!='archived' ORDER BY position,id",
-                        (int(target["parent_id"]),)).fetchall()]
+                    direct = goals.project_subtree_leaves(int(target["parent_id"]))
                     task_steps = []
                     for leaf in direct:
                         leaf_id = int(leaf["id"])
@@ -6071,9 +6079,10 @@ def decide_gardening_proposal(config, proposal_id: int, action: str, *,
                     # called again after transfer and archives all sources.
                     plan = goals.validate_replan_project(
                         int(target["parent_id"]), task_steps, horizon=horizon)
-                    current_ids = [int(row["id"]) for row in goals.conn.execute(
-                        "SELECT id FROM goal_node WHERE parent_id=? AND node_type='task' "
-                        "AND status IN ('active','paused')", (int(target["parent_id"]),))]
+                    current_ids = [
+                        int(leaf["id"]) for leaf in
+                        goals.project_subtree_leaves(int(target["parent_id"]))
+                        if leaf.get("status") in {"active", "paused"}]
                     staged = _pending_leaf_reservations(
                         goals, agents, int(target["parent_id"]),
                         exclude_refs=current_ref)

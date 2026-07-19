@@ -276,9 +276,12 @@ hypothesis crosses the confidence gate mid-day. Config:
 - The background daemon runs a nightly pass at `inference_nightly_hour` (default
   21:00 local): forms inferences, distils the day into **confident facts**
   (auto-committed; low-confidence facts dropped), **consolidates memory**,
-  and **backs up memory.db** — in that order, so snapshots capture the tidy state.
-- No Windows Scheduled Task and no manual approval — just keep the daemon running
-  in the evening. `python run_triage.py --generate` triggers triage on demand.
+  and creates the **legacy local memory.db checkpoint** — in that order, so the
+  checkpoint captures the tidy state.
+- This inference/hygiene pass needs no Windows Scheduled Task: keep the daemon
+  running in the evening. Portable whole-profile backups have their own Windows
+  task and app-startup fallback. `python run_triage.py --generate` triggers
+  triage on demand.
 - Only has data if capture ran that day.
 
 ## 7. Encryption (optional, at rest)
@@ -292,12 +295,37 @@ hypothesis crosses the confidence gate mid-day. Config:
 ## 8. Maintenance
 - **Screenshots auto-purge**: triage deletes images older than
   `config.blob_retention_days` (default 3); OCR text is always kept.
-- **Rotating memory backups** (`livingpc/backup.py`): the nightly pass snapshots
+- **Legacy rotating memory checkpoints** (`livingpc/backup.py`): the nightly
+  pass snapshots
   memory.db — the one irreplaceable file — into `data/backups/` via the SQLite
   online-backup API (safe while the daemon holds the DB open). Newest
   `backup_keep` (14) snapshots retained; `secret.salt` is copied alongside once
-  so encrypted backups stay restorable. On demand: **bats\Backup Memory.bat** or
-  `python tools/backup_memory.py`.
+  and the automatic key remains DPAPI-bound to the current Windows identity.
+  This is a local checkpoint, not full or cross-PC recovery. On demand:
+  **bats\Backup Memory.bat** or `python tools/backup_memory.py`.
+- **Portable encrypted whole-profile backups** (`livingpc/instance_backup.py`):
+  online-snapshot both SQLite databases, scrub external authorization state and
+  optional screenshot paths, vacuum the staged copies, collect portraits,
+  projects/history, journals/dumps, personas, custom skills, and portable
+  settings, then publish a verified `faerie-fire-*.ffbackup` through an atomic
+  `.partial` rename. AES-256-GCM authenticates the compressed payload; Scrypt
+  wraps a random repository key with the recovery passphrase while DPAPI caches
+  only that random key for unattended runs. Credentials, browser profiles,
+  diagnostics, logs, caches, and raw machine paths stay out. Screenshots are
+  opt-in. Defaults retain 14 daily, 4 weekly, and 12 monthly generations.
+- Portable backups run from a per-user Windows task (20:00 by default, start
+  when next available), catch up when the GUI starts overdue, and retry hourly
+  while open. Settings shows destination health and verified age; it also
+  provides **Back up now** and whole-profile **Restore from backup**. Restore is
+  available before API-key/Soul creation, validates into target-volume staging,
+  re-protects the original automatic database key for the new Windows user,
+  and requires a verified rollback before replacing a non-empty profile.
+- Backup, restore, and explicit Forget share a cross-process maintenance lock.
+  Forget advances the managed repositories' privacy epoch, purges primary and
+  secondary generations, and creates a fresh baseline. Offline destinations
+  remain purge-pending and blocked. Manually copied archives and cloud-provider
+  version history are outside that revocation boundary. Full operational and
+  recovery details: `docs/BACKUP_RECOVERY.md`.
 - **Memory consolidation** (`livingpc/consolidate.py`) — the scale plan. The
   graph only grows (nightly auto-commits, evidence every ~25 min, rejections
   forever), so a nightly hygiene pass keeps it sharp: (1) active facts with the
@@ -309,9 +337,8 @@ hypothesis crosses the confidence gate mid-day. Config:
   inference evidence older than 180 days is pruned (0 disables). On demand:
   **bats\Consolidate Memory.bat**, `--dry-run` to preview, `--report` for a
   size snapshot.
-- Everything else (the two DBs, `triage.log`) is small and self-managing.
 
-## 9. Backups (git) & history
+## 9. Code backup (git) & history
 - **bats\Git Setup.bat** (once) → local repo + GitHub instructions. **bats\Git Push.bat** →
   daily dated commit + push. `.gitignore` excludes all data/secrets.
 - `devlog/<date>.md` — per-day change log. This `FEATURES.md` — the living
@@ -334,7 +361,12 @@ python run_triage.py         # review pending; generate today's if none
 python run_triage.py --generate   # non-interactive (used by scheduler)
 python run_triage.py --full       # whole-day summary instead of incremental
 python run_triage.py --backend stub --show-summary   # free dry run
-python tools/backup_memory.py       # snapshot memory.db now (rotating set)
+python tools/backup_memory.py       # legacy local memory.db checkpoint
+python tools/backup_instance.py status
+python tools/backup_instance.py create
+python tools/backup_instance.py scheduled
+python tools/backup_instance.py restore <archive.ffbackup>  # securely prompts
+python tools/backup_instance.py schedule install|status|remove
 python tools/consolidate_memory.py  # hygiene pass; --dry-run / --report
 python capture_status.py     # is it really capturing? (last-capture time)
 python view_activity.py [--type browser|clipboard]   # browser + clipboard events
@@ -354,7 +386,10 @@ llm_backend = "claude" | "stub";  llm_model            # triage model
 triage_memory_max_items / triage_memory_max_chars        # bounded proposal context
 companion_memory_max_items / assistant_memory_max_items  # bounded live context
 blob_retention_days = 3                                 # screenshot cleanup
-backup_enabled / backup_dir / backup_keep                 # rotating memory.db backups
+backup_enabled / backup_dir / backup_keep                 # legacy local checkpoint
+instance_backup_enabled / instance_backup_primary_dir / instance_backup_secondary_dir
+instance_backup_hour / instance_backup_keep_daily / instance_backup_keep_weekly
+instance_backup_keep_monthly / instance_backup_include_blobs  # portable .ffbackup
 consolidate_enabled / consolidate_value_similarity        # nightly memory hygiene
 consolidate_rejection_retention_days / consolidate_evidence_retention_days
 db_path / memory_db_path / blob_dir                     # storage locations
@@ -393,6 +428,9 @@ LIVINGPC_DB_KEY     # optional; enables at-rest encryption
   `browser_assistant_profile_dir`.
 
 ## Recently shipped
+- **Portable encrypted backup and recovery** — verified whole-profile
+  `.ffbackup` generations, Windows scheduling plus startup fallback, staged
+  whole-profile restore, rollback, and privacy-epoch-aware Forget handling.
 - **Skills system** — user-extensible slash commands with approval-gated
   self-extension (/teach), plus /remind, /today, /briefing built-ins.
 - **Filing engine** — brain dumps -> living project docs, with companion

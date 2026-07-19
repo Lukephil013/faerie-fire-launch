@@ -1032,17 +1032,20 @@ class CuriosityStore:
         return [self._item_dict(r) for r in rows]
 
     def deduplicate_open_suggestions(self, curiosity_id: int,
-                                     similarity: float = 0.82) -> list[int]:
-        """Keep the clearest/highest-confidence member of each suggestion cluster."""
+                                     similarity: float = 0.82,
+                                     max_open: int = 1) -> list[int]:
+        """Keep the strongest pending suggestion and retire duplicate/stacked ones."""
         from .inference import concept_similarity
         suggestions = [item for item in self.open_items(int(curiosity_id))
                        if item["kind"] == "suggestion"]
         suggestions.sort(key=lambda item: (
             float(item.get("confidence") or 0), -int(item["id"])), reverse=True)
         kept, duplicates = [], []
+        max_open = max(1, int(max_open))
         for item in suggestions:
-            if any(concept_similarity(item["text"], other["text"]) >= float(similarity)
-                   for other in kept):
+            if (len(kept) >= max_open or any(
+                    concept_similarity(item["text"], other["text"]) >= float(similarity)
+                    for other in kept)):
                 duplicates.append(int(item["id"]))
             else:
                 kept.append(item)
@@ -3392,11 +3395,18 @@ def generate_items(mem, inf, store: CuriosityStore, curiosity_id: int, model, *,
     budget = min(limit if limit is not None else len(gated),
                  max_open - len(open_items))
     selected: list[GeneratedItem] = []
-    if budget > 0 and answered_count >= 2 and not has_open_suggestion:
-        suggestion = next((it for it in gated if it.kind == "suggestion"), None)
-        if suggestion is not None:
-            selected.append(suggestion)
-    selected.extend(it for it in gated if it not in selected)
+    # Keep proposals serial: an unresolved suggestion must be answered before
+    # another is surfaced, and a single model batch may contribute at most one.
+    # Questions remain eligible so an open proposal never stalls investigation.
+    suggestion = (None if has_open_suggestion else
+                  next((it for it in gated if it.kind == "suggestion"), None))
+    if budget > 0 and answered_count >= 2 and suggestion is not None:
+        # Once enough answers exist, reserve a slot for the best grounded
+        # proposal instead of letting higher-confidence questions crowd it out.
+        selected.append(suggestion)
+    selected.extend(
+        it for it in gated
+        if it.kind != "suggestion" or (it is suggestion and it not in selected))
 
     created = 0
     for item in selected[:budget]:

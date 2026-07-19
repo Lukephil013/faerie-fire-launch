@@ -5,6 +5,9 @@ data/
 *.db-journal
 *.db-wal
 
+# Encrypted portable recovery archives (still personal data)
+*.ffbackup
+
 # Screenshots
 blobs/
 

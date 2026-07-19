@@ -1635,6 +1635,17 @@
   .app-modal-panel h2 { margin:0 0 7px; }
   .app-modal-panel input { width:100%; box-sizing:border-box; margin:12px 0 16px; padding:11px 12px;
     border:1px solid var(--line); border-radius:10px; background:var(--card2); color:var(--fg); font:inherit; }
+  .backup-modal { z-index:105; }
+  .backup-modal .app-modal-panel { width:min(520px,92vw); max-height:88vh; overflow:auto; }
+  .backup-folder-row { display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center;
+    padding:9px 10px; border:1px solid var(--line); border-radius:10px; background:rgba(2,12,7,.5); }
+  .backup-folder-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .backup-status-grid { display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:11px; }
+  .backup-status-grid span:nth-child(odd) { color:var(--muted); }
+  .backup-danger { padding:11px 12px; border:1px solid rgba(255,107,126,.45); border-radius:10px;
+    background:rgba(255,107,126,.08); color:var(--fg); font-size:12px; line-height:1.5; }
+  .backup-modal .backup-inline-check { display:flex; gap:9px; align-items:flex-start; color:var(--muted); font-size:11px; line-height:1.45; }
+  .backup-modal .backup-inline-check input { width:17px; height:17px; flex:0 0 auto; margin:1px 0 0; }
   .growth-map-tree { position:relative; min-height:620px; border:1px solid var(--line);
     border-radius:18px; overflow:hidden; background:
       radial-gradient(circle at 50% 48%, rgba(47,227,160,.12), transparent 32%),
@@ -1706,7 +1717,7 @@
     stroke:rgba(255,209,102,.92); stroke-width:.9; }
   .constellation-node .project-signal-badge text { fill:#ffe9a9; font-size:6.3px;
     font-weight:900; letter-spacing:.45px; paint-order:normal; stroke:none; }
-  .constellation-node .project-seq-badge circle { fill:rgba(34,24,6,.98);
+  .constellation-node .project-seq-badge rect { fill:rgba(34,24,6,.98);
     stroke:rgba(255,209,102,.95); stroke-width:.9; }
   .constellation-node .project-seq-badge text { fill:#ffe9a9; font-size:7px;
     font-weight:900; paint-order:normal; stroke:none; }
@@ -1993,11 +2004,17 @@
     </div>
 
     <div class="onboard-step" id="onboard-step-key">
-      <div class="onboard-step-label">Step 1 of 2</div>
-      <h1>Welcome to Faerie Fire</h1>
-      <p class="onboard-copy">Faerie Fire runs on Claude, using your own Anthropic API key — nothing is shared
+      <div class="onboard-step-label" id="onboard-key-step-label">Step 1 of 2</div>
+      <h1 id="onboard-key-title">Welcome to Faerie Fire</h1>
+      <p class="onboard-copy" id="onboard-key-copy">Faerie Fire runs on Claude, using your own Anthropic API key — nothing is shared
         with anyone else and the key never leaves this computer. You can get one at
         <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
+      <div class="settings-usage-card" id="onboard-restore-card" style="margin-bottom:16px">
+        <strong>Moving from another Faerie Fire?</strong>
+        <span class="hint" style="display:block;margin:4px 0 10px">Restore your complete profile before adding an API key or creating a new Soul.</span>
+        <button type="button" id="onboard-restore-backup">Restore from Faerie Fire backup</button>
+      </div>
+      <div class="hint" id="onboard-key-context" style="margin-bottom:6px">Or set up a new instance:</div>
       <label for="onboard-key-input">Anthropic API key</label>
       <input type="password" id="onboard-key-input" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
       <div class="onboard-error" id="onboard-key-error"></div>
@@ -2149,6 +2166,22 @@
         <p class="settings-helper">Today’s Report summarizes only today. Full Report includes the complete stored activity history.</p>
         <button id="settings-generate-report" data-help-en="Create and open the report selected above." data-help-ko="위에서 선택한 리포트를 만들고 엽니다.">Generate Report</button>
       </section>
+      <section class="settings-group" id="settings-backup-group">
+        <h3>Backup &amp; Restore</h3>
+        <div class="settings-usage-card" id="settings-backup-status">
+          <strong>Portable Backup</strong>
+          <span id="settings-backup-summary" class="hint">Checking status…</span>
+          <div id="settings-backup-details" class="backup-status-grid" style="margin-top:8px"></div>
+          <div id="settings-backup-warning" class="hint" style="display:none;margin-top:8px;color:var(--red)"></div>
+        </div>
+        <p class="settings-helper">Backups are encrypted for recovery on another Windows PC. Keep the recovery passphrase in your password manager; Faerie Fire cannot recover it.</p>
+        <div class="actions">
+          <button id="settings-backup-configure">Configure</button>
+          <button id="settings-backup-now">Back up now</button>
+          <button id="settings-backup-restore">Restore from backup</button>
+          <button id="settings-backup-open">Open backup folder</button>
+        </div>
+      </section>
       <section class="settings-group">
         <h3>Browser Assistant</h3>
         <p class="settings-helper">Faerie uses a separate visible browser and fills fields only after your approval. Passwords, payments, identity checks, Save, and Submit stay manual.</p>
@@ -2194,6 +2227,70 @@
     </section>
   </div>
 
+  <div class="app-modal-backdrop backup-modal" id="backup-setup-modal" role="dialog" aria-modal="true" aria-labelledby="backup-setup-title">
+    <section class="app-modal-panel">
+      <h2 id="backup-setup-title">Configure portable backups</h2>
+      <p class="hint">Choose an encrypted external or cloud-synced destination. A second destination is optional.</p>
+      <div class="backup-folder-row">
+        <strong id="backup-primary-label">Primary folder required</strong>
+        <button type="button" id="backup-primary-choose">Choose</button>
+      </div>
+      <div class="backup-folder-row" style="margin-top:8px">
+        <strong id="backup-secondary-label">Secondary folder not configured</strong>
+        <button type="button" id="backup-secondary-choose">Choose</button>
+        <button type="button" id="backup-secondary-clear" class="skip">Clear</button>
+      </div>
+      <label class="settings-choice" for="backup-passphrase">Recovery passphrase
+        <input type="password" id="backup-passphrase" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="settings-choice" for="backup-passphrase-confirm">Confirm recovery passphrase
+        <input type="password" id="backup-passphrase-confirm" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="backup-inline-check"><input type="checkbox" id="backup-include-blobs">Include screenshots (larger and more sensitive)</label>
+      <p class="hint">There is no recovery backdoor. Store this passphrase separately in your password manager.</p>
+      <div class="onboard-error" id="backup-setup-error"></div>
+      <div class="actions" style="justify-content:flex-end;margin-top:16px">
+        <button type="button" id="backup-setup-cancel">Cancel</button>
+        <button type="button" id="backup-setup-save" class="accent">Save backup settings</button>
+      </div>
+    </section>
+  </div>
+  <div class="app-modal-backdrop backup-modal" id="backup-restore-modal" role="dialog" aria-modal="true" aria-labelledby="backup-restore-title">
+    <section class="app-modal-panel">
+      <h2 id="backup-restore-title">Restore from backup</h2>
+      <p class="hint">Faerie Fire verifies and stages the archive first. Nothing live changes until you explicitly confirm.</p>
+      <div class="backup-folder-row">
+        <strong id="backup-restore-file-label">No backup selected</strong>
+        <button type="button" id="backup-restore-choose">Choose .ffbackup</button>
+      </div>
+      <label class="settings-choice" id="backup-restore-passphrase-row" for="backup-restore-passphrase">Recovery passphrase
+        <input type="password" id="backup-restore-passphrase" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="onboard-error" id="backup-restore-error"></div>
+      <div id="backup-restore-ready" style="display:none;margin-top:14px">
+        <strong>Backup verified and staged</strong>
+        <span class="hint" style="display:block;margin:5px 0 12px">Review the warning below before replacing this profile.</span>
+        <div class="backup-danger">Restore replaces the whole current profile; it never merges databases. Faerie Fire will close, activate the verified copy, and reopen. External integrations stay paused until you sign in again.</div>
+      </div>
+      <div class="actions" style="justify-content:flex-end;margin-top:16px">
+        <button type="button" id="backup-restore-cancel">Cancel</button>
+        <button type="button" id="backup-restore-prepare" class="accent">Verify and prepare</button>
+        <button type="button" id="backup-restore-confirm" class="danger" style="display:none">Replace profile and restart</button>
+      </div>
+    </section>
+  </div>
+  <div class="app-modal-backdrop backup-modal" id="backup-nudge-modal" role="dialog" aria-modal="true" aria-labelledby="backup-nudge-title">
+    <section class="app-modal-panel">
+      <h2 id="backup-nudge-title">Protect what you've built</h2>
+      <p class="hint" id="backup-nudge-summary">Faerie Fire now holds real memories, chats, and investigations — but they live only on this PC. A portable encrypted backup lets you recover everything if this machine is lost.</p>
+      <div class="backup-danger" style="margin-top:12px">Backups are encrypted with a recovery passphrase that only you know. Setup takes about a minute: pick a folder, choose a passphrase, done — nightly backups run automatically after that.</div>
+      <div class="actions" style="justify-content:flex-end;margin-top:16px">
+        <button type="button" id="backup-nudge-never" class="skip">Don't ask again</button>
+        <button type="button" id="backup-nudge-later">Remind me later</button>
+        <button type="button" id="backup-nudge-setup" class="accent">Set up backups</button>
+      </div>
+    </section>
+  </div>
   <div class="cc-ctx-menu" id="cc-chat-ctx-menu" style="display:none">
     <button type="button" class="cc-ctx-item" data-action="rename">Rename</button>
     <button type="button" class="cc-ctx-item danger" data-action="delete">Delete</button>
@@ -2375,7 +2472,7 @@
       <div class="growth-map-workspace">
         <div class="growth-map-stage">
           <div class="constellation-legend">
-            <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>NOW / TENTATIVE NEXT = selected Project horizon</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+            <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Branch</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>NOW = the single focus Leaf · numbers = priority order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
           </div>
           <div id="goal-map-tree" class="growth-map-tree" aria-label="Main living constellation map"></div>
         </div>
@@ -2412,7 +2509,7 @@
       <div id="growth-map-summary" class="growth-map-summary"></div>
       <div id="growth-map-tree" class="growth-map-tree" aria-label="Living constellation map"></div>
       <div class="constellation-legend">
-        <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Area</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>NOW / TENTATIVE NEXT = selected Project horizon</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
+        <span>✦ Soul</span><span>◆ Root</span><span class="legend-area">◇ Branch</span><span class="legend-project">◇ Project</span><span class="legend-stage">◇ Stage</span><span>✓ Leaf</span><span>NOW = the single focus Leaf · numbers = priority order</span><span>gold halo = needs care</span><span>★ gold ring = greatest curiosity</span>
       </div>
     </div>
   </div>
@@ -2805,12 +2902,12 @@ const KO_UI_TEXT = Object.freeze({
   'Branch':'가지',
   'Leaf':'잎',
   'gold halo = needs care':'금색 후광 = 돌봄 필요',
-  '◇ Area / Project / Stage':'◇ 영역 / 프로젝트 / 단계',
-  '◇ Area':'◇ 영역',
+  '◇ Branch / Project / Stage':'◇ 가지 / 프로젝트 / 단계',
+  '◇ Branch':'◇ 가지',
   '◇ Project':'◇ 프로젝트',
   '◇ Stage':'◇ 단계',
   '★ gold ring = greatest curiosity':'★ 금색 고리 = 가장 큰 호기심',
-  'NOW / TENTATIVE NEXT = selected Project horizon':'NOW / 잠정 다음 = 선택된 프로젝트 범위',
+  'NOW = the single focus Leaf · numbers = priority order':'NOW = 집중 Leaf · 숫자 = 우선순위 순서',
 
   // --- added: full sweep ---
   'Command Center chat':'커맨드 센터 채팅',
@@ -3584,7 +3681,7 @@ function enableKoreanUI(){
 }
 
 let GATE = 0.8, showHist = false, memData = [], toastTimer = null;
-let appProfile = 'personal', initialView = 'self', appBootstrapped = false;
+let appProfile = 'personal', initialView = 'self', appBootstrapped = false, restoreAuthMode = false;
 let commandAttachments = [], commandChatState = null;
 let growthMapSkin=(function(){
   try{ return localStorage.getItem('ffGrowthMapSkin')==='solar'?'solar':'tree'; }
@@ -3933,9 +4030,11 @@ function applyAppBootstrap(info){
   if(info&&info.language==='ko') enableKoreanUI();
   if(info) appLanguageSet=!!info.language_set;
   info=info||{};
+  restoreAuthMode=!!info.restore_auth_required;
   appProfile=info.profile||'personal';
   initialView=normalizeViewName(info.initial_view||'self');
   document.body.classList.toggle('profile-launch', appProfile==='launch');
+  applyRestoreAuthPresentation();
   if($('backend')){
     const backend=info.backend||info.inference_backend||'?';
     $('backend').textContent='profile: '+appProfile+' · backend: '+backend;
@@ -3966,21 +4065,49 @@ function onboardError(id, message){
   if(message){ el.textContent=message; el.classList.add('show'); }
   else { el.textContent=''; el.classList.remove('show'); }
 }
+function applyRestoreAuthPresentation(){
+  const step=$('onboard-key-step-label');
+  const title=$('onboard-key-title');
+  const copy=$('onboard-key-copy');
+  const card=$('onboard-restore-card');
+  const context=$('onboard-key-context');
+  if(!restoreAuthMode) return;
+  const ko=APP_LANG==='ko';
+  if(step) step.textContent=ko?'복원 후 보안 단계':'Post-restore security';
+  if(title) title.textContent=ko?'복원된 프로필 다시 연결':'Reconnect your restored profile';
+  if(copy) copy.textContent=ko?'복원된 기억과 Soul은 그대로예요. 이 Windows 계정에서 사용할 새 Anthropic API 키를 입력해 주세요.':'Your memories and Soul are already restored. Enter a fresh Anthropic API key for this Windows account.';
+  if(card) card.style.display='none';
+  if(context) context.textContent=ko?'Notion과 브라우저 연동은 일시 중지되어 있어요. 앱에 들어간 뒤 설정에서 새로 인증하세요.':'Notion and browser integrations stay paused. Reconnect them from Settings after you enter.';
+  if($('onboard-key-continue')) $('onboard-key-continue').textContent=ko?'저장하고 들어가기':'Save & enter';
+  if($('onboard-skip-btn')) $('onboard-skip-btn').textContent=ko?'나중에':'Later';
+  document.querySelectorAll('#onboard-dots span').forEach(dot=>{
+    dot.style.display=dot.getAttribute('data-step')==='key'?'':'none';
+  });
+}
+function onboardStepFromStatus(result){
+  if(result&&result.restore_auth_required){
+    restoreAuthMode=true;
+    applyRestoreAuthPresentation();
+  }
+  return restoreAuthMode?'key':(result&&result.has_key?'soul':'key');
+}
 function openOnboarding(){
   const overlay=$('onboard-overlay');
   if(!overlay) return;
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden','false');
+  applyRestoreAuthPresentation();
   const focusStep=step=>{
     onboardShowStep(step);
     const focusId=step==='soul'?'onboard-soul-title':'onboard-key-input';
     setTimeout(()=>{ const el=$(focusId); if(el) el.focus(); }, 50);
   };
+  if(restoreAuthMode){ focusStep('key'); return; }
   // Unified build: ask for the language first if it was never chosen.
   if(!appLanguageSet){ onboardShowStep('lang'); return; }
   if(api()&&pywebview.api.onboarding_status){
     bridgeTimeout(pywebview.api.onboarding_status(),'Onboarding status',8000)
-      .then(r=>focusStep(r&&r.has_key?'soul':'key'))
+      .then(r=>focusStep(onboardStepFromStatus(r)))
       .catch(()=>focusStep('key'));
   } else {
     focusStep('key');
@@ -4004,7 +4131,7 @@ function closeOnboardingAndEnter(){
     };
     if(api()&&pywebview.api.onboarding_status){
       bridgeTimeout(pywebview.api.onboarding_status(),'Onboarding status',8000)
-        .then(r=>focusStep(r&&r.has_key?'soul':'key'))
+        .then(r=>focusStep(onboardStepFromStatus(r)))
         .catch(()=>focusStep('key'));
     } else { focusStep('key'); }
   };
@@ -4012,6 +4139,8 @@ function closeOnboardingAndEnter(){
   if(langEn) langEn.onclick=()=>pickLang('en');
   const langKo=$('onboard-lang-ko');
   if(langKo) langKo.onclick=()=>pickLang('ko');
+  const restoreBackupBtn=$('onboard-restore-backup');
+  if(restoreBackupBtn) restoreBackupBtn.onclick=openBackupRestoreModal;
   const keyBtn=$('onboard-key-continue');
   if(keyBtn) keyBtn.onclick=()=>{
     if(!api()) return;
@@ -4020,17 +4149,34 @@ function closeOnboardingAndEnter(){
     onboardError('onboard-key-error','');
     keyBtn.disabled=true; keyBtn.textContent='Validating…';
     bridgeTimeout(pywebview.api.onboarding_save_key(key),'Key validation',20000).then(r=>{
-      keyBtn.disabled=false; keyBtn.textContent='Validate & continue';
+      keyBtn.disabled=false; keyBtn.textContent=restoreAuthMode?'Save & enter':'Validate & continue';
       if(!r||r.ok===false){ onboardError('onboard-key-error',(r&&r.message)||'Could not validate that key.'); return; }
+      if(restoreAuthMode){
+        if(!pywebview.api.onboarding_finish_restore_auth){
+          onboardError('onboard-key-error','This build cannot finish restore authentication.');
+          return;
+        }
+        bridgeTimeout(pywebview.api.onboarding_finish_restore_auth(),'Restore authentication',8000).then(finished=>{
+          if(!finished||finished.ok===false){ onboardError('onboard-key-error',(finished&&finished.message)||'Could not finish authentication.'); return; }
+          restoreAuthMode=false;
+          closeOnboardingAndEnter();
+          toast('Profile restored. Notion and browser connections remain paused until you reconnect them.');
+        }).catch(e=>onboardError('onboard-key-error','Could not finish authentication: '+e));
+        return;
+      }
       onboardShowStep('soul');
       setTimeout(()=>{ const el=$('onboard-soul-title'); if(el) el.focus(); }, 50);
     }).catch(e=>{
-      keyBtn.disabled=false; keyBtn.textContent='Validate & continue';
+      keyBtn.disabled=false; keyBtn.textContent=restoreAuthMode?'Save & enter':'Validate & continue';
       onboardError('onboard-key-error','Could not reach Faerie Fire: '+e);
     });
   };
   const skipBtn=$('onboard-skip-btn');
   if(skipBtn) skipBtn.onclick=()=>{
+    if(restoreAuthMode){
+      closeOnboardingAndEnter(); toast('Authentication is still required; Faerie Fire will ask again next launch.');
+      return;
+    }
     onboardShowStep('soul');
     setTimeout(()=>{ const input=$('onboard-soul-title'); if(input) input.focus(); },30);
   };
@@ -4259,6 +4405,7 @@ if($('settings-cog')) $('settings-cog').onclick=()=>{
   refreshSettingsCalibrationLabel();
   refreshSettingsLanguageLabel();
   refreshSettingsUsageLine();
+  refreshBackupState();
   refreshGrowthMapSkinSetting();
   refreshFaerieMascotSetting();
   refreshBrowserPermissions();
@@ -4325,6 +4472,291 @@ function refreshSettingsUsageLine(){
     }
   }).catch(()=>{ span.textContent=''; if(breakdown) breakdown.textContent=''; });
 }
+let lastBackupState=null;
+function backupError(id,message){ onboardError(id,message||''); }
+function backupHealthLabel(value){
+  if(value===true||value==='healthy'||value==='ok') return 'Healthy';
+  if(value===false||value==='offline'||value==='error') return 'Needs attention';
+  return value?String(value):'—';
+}
+function backupTimeLabel(value,ageSeconds){
+  let label='Never';
+  if(value){
+    const date=new Date(value);
+    label=Number.isNaN(date.getTime())?String(value):date.toLocaleString();
+  }
+  const seconds=Number(ageSeconds);
+  if(Number.isFinite(seconds)&&seconds>=0){
+    const hours=Math.floor(seconds/3600);
+    const age=hours<1?'less than an hour ago':hours<48?hours+' hours ago':Math.floor(hours/24)+' days ago';
+    label+=(label==='Never'?'':' · ')+age;
+  }
+  return label;
+}
+function renderBackupState(state){
+  const summary=$('settings-backup-summary'),details=$('settings-backup-details');
+  const warning=$('settings-backup-warning');
+  if(!summary||!details) return;
+  lastBackupState=state||{};
+  const enabled=!!(state&&(state.enabled||state.configured));
+  const last=state&&(state.last_verified_backup||state.last_verified_utc||state.last_verified_at||state.last_verified);
+  const generations=state&&(state.retained_generations!=null?state.retained_generations:
+    state.generation_count!=null?state.generation_count:Array.isArray(state.generations)?state.generations.length:0);
+  const runtime=(state&&state.runtime)||{};
+  const next=state&&(state.next_attempt_utc||state.next_attempt)||runtime.next_attempt_utc||'';
+  const primary=state&&(state.primary_healthy!=null?state.primary_healthy:state.primary_health);
+  const secondary=state&&(state.secondary_healthy!=null?state.secondary_healthy:state.secondary_health);
+  const purgePending=!!(state&&(state.purge_pending||state.privacy_purge_pending));
+  const errorCode=state&&state.error_code||runtime.last_error_code||'';
+  if(state&&state.ok===false&&!enabled){
+    summary.textContent=state.message||'Portable backup is not available.';
+  }else if(!enabled){
+    summary.textContent='Not configured — choose an encrypted destination.';
+  }else if(last){
+    summary.textContent='Last verified '+backupTimeLabel(last,state.age_seconds||state.last_verified_age_seconds);
+  }else{
+    summary.textContent='Configured — no verified generation yet.';
+  }
+  const rows=[
+    ['Primary',backupHealthLabel(primary)],
+    ['Secondary',secondary==null?'Not configured':backupHealthLabel(secondary)],
+    ['Retained',String(generations||0)+' generation'+(Number(generations)===1?'':'s')],
+    ['Next attempt',next?backupTimeLabel(next):'At the daily backup hour'],
+  ];
+  details.innerHTML=rows.map(row=>'<span>'+esc(row[0])+'</span><strong>'+esc(row[1])+'</strong>').join('');
+  const warnings=[];
+  if(purgePending) warnings.push('A configured destination is awaiting a Forget purge. Restore and new uploads there are blocked.');
+  if(errorCode) warnings.push('Status code: '+errorCode);
+  if(state&&state.same_volume_warning) warnings.push('Primary and secondary destinations are on the same volume.');
+  warning.textContent=warnings.join(' ');
+  warning.style.display=warnings.length?'':'none';
+  if($('settings-backup-now')) $('settings-backup-now').disabled=!enabled||purgePending;
+  if($('settings-backup-open')) $('settings-backup-open').disabled=!enabled;
+}
+function refreshBackupState(){
+  if(!api()||!pywebview.api.backup_state){ renderBackupState({enabled:false}); return; }
+  pywebview.api.backup_state().then(state=>renderBackupState(state||{}))
+    .catch(()=>renderBackupState({ok:false,message:'Could not read backup status.'}));
+}
+function closeBackupSetupModal(){
+  $('backup-setup-modal').classList.remove('open');
+  $('backup-passphrase').value='';
+  $('backup-passphrase-confirm').value='';
+  backupError('backup-setup-error','');
+  $('backup-setup-save').disabled=false;
+}
+function openBackupSetupModal(){
+  $('settings-drawer').classList.remove('open');
+  $('backup-passphrase').value='';
+  $('backup-passphrase-confirm').value='';
+  $('backup-include-blobs').checked=!!(lastBackupState&&lastBackupState.include_blobs);
+  $('backup-primary-label').textContent=(lastBackupState&&(lastBackupState.enabled||lastBackupState.configured))
+    ?'Current primary destination':'Primary folder required';
+  $('backup-secondary-label').textContent=(lastBackupState&&lastBackupState.secondary_configured)
+    ?'Current secondary destination':'Secondary folder not configured';
+  backupError('backup-setup-error','');
+  $('backup-setup-modal').classList.add('open');
+  setTimeout(()=>$('backup-primary-choose').focus(),30);
+}
+function chooseBackupFolder(kind){
+  if(!api()) return;
+  const method=kind==='primary'?pywebview.api.backup_choose_primary:pywebview.api.backup_choose_secondary;
+  if(!method) return;
+  bridgeTimeout(method(),kind+' backup folder',30000).then(result=>{
+    if(!result||result.cancelled) return;
+    if(result.ok===false){ backupError('backup-setup-error',result.message||'Could not select that folder.'); return; }
+    $(kind==='primary'?'backup-primary-label':'backup-secondary-label').textContent=result.label||'Selected folder';
+  }).catch(()=>backupError('backup-setup-error','Could not select that folder.'));
+}
+function saveBackupSetup(){
+  if(!api()||!pywebview.api.backup_configure) return;
+  let passphrase=$('backup-passphrase').value;
+  let confirmation=$('backup-passphrase-confirm').value;
+  backupError('backup-setup-error','');
+  if(!passphrase||passphrase!==confirmation){
+    backupError('backup-setup-error','Enter the same recovery passphrase twice.');
+    return;
+  }
+  const button=$('backup-setup-save');
+  button.disabled=true;button.innerHTML=thinkingDotsHtml('Saving');
+  const request=pywebview.api.backup_configure(
+    passphrase,confirmation,!!$('backup-include-blobs').checked);
+  $('backup-passphrase').value='';
+  $('backup-passphrase-confirm').value='';
+  passphrase='';confirmation='';
+  bridgeTimeout(request,'Backup configuration',600000).then(result=>{
+    button.disabled=false;button.textContent='Save backup settings';
+    if(!result||result.ok===false){
+      backupError('backup-setup-error',(result&&result.message)||'Could not configure backups.');
+      return;
+    }
+    closeBackupSetupModal();
+    toast('Portable backups configured. Keep the recovery passphrase safe.');
+    refreshBackupState();
+  }).catch(()=>{
+    button.disabled=false;button.textContent='Save backup settings';
+    backupError('backup-setup-error','Could not configure backups.');
+  });
+}
+function resetBackupRestoreModal(){
+  $('backup-restore-file-label').textContent='No backup selected';
+  $('backup-restore-passphrase').value='';
+  $('backup-restore-passphrase-row').style.display='';
+  $('backup-restore-ready').style.display='none';
+  $('backup-restore-prepare').style.display='';
+  $('backup-restore-prepare').disabled=false;
+  $('backup-restore-prepare').textContent='Verify and prepare';
+  $('backup-restore-confirm').style.display='none';
+  $('backup-restore-confirm').disabled=false;
+  $('backup-restore-confirm').textContent='Replace profile and restart';
+  $('backup-restore-choose').disabled=false;
+  backupError('backup-restore-error','');
+}
+function openBackupRestoreModal(){
+  $('settings-drawer').classList.remove('open');
+  resetBackupRestoreModal();
+  $('backup-restore-modal').classList.add('open');
+  setTimeout(()=>$('backup-restore-choose').focus(),30);
+}
+function closeBackupRestoreModal(){
+  $('backup-restore-modal').classList.remove('open');
+  resetBackupRestoreModal();
+  if(api()&&pywebview.api.backup_cancel_restore) pywebview.api.backup_cancel_restore().catch(()=>{});
+}
+function chooseRestoreBackup(){
+  if(!api()||!pywebview.api.backup_choose_restore) return;
+  bridgeTimeout(pywebview.api.backup_choose_restore(),'Backup inspection',30000).then(result=>{
+    if(!result||result.cancelled) return;
+    if(result.ok===false){ backupError('backup-restore-error',result.message||'That backup could not be inspected.'); return; }
+    $('backup-restore-file-label').textContent=result.label||'Selected backup';
+    backupError('backup-restore-error','');
+    $('backup-restore-passphrase').focus();
+  }).catch(()=>backupError('backup-restore-error','That backup could not be inspected.'));
+}
+function prepareBackupRestore(){
+  if(!api()||!pywebview.api.backup_prepare_restore) return;
+  let passphrase=$('backup-restore-passphrase').value;
+  if(!passphrase){ backupError('backup-restore-error','Enter the recovery passphrase.'); return; }
+  const button=$('backup-restore-prepare');
+  button.disabled=true;button.innerHTML=thinkingDotsHtml('Verifying');
+  const request=pywebview.api.backup_prepare_restore(passphrase);
+  $('backup-restore-passphrase').value='';
+  passphrase='';
+  bridgeTimeout(request,'Backup restore preparation',600000).then(result=>{
+    button.disabled=false;button.textContent='Verify and prepare';
+    if(!result||result.ok===false){
+      backupError('backup-restore-error',(result&&result.message)||'The backup could not be verified.');
+      return;
+    }
+    backupError('backup-restore-error','');
+    $('backup-restore-passphrase-row').style.display='none';
+    $('backup-restore-ready').style.display='';
+    $('backup-restore-prepare').style.display='none';
+    $('backup-restore-confirm').style.display='';
+    $('backup-restore-choose').disabled=true;
+    $('backup-restore-confirm').focus();
+  }).catch(()=>{
+    button.disabled=false;button.textContent='Verify and prepare';
+    backupError('backup-restore-error','The backup could not be verified.');
+  });
+}
+function confirmBackupRestore(){
+  if(!api()||!pywebview.api.backup_confirm_restore) return;
+  const button=$('backup-restore-confirm');
+  button.disabled=true;button.innerHTML=thinkingDotsHtml('Closing safely');
+  bridgeTimeout(pywebview.api.backup_confirm_restore(),'Backup restore confirmation',15000).then(result=>{
+    if(!result||result.ok===false){
+      button.disabled=false;button.textContent='Replace profile and restart';
+      backupError('backup-restore-error',(result&&result.message)||'Restore could not begin.');
+    }
+  }).catch(()=>{
+    button.disabled=false;button.textContent='Replace profile and restart';
+    backupError('backup-restore-error','Restore could not begin.');
+  });
+}
+function createBackupNow(){
+  if(!api()||!pywebview.api.backup_now) return;
+  const button=$('settings-backup-now');
+  button.disabled=true;button.innerHTML=thinkingDotsHtml('Backing up');
+  bridgeTimeout(pywebview.api.backup_now(),'Portable backup',600000).then(result=>{
+    button.disabled=false;button.textContent='Back up now';
+    if(!result||result.ok===false){ toast((result&&result.message)||'Backup failed.',true); }
+    else toast('Verified portable backup created.');
+    refreshBackupState();
+  }).catch(()=>{
+    button.disabled=false;button.textContent='Back up now';
+    toast('Backup failed.',true);refreshBackupState();
+  });
+}
+if($('settings-backup-configure')) $('settings-backup-configure').onclick=openBackupSetupModal;
+if($('settings-backup-now')) $('settings-backup-now').onclick=createBackupNow;
+if($('settings-backup-restore')) $('settings-backup-restore').onclick=openBackupRestoreModal;
+if($('settings-backup-open')) $('settings-backup-open').onclick=()=>{
+  if(api()&&pywebview.api.backup_open_folder) pywebview.api.backup_open_folder()
+    .then(result=>{if(!result||result.ok===false) toast((result&&result.message)||'Could not open the backup folder.',true);})
+    .catch(()=>toast('Could not open the backup folder.',true));
+};
+if($('backup-primary-choose')) $('backup-primary-choose').onclick=()=>chooseBackupFolder('primary');
+if($('backup-secondary-choose')) $('backup-secondary-choose').onclick=()=>chooseBackupFolder('secondary');
+if($('backup-secondary-clear')) $('backup-secondary-clear').onclick=()=>{
+  $('backup-secondary-label').textContent='Secondary folder not configured';
+  if(api()&&pywebview.api.backup_clear_secondary) pywebview.api.backup_clear_secondary().catch(()=>{});
+};
+if($('backup-setup-cancel')) $('backup-setup-cancel').onclick=closeBackupSetupModal;
+if($('backup-setup-save')) $('backup-setup-save').onclick=saveBackupSetup;
+if($('backup-restore-choose')) $('backup-restore-choose').onclick=chooseRestoreBackup;
+if($('backup-restore-prepare')) $('backup-restore-prepare').onclick=prepareBackupRestore;
+if($('backup-restore-confirm')) $('backup-restore-confirm').onclick=confirmBackupRestore;
+if($('backup-restore-cancel')) $('backup-restore-cancel').onclick=closeBackupRestoreModal;
+[$('backup-setup-modal'),$('backup-restore-modal')].forEach(modal=>{
+  if(modal) modal.addEventListener('click',event=>{
+    if(event.target===modal){
+      if(modal.id==='backup-setup-modal') closeBackupSetupModal();
+      else closeBackupRestoreModal();
+    }
+  });
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape') return;
+  if($('backup-setup-modal').classList.contains('open')){event.preventDefault();closeBackupSetupModal();}
+  else if($('backup-restore-modal').classList.contains('open')){event.preventDefault();closeBackupRestoreModal();}
+  else if($('backup-nudge-modal').classList.contains('open')){event.preventDefault();closeBackupNudge('later');}
+});
+function closeBackupNudge(action){
+  $('backup-nudge-modal').classList.remove('open');
+  if(!api()) return;
+  if(action==='never'&&pywebview.api.backup_prompt_dismiss) pywebview.api.backup_prompt_dismiss().catch(()=>{});
+  else if(action==='later'&&pywebview.api.backup_prompt_snooze) pywebview.api.backup_prompt_snooze().catch(()=>{});
+}
+function maybeOfferBackupNudge(){
+  if(!api()||!pywebview.api.backup_prompt_state) return;
+  if(document.querySelector('.app-modal-backdrop.open')) return;
+  pywebview.api.backup_prompt_state().then(state=>{
+    if(!state||state.ok===false||!state.show) return;
+    if(document.querySelector('.app-modal-backdrop.open')) return;
+    const counts=state.counts||{};
+    const parts=[];
+    if(Number(counts.memories)>0) parts.push(counts.memories+(Number(counts.memories)===1?' memory':' memories'));
+    if(Number(counts.chat_messages)>0) parts.push(counts.chat_messages+' chat message'+(Number(counts.chat_messages)===1?'':'s'));
+    if(Number(counts.investigation_items)>0) parts.push(counts.investigation_items+' investigation note'+(Number(counts.investigation_items)===1?'':'s'));
+    if(parts.length){
+      $('backup-nudge-summary').textContent='Faerie Fire now holds '+parts.join(', ')
+        +' — but they live only on this PC. A portable encrypted backup lets you recover everything if this machine is lost.';
+    }
+    refreshBackupState();
+    $('backup-nudge-modal').classList.add('open');
+    setTimeout(()=>$('backup-nudge-setup').focus(),30);
+  }).catch(()=>{});
+}
+if($('backup-nudge-setup')) $('backup-nudge-setup').onclick=()=>{
+  $('backup-nudge-modal').classList.remove('open');
+  openBackupSetupModal();
+};
+if($('backup-nudge-later')) $('backup-nudge-later').onclick=()=>closeBackupNudge('later');
+if($('backup-nudge-never')) $('backup-nudge-never').onclick=()=>closeBackupNudge('never');
+if($('backup-nudge-modal')) $('backup-nudge-modal').addEventListener('click',event=>{
+  if(event.target===$('backup-nudge-modal')) closeBackupNudge('later');
+});
 function renderBrowserPermissions(permissions){
   const box=$('settings-browser-domains'); if(!box) return;
   const rows=Array.isArray(permissions)?permissions:[];
@@ -5567,6 +5999,17 @@ function selfTasks(node,out){
   return out;
 }
 
+function selfLocalDateKey(value){
+  const date=value instanceof Date?value:new Date(value);
+  if(Number.isNaN(date.getTime())) return '';
+  return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),
+    String(date.getDate()).padStart(2,'0')].join('-');
+}
+function selfCompletedToday(task,now){
+  return !!(task&&task.status==='completed'&&task.completed_at&&
+    selfLocalDateKey(task.completed_at)===selfLocalDateKey(now||new Date()));
+}
+
 function selfPriorityRank(task){
   const p={high:3,normal:2,low:1}[task.priority||'normal']||2;
   const due=task.due_date?new Date(task.due_date+'T00:00:00').getTime():Number.MAX_SAFE_INTEGER;
@@ -5747,7 +6190,7 @@ function selfProfileWidgetsHtml(data){
   const goals=data.goals||{}, tree=goals.tree||null;
   const tasks=selfSortedTasks(selfTasks(tree));
   const activeTasks=tasks.filter(t=>t.status!=='completed');
-  const doneTasks=tasks.filter(t=>t.status==='completed');
+  const doneTasks=tasks.filter(t=>selfCompletedToday(t));
   const quests=activeTasks.concat(doneTasks).slice(0,10);
   const proposals=(data.goalAi&&data.goalAi.overview&&data.goalAi.overview.open_proposals)||0;
   const blocked=(data.goalAi&&data.goalAi.overview&&data.goalAi.overview.blocked)||0;
@@ -5928,6 +6371,15 @@ function loadSelf(opts){
     }
   });
 }
+
+let selfDashboardDate=selfLocalDateKey(new Date());
+setInterval(()=>{
+  const current=selfLocalDateKey(new Date());
+  if(current&&current!==selfDashboardDate){
+    selfDashboardDate=current;
+    if($('self-profile-widgets')) loadSelf();
+  }
+},60000);
 
 if($('header-refresh-self')) $('header-refresh-self').onclick=()=>{
   const btn=$('header-refresh-self');
@@ -6669,9 +7121,10 @@ function goalIcon(type){ return {umbrella:'✦',overgoal:'◆',subgoal:'◇',tas
 function goalSemanticRoleLabel(role){
   role=String(role||'').toLowerCase();
   if(!role) return APP_LANG==='ko'?'미지정':'Unlabeled';
+  // The stored "area" role is shown to the user as "Branch".
   return APP_LANG==='ko'
-    ?({area:'영역',project:'프로젝트',stage:'단계'}[role]||role)
-    :({area:'Area',project:'Project',stage:'Stage'}[role]||role);
+    ?({area:'가지',project:'프로젝트',stage:'단계'}[role]||role)
+    :({area:'Branch',project:'Project',stage:'Stage'}[role]||role);
 }
 function goalTypeLabel(type,node){
   if(type==='subgoal'&&node&&node.semantic_role){
@@ -6683,7 +7136,6 @@ function goalTypeLabel(type,node){
 function goalPlanningRoleLabel(node){
   const role=String(node&&node.planning_role||'').toLowerCase();
   if(role==='now') return APP_LANG==='ko'?'지금':'NOW';
-  if(role==='provisional'||role==='tentative_next') return APP_LANG==='ko'?'잠정 다음':'TENTATIVE NEXT';
   return '';
 }
 
@@ -6702,11 +7154,10 @@ function goalProjectFocus(node){
 }
 
 function goalProjectSignalLabel(node){
-  if(!goalIsProject(node)) return '';
-  const focus=goalProjectFocus(node), labels=[];
-  if(focus.currently_working) labels.push(APP_LANG==='ko'?'작업 중':'CURRENT');
-  if(focus.highest_priority) labels.push(APP_LANG==='ko'?'최우선':'HIGHEST PRIORITY');
-  return labels.join(' · ');
+  // The single order-based focus Project is labeled FOCUS; everything else is
+  // conveyed by its order number badge instead.
+  if(goalIsProject(node)&&goalProjectFocus(node).focus) return APP_LANG==='ko'?'집중':'FOCUS';
+  return '';
 }
 
 function fitConstellationBadges(box){
@@ -6727,29 +7178,29 @@ function fitConstellationBadges(box){
 }
 
 function goalProjectSignalChips(node){
-  if(!goalIsProject(node)) return '';
-  const focus=goalProjectFocus(node);
-  return (focus.currently_working?'<span class="goal-chip goal-planning-role now">'+
-    (APP_LANG==='ko'?'작업 중':'CURRENTLY WORKING')+'</span>':'')+
-    (focus.highest_priority?'<span class="goal-chip goal-planning-role provisional">'+
-    (APP_LANG==='ko'?'최우선 프로젝트':'HIGHEST PRIORITY')+'</span>':'');
+  return (goalIsProject(node)&&goalProjectFocus(node).focus?'<span class="goal-chip goal-planning-role now">'+
+    (APP_LANG==='ko'?'집중 프로젝트':'FOCUS PROJECT')+'</span>':'');
 }
 
-function goalProjectSignalActionsHtml(node){
-  if(!goalIsProject(node)||node.status!=='active') return '';
-  const focus=goalProjectFocus(node);
-  return '<div class="goal-project-signal-checks" role="group" aria-label="'+
-    esc(APP_LANG==='ko'?'프로젝트 주의 신호':'Project attention')+'">'+
-    '<label><input type="checkbox" data-project-signal="currently_working" '+
-    (focus.currently_working?'checked ':'')+'><span>'+
-    (APP_LANG==='ko'?'현재 작업 중':'Currently working')+'</span></label>'+
-    '<label><input type="checkbox" data-project-signal="highest_priority" '+
-    (focus.highest_priority?'checked ':'')+'><span>'+
-    (APP_LANG==='ko'?'최우선':'Highest priority')+'</span></label></div>';
+// Order-based model retires the priority/current signal checkboxes; priority is
+// set by the per-node "Priority order" dropdown (goalPriorityOrderFieldHtml).
+function goalProjectSignalActionsHtml(node){ return ''; }
+
+function goalPriorityOrderFieldHtml(node){
+  const parent=goalFindParent(goalState&&goalState.tree,node&&node.id);
+  const sibs=parent?(parent.children||[]).filter(child=>child.status!=='archived'):[];
+  const count=Math.max(sibs.length,1);
+  const current=Math.min(Math.max(Number(node.position)||0,0),count-1);
+  let opts='';
+  for(let i=0;i<count;i++) opts+='<option value="'+i+'"'+(i===current?' selected':'')+'>'+(i+1)+'</option>';
+  return '<label class="goal-field" title="'+
+    esc(APP_LANG==='ko'?'같은 상위 항목 안에서의 우선순위 순서 (1이 집중 대상).':'Priority order among siblings (1 is the focus).')+'">'+
+    (APP_LANG==='ko'?'우선순위 순서':'Priority order')+
+    '<select id="goal-position">'+opts+'</select></label>';
 }
 
 function bindGoalProjectSignalControls(node,container){
-  if(!container||!goalIsProject(node)) return;
+  if(!container||!(goalIsProject(node)||(node&&node.semantic_role==='area'))) return;
   container.querySelectorAll('[data-project-signal]').forEach(control=>{
     control.onchange=()=>{
       const kind=control.dataset.projectSignal;
@@ -6778,17 +7229,41 @@ function goalEditNodeActionsHtml(node,restructureButtonId,panelId){
 }
 
 function goalDerivePlanningRoles(node){
+  // Order-based focus: from the Soul, follow the lowest-position active child at
+  // each level until a Project is reached; that Project is the single FOCUS, and
+  // its one open Leaf is the single NOW. Priority is sibling order — there is no
+  // separate current/priority signal. Every other Branch/Project just shows its
+  // order number (see goalProjectSequenceMap).
   if(!node) return node;
-  const children=node.children||[];
-  const leaves=children.filter(child=>child.type==='task'&&['active','paused'].includes(child.status))
+  const ordered=n=>(n.children||[]).filter(child=>child.status!=='archived')
     .sort((a,b)=>(Number(a.position)||0)-(Number(b.position)||0)||(Number(a.id)||0)-(Number(b.id)||0));
-  children.filter(child=>child.type==='task').forEach(child=>{ child.planning_role=null; });
-  const focus=goalProjectFocus(node);
-  if(goalIsProject(node)&&(focus.highest_priority||focus.currently_working)){
+  const all=[];
+  const walk=n=>{ all.push(n); ordered(n).forEach(walk); };
+  walk(node);
+  all.forEach(item=>{
+    if(item.type==='task') item.planning_role=null;
+    if(item.project_focus){ item.project_focus.auto_current=false; item.project_focus.focus=false; }
+  });
+  let focusProject=null;
+  (function descend(n){
+    if(focusProject) return;
+    for(const child of ordered(n)){
+      if(!['active','paused'].includes(child.status)) continue;
+      if(goalIsProject(child)){ focusProject=child; return; }
+      if(child.type!=='task'){ descend(child); if(focusProject) return; }
+    }
+  })(node);
+  if(focusProject){
+    focusProject.project_focus=focusProject.project_focus||{};
+    focusProject.project_focus.focus=true;
+    const leaves=[];
+    const collect=parent=>ordered(parent).forEach(child=>{
+      if(child.type==='task'&&['active','paused'].includes(child.status)) leaves.push(child);
+      else if(!goalIsProject(child)) collect(child);
+    });
+    collect(focusProject);
     if(leaves[0]) leaves[0].planning_role='now';
-    if(leaves[1]) leaves[1].planning_role='provisional';
   }
-  children.forEach(goalDerivePlanningRoles);
   return node;
 }
 
@@ -9413,9 +9888,9 @@ function placeGoalLeavesNearParents(nodes,width,height){
 }
 
 function goalProjectSequenceMap(tree){
-  // Number sibling Projects in their sibling order so the map shows a clear
-  // order of attack (①②③) instead of several equal-looking Projects. Only
-  // groups with more than one Project get numbered — a lone Project needs none.
+  // Label sibling Projects in their structural order so the map shows a clear
+  // order of attack instead of several equal-looking Projects. Only
+  // groups with more than one Project get labels — a lone Project needs none.
   // The order follows the Project's position among its siblings, which the user
   // can already change via the node panel's "Position among siblings" control.
   const map={};
@@ -9423,7 +9898,9 @@ function goalProjectSequenceMap(tree){
     if(!node) return;
     const children=goalVisibleChildren(node);
     const projects=children.filter(goalIsProject);
-    if(projects.length>1) projects.forEach((project,index)=>{ map[project.id]=index+1; });
+    if(projects.length>1) projects.forEach((project,index)=>{
+      map[project.id]=String(index+1);
+    });
     children.forEach(walk);
   };
   walk(tree);
@@ -9490,9 +9967,10 @@ function renderGoalConstellation(summaryId,treeId,opts){
     const semanticClass=node.type==='subgoal'&&node.semantic_role
       ?' semantic-'+String(node.semantic_role).toLowerCase():'';
     const projectFocus=goalProjectFocus(node);
-    const signalClass=(projectFocus.currently_working?' project-current':'')+
-      (projectFocus.highest_priority?' project-highest':'');
-    const seqNumber=projectSeq[node.id];
+    const signalClass=(projectFocus.focus?' project-current':'');
+    // Order-number badge on every non-focus Project; the focus Project shows
+    // FOCUS (via projectSignal) instead of a number.
+    const seqNumber=(!projectFocus.focus)?projectSeq[node.id]:null;
     return '<g class="constellation-node '+esc(node.type)+semanticClass+signalClass+status+selectedClass+care+(greatest?' greatest':'')+
       '" tabindex="0" role="button" data-map-goal-id="'+node.id+'" transform="translate('+
       item.x.toFixed(1)+' '+item.y.toFixed(1)+')">'+
@@ -9505,7 +9983,7 @@ function renderGoalConstellation(summaryId,treeId,opts){
       '<circle class="core" r="'+radius+'"></circle>'+
       '<circle class="planet-shine" cx="'+(-radius*.32).toFixed(1)+'" cy="'+(-radius*.34).toFixed(1)+
       '" r="'+Math.max(1.2,radius*.18).toFixed(1)+'"></circle>'+
-      (seqNumber?'<g class="project-seq-badge" transform="translate(0 '+(-(radius+9)).toFixed(1)+')"><circle r="5.6"></circle><text text-anchor="middle" dominant-baseline="central">'+seqNumber+'</text></g>':'')+
+      (seqNumber?'<g class="project-seq-badge" transform="translate(0 '+(-(radius+9)).toFixed(1)+')"><rect x="-17" y="-5.8" width="34" height="11.6" rx="5.8"></rect><text text-anchor="middle" dominant-baseline="central">'+seqNumber+'</text></g>':'')+
       '<text text-anchor="middle" y="'+labelDy+'">'+esc(label)+'</text>'+
       (planningLabel?'<g class="planning-role-badge '+esc(String(node.planning_role||''))+'" transform="translate(0 '+(labelDy+13)+')"><rect x="'+(-planningWidth/2)+'" y="-6" width="'+planningWidth+'" height="12" rx="6"></rect><text text-anchor="middle" dominant-baseline="central">'+esc(planningLabel)+'</text></g>':'')+
       (projectSignal?'<g class="project-signal-badge" transform="translate(0 '+(labelDy+13)+')"><rect x="'+(-projectSignalWidth/2)+'" y="-6" width="'+projectSignalWidth+'" height="12" rx="6"></rect><text text-anchor="middle" dominant-baseline="central">'+esc(projectSignal)+'</text></g>':'')+'</g>';
@@ -9825,8 +10303,9 @@ function renderGoalRestructureManual(node,panel,recommendation,autoPreview){
     (['area','project','stage'].includes(defaultRole)?defaultRole:'project');
   const restructureKinds=['root','area','project','stage','leaf'];
   const kindLabel=kind=>APP_LANG==='ko'
-    ?({root:'루트',area:'영역',project:'프로젝트',stage:'단계',leaf:'리프'}[kind]||kind)
-    :kind.charAt(0).toUpperCase()+kind.slice(1);
+    ?({root:'루트',area:'가지',project:'프로젝트',stage:'단계',leaf:'리프'}[kind]||kind)
+    :({root:'Root',area:'Branch',project:'Project',stage:'Stage',leaf:'Leaf'}[kind]
+      ||kind.charAt(0).toUpperCase()+kind.slice(1));
   const selectedStructure=()=>{
     const kind=typeSelect.value;
     return {newType:kind==='root'?'overgoal':kind==='leaf'?'task':'subgoal',
@@ -9941,11 +10420,8 @@ function renderGoalDetail(){
         '<input id="goal-priority" type="hidden" value="'+esc(node.priority||'normal')+'">')+'</div>'+
     (node.type!=='umbrella'?'<label class="goal-field">Due date<input id="goal-due" type="date" value="'+esc(node.due_date||'')+'"></label>':
       '<input id="goal-due" type="hidden" value="'+esc(node.due_date||'')+'">')+
-    (goalIsProject(node)?'<div class="goal-recap-card"><b>'+(APP_LANG==='ko'?'프로젝트 주의 신호':'Project attention')+'</b><p class="hint">'+
-      (APP_LANG==='ko'?'NOW와 잠정 다음 표시는 현재 작업 중이거나 최우선인 프로젝트에만 나타납니다. 각 신호는 전체에서 한 프로젝트만 가질 수 있습니다.':'NOW and TENTATIVE NEXT appear only for a Project marked Currently working or Highest priority. Each signal belongs to one Project globally.')+'</p>'+goalProjectSignalActionsHtml(node)+'</div>':'')+
     (node.type!=='umbrella'?'<div class="goal-grid"><label class="goal-field">Parent<select id="goal-parent">'+
-      parentOptions+'</select></label><label class="goal-field" title="Where this node appears among the other children of the same parent.">Position among siblings<input id="goal-position" type="number" min="1" value="'+
-      ((node.position||0)+1)+'"></label></div><div class="actions"><button id="goal-move">Move / reorder</button></div>':'')+
+      parentOptions+'</select></label>'+goalPriorityOrderFieldHtml(node)+'</div><div class="actions"><button id="goal-move">'+(APP_LANG==='ko'?'이동 / 순서 적용':'Move / apply order')+'</button></div>':'')+
     '<div class="actions"><button class="accent" id="goal-save">Save changes</button>'+
       '<button id="goal-edit-open">Edit Details</button>'+
       '<button id="goal-detail-relevance">Review relevance</button>'+
@@ -9999,7 +10475,7 @@ function renderGoalDetail(){
     renderGoalRestructurePanel(node,$('goal-restructure-panel'));
   if($('goal-move')) $('goal-move').onclick=()=>
     pywebview.api.goal_move(node.id,parseInt($('goal-parent').value,10),
-      Math.max(0,(parseInt($('goal-position').value,10)||1)-1)).then(handleGoalMutation);
+      Math.max(0,parseInt($('goal-position').value,10)||0)).then(handleGoalMutation);
   $('goal-export-notion').onclick=()=>{
     if(!confirm('Export this goal subtree to Notion now? Notes and evidence labels stay local.')) return;
     pywebview.api.goal_export_notion(node.id).then(r=>{
@@ -11136,9 +11612,9 @@ function suggestionOverlapHtml(item,data){
 function suggestionNoOverlapHtml(){
   return '<div><b>'+(APP_LANG==='ko'?'기존 목표와 뚜렷한 중복을 찾지 못했어요':'No clear existing goal match was found')+'</b>'+
     '<div class="hint">'+(APP_LANG==='ko'
-      ?'아직 아무것도 만들지 않았어요. 계획을 만들기 전에 이 작업이 삶의 어느 영역에 속하는지 먼저 확인할게요.'
-      :'Nothing has been created. Before planning, Faerie will confirm which part of your life should own this work.')+'</div>'+
-    '<div class="actions"><button type="button" class="accent cur-create-new-plan">'+(APP_LANG==='ko'?'배치 선택':'Choose placement')+'</button>'+
+      ?'아직 아무것도 만들지 않았어요. 먼저 대화에서 제안을 다듬고 계획을 만든 뒤, 어디에 둘지 검토할게요.'
+      :'Nothing has been created. First refine the proposal and make the plan in chat; placement comes after the plan is clear.')+'</div>'+
+    '<div class="actions"><button type="button" class="accent cur-create-new-plan">'+(APP_LANG==='ko'?'대화에서 다듬고 계획하기':'Clarify & plan in chat')+'</button>'+
     '<button type="button" class="skip cur-overlap-cancel">'+(APP_LANG==='ko'?'취소':'Cancel')+'</button></div></div>';
 }
 
@@ -11200,6 +11676,33 @@ function renderSuggestionPlacement(item,data,box){
   };
 }
 
+function startSuggestionPlannerBeforePlacement(item,box,button){
+  if(!api()||!pywebview.api.goal_plan_placement) return;
+  if(button){button.disabled=true;button.textContent=APP_LANG==='ko'?'계획 대화 여는 중…':'Opening planning chat…';}
+  pywebview.api.goal_plan_placement(item.id).then(data=>{
+    if(!data||data.ok===false) throw new Error((data&&data.message)||'Could not prepare planning context.');
+    const recommended=(data.candidates||[]).find(candidate=>candidate.id===data.recommended_parent_id);
+    let targetParentId,placement;
+    if(recommended){
+      targetParentId=recommended.id;
+      placement={mode:'existing',parent_id:recommended.id,parent_path:recommended.path,
+        rationale:data.rationale,user_confirmed:false,review_required:true};
+    }else if(data.new_root&&data.new_root.eligible){
+      targetParentId=data.soul.id;
+      placement={mode:'new_root',root_eligible:true,root_title:data.new_root.title,
+        root_description:data.new_root.description,rationale:data.new_root.rationale,
+        user_confirmed:false,review_required:true};
+    }else{
+      targetParentId=data.soul.id;
+      placement={mode:'pending',rationale:data.rationale,
+        user_confirmed:false,review_required:true};
+    }
+    if(box){box.innerHTML='<b>'+(APP_LANG==='ko'?'계획 대화를 열었어요.':'Planning chat opened.')+'</b><div class="hint">'+
+      (APP_LANG==='ko'?'계획을 요약한 뒤 최종 위치를 검토합니다.':'After you summarize the plan, you will review its final placement before anything is created.')+'</div>';}
+    openGoalPlanner(item.id,button,targetParentId,placement);
+  }).catch(error=>{if(button){button.disabled=false;button.textContent=APP_LANG==='ko'?'대화에서 다듬고 계획하기':'Clarify & plan in chat';}toast('Could not open planning chat: '+error,true);});
+}
+
 function reviewSuggestionPlacement(item,box,button){
   if(!api()||!pywebview.api.goal_plan_placement) return;
   if(button){button.disabled=true;button.textContent=APP_LANG==='ko'?'배치 분석 중…':'Finding its place…';}
@@ -11259,14 +11762,14 @@ function reviewSuggestionImplementation(item,button,reload){
     if(!data||data.ok===false) throw new Error((data&&data.message)||'Could not compare suggestion.');
     if(!(data.matches||[]).length){
       box.innerHTML=suggestionNoOverlapHtml();
-      box.querySelector('.cur-create-new-plan').onclick=()=>reviewSuggestionPlacement(item,box,box.querySelector('.cur-create-new-plan'));
+      box.querySelector('.cur-create-new-plan').onclick=()=>startSuggestionPlannerBeforePlacement(item,box,box.querySelector('.cur-create-new-plan'));
       box.querySelector('.cur-overlap-cancel').onclick=()=>{ box.hidden=true; box.innerHTML=''; };
       return;
     }
     box.innerHTML=suggestionOverlapHtml(item,data);
     box.querySelectorAll('.cur-adapt-leaf').forEach(adapt=>adapt.onclick=()=>
       renderSuggestionAdaptForm(item,data.matches[parseInt(adapt.dataset.match,10)],box));
-    box.querySelector('.cur-create-separate').onclick=()=>reviewSuggestionPlacement(item,box,box.querySelector('.cur-create-separate'));
+    box.querySelector('.cur-create-separate').onclick=()=>startSuggestionPlannerBeforePlacement(item,box,box.querySelector('.cur-create-separate'));
     box.querySelector('.cur-overlap-cancel').onclick=()=>{ box.hidden=true; box.innerHTML=''; };
   }).catch(error=>{
     if(button){ button.disabled=false; button.textContent=APP_LANG==='ko'?'구현 검토…':'Review implementation…'; }
@@ -12967,6 +13470,9 @@ function boot(tries){
       if(info&&info.needs_onboarding){ openOnboarding(); return; }
       activateView(initialView);
       if(appProfile==='personal' && initialView!=='inferences') loadState();
+      // Once the profile holds enough memories/chats/investigations to hurt
+      // if lost, offer portable backup setup — after the UI has settled.
+      setTimeout(maybeOfferBackupNudge,6000);
     });
   }
   else if(tries>0) setTimeout(()=>boot(tries-1), 250);
@@ -13040,10 +13546,37 @@ window.addEventListener('pywebviewready', ()=>bootOnce(40));
   if(window.pywebview && window.pywebview.api){ bootOnce(1); return; }
   if(attempts>0) setTimeout(()=>pollBridge(attempts-1), 250);
 })(60);
+// An open restructure/intake/root-starter panel lives only in the DOM until
+// the user confirms it — a focus-triggered loadGoals() would re-render the
+// node detail and wipe it, forcing them to start over after an alt-tab. Skip
+// the growth refresh while one of these editors is mid-review.
+function goalDetailHasUnsavedEdits(){
+  // True when a field in the node detail holds text the user hasn't saved yet,
+  // so a focus-triggered re-render won't revert their half-typed edit.
+  const node=(goalState&&goalState.tree&&selectedGoalId!=null)
+    ?goalFind(goalState.tree,selectedGoalId):null;
+  if(!node) return false;
+  const differs=(id,saved)=>{const el=$(id);return el&&String(el.value)!==String(saved==null?'':saved);};
+  return differs('goal-title',node.title)||
+    differs('goal-description',node.description||'')||
+    differs('goal-notes',node.notes||'')||
+    differs('goal-node-status',node.status)||
+    differs('goal-priority',node.priority||'normal')||
+    differs('goal-due',node.due_date||'');
+}
+function goalDetailHasOpenEditor(){
+  const restructure=$('goal-restructure-panel');
+  if(restructure&&!restructure.hidden&&restructure.innerHTML.trim()) return true;
+  if(['.goal-intake-panel','.goal-root-starters-panel'].some(sel=>{
+    const p=document.querySelector(sel);
+    return p&&!p.hidden&&p.innerHTML.trim();
+  })) return true;
+  return goalDetailHasUnsavedEdits();
+}
 window.addEventListener('focus', ()=>{
   if(!api()) return;
   if(appProfile==='personal') loadState();
-  if(goalState) loadGoals();
+  if(goalState && !goalDetailHasOpenEditor()) loadGoals();
   if(currentCuriosityState) loadCuriosity();
 });
 bootOnce(30);

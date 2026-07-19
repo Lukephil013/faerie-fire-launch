@@ -139,7 +139,8 @@ class TestGoalGraph(GoalTestCase):
             branch, "subgoal", root, 0, semantic_role="area",
             rationale="This is an ongoing responsibility.")
 
-        self.assertEqual(preview["proposed"]["type_label"], "Area")
+        # The "area" role is displayed as "Branch"; the stored token is unchanged.
+        self.assertEqual(preview["proposed"]["type_label"], "Branch")
         self.assertEqual(preview["proposed"]["semantic_role"], "area")
         self.assertEqual(applied["goal_id"], branch)
         self.assertEqual(self.goals.semantic_role(branch)["role"], "area")
@@ -148,7 +149,7 @@ class TestGoalGraph(GoalTestCase):
         self.assertEqual((rendered["type"], rendered["semantic_role"]),
                          ("subgoal", "area"))
 
-    def test_nested_stage_requires_explicit_macro_stage_justification(self):
+    def test_nested_stage_is_rejected_even_with_justification(self):
         root = self.goals.create("overgoal", "Work & Contribution")
         project = self.goals.create("subgoal", "Client launch", parent_id=root)
         outer = self.goals.create("subgoal", "Delivery phase", parent_id=project)
@@ -156,22 +157,10 @@ class TestGoalGraph(GoalTestCase):
         self.goals._set_semantic_role(project, "project", rationale="Finite launch project.")
         self.goals._set_semantic_role(outer, "stage", rationale="Delivery is one project phase.")
 
-        with self.assertRaisesRegex(ValueError, "macro-stage/substage"):
+        with self.assertRaisesRegex(ValueError, "directly beneath a Project"):
             self.goals.restructure_preview(
-                inner, "subgoal", outer, semantic_role="stage")
-
-        explanation = (
-            "Delivery is the macro-stage; quality review is its separately owned substage.")
-        preview = self.goals.restructure_preview(
-            inner, "subgoal", outer, semantic_role="stage",
-            nested_stage_justification=explanation)
-        applied = self.goals.restructure(
-            inner, "subgoal", outer, semantic_role="stage", rationale=explanation)
-
-        self.assertEqual(preview["proposed"]["semantic_role"], "stage")
-        self.assertEqual(applied["goal_id"], inner)
-        self.assertEqual(self.goals.semantic_role(inner)["role"], "stage")
-        self.assertIn("macro-stage", self.goals.semantic_role(inner)["rationale"])
+                inner, "subgoal", outer, semantic_role="stage",
+                nested_stage_justification="Even explicit nested-stage prose cannot bypass this.")
 
     def test_ai_restructure_recommends_temporary_upwork_root_under_career(self):
         life = self.goals.create("overgoal", "Luke's Life")
@@ -223,6 +212,22 @@ class TestGoalGraph(GoalTestCase):
         self.assertEqual(roles[korean], "area")
         self.assertEqual(roles[league], "area")
         self.assertEqual(roles[ambient], "project")
+
+    def test_finite_action_with_phases_is_project_not_area(self):
+        health = self.goals.create("overgoal", "Health & Energy")
+        project = self.goals.create(
+            "subgoal", "Map dread-source tasks and clients", parent_id=health)
+        stage = self.goals.create(
+            "subgoal", "Track task types for two weeks", parent_id=project)
+
+        health_node = next(node for node in self.goals.tree()["children"]
+                           if node["id"] == health)
+        project_node = next(node for node in health_node["children"]
+                            if node["id"] == project)
+        stage_node = next(node for node in project_node["children"]
+                          if node["id"] == stage)
+        self.assertEqual(project_node["semantic_role"], "project")
+        self.assertEqual(stage_node["semantic_role"], "stage")
 
     def test_optional_starter_roots_are_explicit_bilingual_and_idempotent(self):
         catalog = self.goals.starter_root_catalog("ko")
@@ -339,27 +344,22 @@ class TestGoalGraph(GoalTestCase):
         self.assertEqual((self.goals.get(project)["parent_id"],
                           self.goals.get(stage)["parent_id"]), before)
 
-    def test_whole_path_restructure_guards_new_nested_stage_roles(self):
+    def test_whole_path_restructure_rejects_terminal_stage_and_project_nesting(self):
         root = self.goals.create("overgoal", "Career")
-        project = self.goals.create("subgoal", "Client launch", parent_id=root)
-        outer = self.goals.create("subgoal", "Delivery phase", parent_id=project)
-        inner = self.goals.create("subgoal", "Quality review", parent_id=outer)
+        area = self.goals.create("subgoal", "Client work", parent_id=root)
+        project = self.goals.create("subgoal", "Client launch", parent_id=area)
+        terminal = self.goals.create("subgoal", "Quality review", parent_id=project)
+        self.goals._set_semantic_role(area, "area", rationale="Ongoing client work")
         self.goals._set_semantic_role(project, "project", rationale="Finite project")
-        self.goals._set_semantic_role(outer, "stage", rationale="Project phase")
-        self.goals._set_semantic_role(inner, "project", rationale="Prior classification")
 
-        with self.assertRaisesRegex(ValueError, "macro-stage/substage"):
-            self.goals.restructure_batch_preview([], [
-                {"goal_id": inner, "role": "stage", "reason": "Make this another stage."},
-            ])
-
-        explanation = (
-            "Delivery is the macro-stage; quality review is a bounded substage with its own leaves.")
-        preview = self.goals.restructure_batch_preview([], [
-            {"goal_id": inner, "role": "stage", "reason": "Clarify the phase boundary.",
-             "nested_stage_justification": explanation},
-        ])
-        self.assertEqual(preview["role_changes"][0]["proposed_role"], "stage")
+        with self.assertRaisesRegex(ValueError, "at least one concrete Leaf"):
+            self.goals.restructure_batch_preview([], [{
+                "goal_id": terminal, "role": "stage", "reason": "Phase",
+            }])
+        with self.assertRaisesRegex(ValueError, "beneath a Root or Area"):
+            self.goals.restructure_batch_preview([], [{
+                "goal_id": terminal, "role": "project", "reason": "Nested project",
+            }])
 
     def test_completion_excludes_paused_and_archived_tasks(self):
         over = self.goals.create("overgoal", "Korean")
@@ -632,6 +632,30 @@ class TestGoalPlanner(GoalTestCase):
         self.assertEqual(item_data["status"], "implemented")
         self.assertEqual(item_data["implementation_goal_id"], result["goal_id"])
 
+    def test_ready_plan_requires_and_persists_final_placement_confirmation(self):
+        item = self._suggestion()
+        placement = {**self._new_root_placement(), "user_confirmed": False,
+                     "review_required": True}
+        session = start_planning(
+            self.goals, StubGoalPlanner(), item, self.goals.root_id, placement)
+        session = summarize_plan(self.goals, StubGoalPlanner(), session["id"])
+        with self.assertRaisesRegex(ValueError, "review and confirm"):
+            self.goals.commit_plan(session["id"])
+
+        confirmed = self.goals.confirm_plan_placement(session["id"], {
+            **self._new_root_placement(), "target_parent_id": self.goals.root_id,
+        })
+        self.assertTrue(confirmed["draft"]["_placement"]["user_confirmed"])
+        self.assertEqual(confirmed["target_parent_id"], self.goals.root_id)
+        self.assertTrue(self.goals.commit_plan(session["id"])["goal_id"])
+
+    def test_stub_planner_tells_user_how_to_finish_after_clarification(self):
+        item = self._suggestion(); planner = StubGoalPlanner()
+        session = self._start_new_root(item)
+        session = continue_planning(self.goals, planner, session["id"], "Five examples")
+        session = continue_planning(self.goals, planner, session["id"], "Write the first one")
+        self.assertIn("press Summarize & review", session["messages"][-1]["content"])
+
     def test_abandon_leaves_suggestion_open(self):
         item = self._suggestion()
         session = self._start_new_root(item)
@@ -867,8 +891,36 @@ class TestGoalPlanner(GoalTestCase):
         self.assertEqual([r["node_type"] for r in rows], ["subgoal"])
         children = self.goals.conn.execute(
             "SELECT node_type FROM goal_node WHERE parent_id=?", (rows[0]["id"],)).fetchall()
+        # One-Leaf model: the group had two Leaves (Brainstorm, Unknown typed);
+        # only the first is committed, so one subgoal + one task remain.
         self.assertEqual(sorted(r["node_type"] for r in children),
-                         ["subgoal", "task", "task"])
+                         ["subgoal", "task"])
+
+    def test_commit_persists_planner_area_project_and_stage_roles(self):
+        item = self._suggestion()
+        root = self.goals.create("overgoal", "Health & Energy")
+        session = start_planning(self.goals, StubGoalPlanner(), item, root, {
+            "mode": "existing", "parent_id": root,
+            "parent_path": "Actualized Self › Health & Energy", "user_confirmed": True,
+        })
+        draft = {"nodes": [{
+            "type": "subgoal", "semantic_role": "area", "title": "Work/Life Mental Health Effects",
+            "children": [{"type": "subgoal", "semantic_role": "project",
+                "title": "Map dread sources", "children": [{
+                    "type": "subgoal", "semantic_role": "stage", "title": "Observe patterns",
+                    "children": [{"type": "task", "semantic_role": None,
+                                  "title": "Log one dread event", "children": []}],
+                }],
+            }],
+        }]}
+        self.goals.set_plan_draft(session["id"], draft, summary="plan", ready=True)
+        created = self.goals.commit_plan(session["id"])["goal_id"]
+        root_node = next(node for node in self.goals.tree()["children"]
+                         if node["id"] == root)
+        area = next(node for node in root_node["children"] if node["id"] == created)
+        project = area["children"][0]; stage = project["children"][0]
+        self.assertEqual((area["semantic_role"], project["semantic_role"],
+                          stage["semantic_role"]), ("area", "project", "stage"))
 
 
 class TestExperimentOutcomes(GoalTestCase):
@@ -1063,37 +1115,80 @@ class TestGoalBridge(unittest.TestCase):
         self.assertIsNone(next(leaf for leaf in unrelated_node["children"]
                                if leaf["id"] == unrelated_leaf)["planning_role"])
 
-    def test_project_attention_signals_are_project_only_and_singleton(self):
+    def test_goal_state_follows_priority_area_through_stage_to_recursive_leaves(self):
+        from livingpc.goals import GoalStore
+
+        soul = self.api.goal_state()["tree"]["id"]
+        root = self.api.goal_create("overgoal", "Health", soul)["goal_id"]
+        store = GoalStore(self.api.cfg.memory_db_path)
+        area = store.create("subgoal", "Regulation", parent_id=root)
+        project = store.create("subgoal", "Map triggers", parent_id=area)
+        stage = store.create("subgoal", "Capture phase", parent_id=project)
+        first = store.create("task", "Log first event", parent_id=stage)
+        second = store.create("task", "Log second event", parent_id=stage)
+        store._set_semantic_role(area, "area", rationale="Ongoing health scope")
+        store._set_semantic_role(project, "project", rationale="Finite map")
+        store._set_semantic_role(stage, "stage", rationale="Groups capture Leaves")
+        store.set_project_signal(area, "highest_priority")
+        store.close()
+
+        tree = self.api.goal_state()["tree"]
+        def find(node, goal_id):
+            if node["id"] == goal_id:
+                return node
+            return next((found for child in node.get("children", [])
+                         if (found := find(child, goal_id))), None)
+        self.assertTrue(find(tree, project)["project_focus"]["auto_current"])
+        self.assertEqual(find(tree, first)["planning_role"], "now")
+        self.assertEqual(find(tree, second)["planning_role"], "provisional")
+
+    def test_semantic_role_changes_are_audited_with_approval_source(self):
+        root = self.api.goal_create(
+            "overgoal", "Work", self.api.goal_state()["tree"]["id"])["goal_id"]
+        from livingpc.goals import GoalStore
+        store = GoalStore(self.api.cfg.memory_db_path)
+        branch = store.create("subgoal", "Client work", parent_id=root)
+        store._set_semantic_role(branch, "project", rationale="Finite", source="ai")
+        store._set_semantic_role(
+            branch, "area", rationale="Ongoing", source="approved_restructure",
+            proposal_id=77)
+        rows = store.conn.execute(
+            "SELECT old_role,new_role,source,proposal_id FROM goal_semantic_role_history "
+            "WHERE goal_id=? ORDER BY id", (branch,)).fetchall()
+        self.assertEqual(
+            [tuple(row) for row in rows],
+            [(None, "project", "ai", None),
+             ("project", "area", "approved_restructure", 77)])
+        store.close()
+
+    def test_attention_signals_form_area_to_project_hierarchy(self):
         from livingpc.goals import GoalStore
 
         soul = self.api.goal_state()["tree"]["id"]
         root = self.api.goal_create("overgoal", "Work", soul)["goal_id"]
         store = GoalStore(self.api.cfg.memory_db_path)
         area = store.create("subgoal", "Tools", parent_id=root)
+        other_area = store.create("subgoal", "Other", parent_id=root)
         store._set_semantic_role(area, "area", rationale="Owns ongoing tools.")
+        store._set_semantic_role(other_area, "area", rationale="Other work.")
         first = store.create("subgoal", "First project", parent_id=area)
         second = store.create("subgoal", "Second project", parent_id=area)
-        store._set_semantic_role(first, "project", rationale="Finite first result.")
-        store._set_semantic_role(second, "project", rationale="Finite second result.")
+        outside = store.create("subgoal", "Outside project", parent_id=other_area)
+        for project in (first, second, outside):
+            store._set_semantic_role(project, "project", rationale="Finite result.")
 
-        with self.assertRaisesRegex(ValueError, "only an active Project"):
-            store.set_project_signal(area, "highest_priority")
-        self.assertEqual(
-            store.set_project_signal(first, "highest_priority")["highest_priority"],
-            first)
-        signals = store.set_project_signal(second, "highest_priority")
-        self.assertEqual(signals["highest_priority"], second)
-        self.assertEqual(store.project_focus(first)["highest_priority"], False)
-        self.assertEqual(store.project_focus(second)["highest_priority"], True)
-        store.set_project_signal(first, "currently_working")
-        self.assertEqual(store.project_signals(), {
-            "highest_priority": second,
-            "currently_working": first,
-        })
-        store.delete_subtree(second)
-        self.assertEqual(store.project_signals()["highest_priority"], None)
-        store._set_semantic_role(first, "stage", rationale="Now a phase.")
-        self.assertEqual(store.project_signals()["currently_working"], None)
+        with self.assertRaisesRegex(ValueError, "active Area"):
+            store.set_project_signal(first, "highest_priority")
+        self.assertEqual(store.set_project_signal(area, "highest_priority")["highest_priority"], area)
+        self.assertEqual(store.effective_current_project_id(), first)
+        self.assertTrue(store.project_focus(first)["auto_current"])
+        with self.assertRaisesRegex(ValueError, "inside the Highest priority Area"):
+            store.set_project_signal(outside, "currently_working")
+        store.set_project_signal(second, "currently_working")
+        self.assertEqual(store.effective_current_project_id(), second)
+        store.set_project_signal(other_area, "highest_priority")
+        self.assertIsNone(store.project_signals()["currently_working"])
+        self.assertEqual(store.effective_current_project_id(), outside)
         store.close()
 
     def test_archive_and_restore_bridges_keep_subtree_reversible(self):
@@ -1307,7 +1402,7 @@ class TestAdaptiveLeafHorizon(GoalTestCase):
         now = self.goals.create("task", "Current work", parent_id=project)
         elsewhere = self.goals.create("task", "Elsewhere", parent_id=other_project)
 
-        with self.assertRaisesRegex(ValueError, "every non-archived direct Leaf"):
+        with self.assertRaisesRegex(ValueError, "every non-archived Leaf of the project"):
             self.goals.validate_replan_project(
                 project, [{"op": "keep", "leaf_id": now}])
         with self.assertRaisesRegex(ValueError, "does not belong"):
@@ -1560,7 +1655,7 @@ class TestAdaptiveLeafHorizon(GoalTestCase):
         self.assertEqual(final["by_source"]["companion"], 1)
         self.assertEqual(chats.pending_proposals(chat_id), [])
 
-    def test_planning_draft_and_commit_reject_over_reserved_horizon(self):
+    def test_planning_draft_trims_to_one_leaf_and_commit_respects_reservations(self):
         from livingpc.companion.history import ChatStore
 
         project = self.goals.create("overgoal", "Launch")
@@ -1572,9 +1667,11 @@ class TestAdaptiveLeafHorizon(GoalTestCase):
                 {"type": "task", "title": "Review replies", "children": []},
             ],
         }]}
-        with self.assertRaises(LeafHorizonError) as raised:
-            self.goals.set_plan_draft(session["id"], overfull, ready=True)
-        self.assertEqual(raised.exception.code, "horizon_full")
+        # One-Leaf model: an over-horizon draft is trimmed to its first Leaf, not
+        # rejected. The stored draft keeps only "Draft offer".
+        self.goals.set_plan_draft(session["id"], overfull, ready=True)
+        stage = self.goals.plan_session(session["id"])["draft"]["nodes"][0]
+        self.assertEqual([c["title"] for c in stage["children"]], ["Draft offer"])
 
         direct = {"nodes": [{"type": "task", "title": "Record outcome",
                              "description": "Record.", "children": []}]}
@@ -1753,6 +1850,135 @@ class TestPlannerReplyParsing(unittest.TestCase):
         planner = self._fake_planner('{"draft":{"nodes":[{', stop="max_tokens")
         with self.assertRaises(ValueError):
             planner.reply(session, "hi", {"type": "subgoal"})
+
+
+class TestMergeProjects(GoalTestCase):
+    def _two_projects(self):
+        root = self.goals.create("overgoal", "Health & Energy")
+        area = self.goals.create("subgoal", "Nervous System", parent_id=root)
+        self.goals._set_semantic_role(area, "area", rationale="Ongoing domain.")
+        rage = self.goals.create("subgoal", "Map Rage Triggers", parent_id=area)
+        dread = self.goals.create("subgoal", "Map Dread Sources", parent_id=area)
+        for project in (rage, dread):
+            self.goals._set_semantic_role(
+                project, "project", rationale="Finite mapping effort.")
+        return root, area, rage, dread
+
+    def test_merge_moves_children_in_order_and_archives_the_husk(self):
+        _root, _area, rage, dread = self._two_projects()
+        keep_a = self.goals.create("task", "Choose tool", parent_id=rage)
+        keep_b = self.goals.create("task", "Pattern analysis", parent_id=rage)
+        stage = self.goals.create("subgoal", "Tracking phase", parent_id=dread)
+        self.goals._set_semantic_role(stage, "stage", rationale="Groups tracking.")
+        staged_leaf = self.goals.create("task", "Log task types", parent_id=stage)
+        decide = self.goals.create("task", "Decide: batch or delegate",
+                                   parent_id=dread)
+        done = self.goals.create("task", "Pick log columns", parent_id=dread,
+                                 status="completed")
+
+        result = self.goals.merge_projects(dread, rage, rationale="One project.")
+
+        self.assertEqual(result["moved"], 3)
+        self.assertEqual(self.goals.get(dread)["status"], "archived")
+        rows = self.goals.conn.execute(
+            "SELECT id FROM goal_node WHERE parent_id=? AND status!='archived' "
+            "ORDER BY position,id", (rage,)).fetchall()
+        self.assertEqual([int(r["id"]) for r in rows],
+                         [keep_a, keep_b, stage, decide, done])
+        # The Stage's own child rides along unchanged.
+        self.assertEqual(self.goals.get(staged_leaf)["parent_id"], stage)
+        history = self.goals.conn.execute(
+            "SELECT goal_id,old_parent_id,new_parent_id FROM "
+            "goal_restructure_history ORDER BY id").fetchall()
+        self.assertEqual(
+            {(int(r["goal_id"]), int(r["old_parent_id"]), int(r["new_parent_id"]))
+             for r in history},
+            {(stage, dread, rage), (decide, dread, rage), (done, dread, rage)})
+
+    def test_merge_is_reversible_for_the_husk_only(self):
+        _root, _area, rage, dread = self._two_projects()
+        moved = self.goals.create("task", "Decide: batch or delegate",
+                                  parent_id=dread)
+        self.goals.merge_projects(dread, rage)
+        self.goals.restore_subtree(dread)
+        self.assertEqual(self.goals.get(dread)["status"], "active")
+        # The moved Leaf stays with the surviving project.
+        self.assertEqual(self.goals.get(moved)["parent_id"], rage)
+
+    def test_merge_validation_rejects_bad_pairs(self):
+        _root, area, rage, dread = self._two_projects()
+        with self.assertRaisesRegex(ValueError, "itself"):
+            self.goals.validate_merge_projects(rage, rage)
+        with self.assertRaisesRegex(ValueError, "not a Project"):
+            self.goals.validate_merge_projects(area, rage)
+        stage = self.goals.create("subgoal", "Tracking phase", parent_id=dread)
+        self.goals._set_semantic_role(stage, "stage", rationale="Phase.")
+        with self.assertRaisesRegex(ValueError, "not a Project"):
+            self.goals.validate_merge_projects(stage, rage)
+        self.goals.delete_subtree(dread)
+        with self.assertRaisesRegex(ValueError, "missing or archived"):
+            self.goals.validate_merge_projects(dread, rage)
+
+    def test_merge_rejects_projects_that_contain_each_other(self):
+        _root, _area, rage, dread = self._two_projects()
+        # Simulate a legacy Project nested inside another Project. The role
+        # API now rejects this placement, so write the role row directly.
+        nested = self.goals.create("subgoal", "Nested effort", parent_id=rage)
+        self.goals.conn.execute(
+            "INSERT INTO goal_semantic_role (goal_id,role,updated_at) "
+            "VALUES (?,?,datetime('now'))", (nested, "project"))
+        self.goals.conn.commit()
+        with self.assertRaisesRegex(ValueError, "contains the other"):
+            self.goals.validate_merge_projects(nested, rage)
+        with self.assertRaisesRegex(ValueError, "contains the other"):
+            self.goals.validate_merge_projects(rage, nested)
+        # An unrelated pair still validates.
+        checked = self.goals.validate_merge_projects(dread, rage)
+        self.assertEqual(int(checked["target"]["id"]), rage)
+
+
+class TestReplanFlattensStages(GoalTestCase):
+    def _project_with_stage(self):
+        root = self.goals.create("overgoal", "Health & Energy")
+        project = self.goals.create("subgoal", "Map Rage Triggers", parent_id=root)
+        self.goals._set_semantic_role(project, "project", rationale="Finite effort.")
+        direct = self.goals.create("task", "Choose tool", parent_id=project)
+        stage = self.goals.create("subgoal", "Capture phase", parent_id=project)
+        self.goals._set_semantic_role(stage, "stage", rationale="Groups capture.")
+        under_stage = self.goals.create("task", "Log rage events", parent_id=stage)
+        return root, project, direct, stage, under_stage
+
+    def test_subtree_leaves_include_leaves_under_stages(self):
+        _root, project, direct, _stage, under_stage = self._project_with_stage()
+        leaf_ids = [int(leaf["id"])
+                    for leaf in self.goals.project_subtree_leaves(project)]
+        self.assertEqual(leaf_ids, [direct, under_stage])
+
+    def test_replan_pulls_staged_leaves_up_and_archives_emptied_stage(self):
+        _root, project, direct, stage, under_stage = self._project_with_stage()
+
+        # A replan must account for every subtree Leaf, including the one under
+        # the Stage. Keeping both pulls the staged Leaf up to a direct step.
+        result = self.goals.apply_replan_project(project, [
+            {"op": "keep", "leaf_id": direct},
+            {"op": "rename", "leaf_id": under_stage,
+             "new_title": "Run the 2-week log"},
+        ])
+
+        self.assertEqual(self.goals.get(under_stage)["parent_id"], project)
+        self.assertEqual(self.goals.get(under_stage)["title"], "Run the 2-week log")
+        self.assertEqual(self.goals.get(stage)["status"], "archived")
+        self.assertIn(stage, result["archived_stage_ids"])
+        direct_children = [int(r["id"]) for r in self.goals.conn.execute(
+            "SELECT id FROM goal_node WHERE parent_id=? AND status!='archived' "
+            "ORDER BY position,id", (project,)).fetchall()]
+        self.assertEqual(direct_children, [direct, under_stage])
+
+    def test_replan_referencing_only_direct_leaves_misses_staged_leaf(self):
+        _root, project, direct, _stage, _under_stage = self._project_with_stage()
+        with self.assertRaisesRegex(ValueError, "including those under its Stages"):
+            self.goals.validate_replan_project(
+                project, [{"op": "keep", "leaf_id": direct}])
 
 
 if __name__ == "__main__":

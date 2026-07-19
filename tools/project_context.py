@@ -106,16 +106,30 @@ AREAS = {
     "storage": Area(
         "capture writes data/living_computer.db; approved facts and pending proposals use data/memory.db; "
         "all SQLite connections go through livingpc/db.py (WAL + busy timeout) so cross-process "
-        "readers and the writer never block each other; "
-        "nightly hygiene consolidates memory and snapshots it into data/backups; "
-        "explicit forgetting removes a fact, linked traces, backups, and configured mirrors.",
-        ("livingpc/config.py", "livingpc/db.py", "livingpc/storage.py", "livingpc/memory.py",
+        "readers and the writer never block each other; nightly hygiene retains the legacy local "
+        "backup_memory checkpoint in data/backups; portable backup online-snapshots both databases "
+        "and the personal profile into a verified encrypted .ffbackup, with a per-user Windows task "
+        "plus startup catch-up/hourly retry and staged whole-profile restore; backup, restore, and "
+        "Forget share the maintenance lock, while Forget advances the repository privacy epoch, "
+        "purges managed mirrors, and blocks an offline purge-pending destination.",
+        ("gui.py", "livingpc/ui/memory.html", "livingpc/onboarding.py",
+         "livingpc/config.py", "livingpc/db.py", "livingpc/storage.py", "livingpc/memory.py",
          "livingpc/crypto.py", "livingpc/backup.py", "livingpc/consolidate.py",
-         "livingpc/forget.py", "encrypt_db.py", "tools/backup_memory.py",
-         "tools/consolidate_memory.py", "tools/forget_memory.py"),
+         "livingpc/forget.py", "livingpc/maintenance.py", "livingpc/recovery.py",
+         "livingpc/backup_profile.py", "livingpc/instance_backup.py",
+         "livingpc/backup_runtime.py", "livingpc/backup_task.py", "encrypt_db.py",
+         "tools/backup_memory.py", "tools/backup_instance.py", "tools/apply_restore.py",
+         "tools/consolidate_memory.py", "tools/forget_memory.py",
+         "bats/Portable Backup.bat", "bats/Restore Backup.bat",
+         "docs/BACKUP_RECOVERY.md"),
         ("tests/test_db.py", "tests/test_storage.py", "tests/test_memory.py",
-         "tests/test_encryption_pending.py",
-         "tests/test_backup.py", "tests/test_consolidate.py", "tests/test_forget.py"),
+         "tests/test_encryption_pending.py", "tests/test_backup.py",
+         "tests/test_recovery.py", "tests/test_instance_backup.py",
+         "tests/test_backup_runtime.py", "tests/test_backup_task.py",
+         "tests/test_backup_instance_cli.py", "tests/test_apply_restore_helper.py",
+         "tests/test_backup_ui.py", "tests/test_forget_instance_backups.py",
+         "tests/test_maintenance.py", "tests/test_new_test_instance_launcher.py",
+         "tests/test_consolidate.py", "tests/test_forget.py"),
     ),
     "diagnostics": Area(
         "control UI (pywebview, livingpc/ui/capture.html) invokes status/reset/collectors; "

@@ -26,6 +26,9 @@ NODE_TYPES = {"umbrella", "overgoal", "subgoal", "task"}
 NODE_STATUSES = {"active", "paused", "completed", "archived"}
 PRIORITIES = {"low", "normal", "high"}
 PROJECT_SIGNAL_KINDS = {"highest_priority", "currently_working"}
+# One-Leaf model: a plan commits a single concrete NOW Leaf per project; the
+# next Leaf is created just-in-time from the main chat completion debrief.
+PLAN_LEAF_HORIZON = 1
 SESSION_STATUSES = {"active", "ready", "implemented", "abandoned"}
 
 STARTER_ROOTS = (
@@ -237,6 +240,22 @@ CREATE TABLE IF NOT EXISTS goal_semantic_role (
     FOREIGN KEY (goal_id) REFERENCES goal_node(id)
 );
 
+CREATE TABLE IF NOT EXISTS goal_semantic_role_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    old_role TEXT,
+    new_role TEXT,
+    rationale TEXT,
+    source TEXT NOT NULL,
+    proposal_id INTEGER,
+    created_at TEXT NOT NULL,
+    CHECK (old_role IS NULL OR old_role IN ('area','project','stage')),
+    CHECK (new_role IS NULL OR new_role IN ('area','project','stage')),
+    FOREIGN KEY (goal_id) REFERENCES goal_node(id)
+);
+CREATE INDEX IF NOT EXISTS idx_goal_semantic_role_history_goal
+ON goal_semantic_role_history(goal_id,id DESC);
+
 CREATE TABLE IF NOT EXISTS goal_project_signal (
     kind TEXT PRIMARY KEY,
     goal_id INTEGER NOT NULL,
@@ -292,6 +311,11 @@ def _derived_branch_role(title: str, description: str, *, parent_type: str,
     """Choose a presentation role for legacy Branches without persisting an inference."""
     text = f"{title} {description}".casefold()
     words = set(re.findall(r"[\w]+", text))
+    first_word = next(iter(re.findall(r"[\w]+", str(title or "").casefold())), "")
+    finite_action_words = {
+        "map", "track", "design", "capture", "decide", "analyze", "analyse",
+        "build", "create", "launch", "test", "evaluate", "implement", "publish",
+    }
     project_words = {
         "project", "experiment", "prototype", "launch", "migration", "redesign",
         "interface", "app", "upwork", "automation", "product", "gig", "test",
@@ -305,7 +329,7 @@ def _derived_branch_role(title: str, description: str, *, parent_type: str,
         "가족", "언어", "한국어", "학습", "교육", "재정", "창작", "게임", "취미",
     }
     if parent_type == "overgoal":
-        if words & project_words:
+        if words & project_words or first_word in finite_action_words:
             return "project"
         if words & area_words or has_branch_children:
             return "area"
@@ -448,8 +472,10 @@ class GoalStore:
                 "source": row["source"], "updated_at": row["updated_at"]}
 
     def _set_semantic_role(self, goal_id: int, role: str, *, rationale: str = "",
-                           source: str = "ai", commit: bool = True) -> None:
+                           source: str = "ai", proposal_id: int | None = None,
+                           commit: bool = True) -> None:
         node = self.get(int(goal_id))
+        prior = self.semantic_role(int(goal_id))
         role = str(role or "").strip().lower()
         if not node or node["type"] != "subgoal":
             raise ValueError("semantic roles apply only to Branches")
@@ -463,9 +489,21 @@ class GoalStore:
             "VALUES (?,?,?,?,?) ON CONFLICT(goal_id) DO UPDATE SET role=excluded.role,"
             "rationale=excluded.rationale,source=excluded.source,updated_at=excluded.updated_at",
             (int(goal_id), role, crypto.enc(str(rationale or "")), str(source or "ai")[:24], _now()))
+        if not prior or prior["role"] != role:
+            self.conn.execute(
+                "INSERT INTO goal_semantic_role_history "
+                "(goal_id,old_role,new_role,rationale,source,proposal_id,created_at) "
+                "VALUES (?,?,?,?,?,?,?)", (int(goal_id), prior["role"] if prior else None,
+                 role, crypto.enc(str(rationale or "")), str(source or "ai")[:24],
+                 proposal_id, _now()))
         if role != "project":
             self.conn.execute(
-                "DELETE FROM goal_project_signal WHERE goal_id=?", (int(goal_id),))
+                "DELETE FROM goal_project_signal WHERE goal_id=? AND kind='currently_working'",
+                (int(goal_id),))
+        if role != "area":
+            self.conn.execute(
+                "DELETE FROM goal_project_signal WHERE goal_id=? AND kind='highest_priority'",
+                (int(goal_id),))
         self._mark_goal_ai_dirty(int(goal_id))
         if commit:
             self.conn.commit()
@@ -491,7 +529,7 @@ class GoalStore:
             has_branch_children=has_branch_children)
 
     def project_signals(self) -> dict[str, int | None]:
-        """Return the two singleton Project-attention signals.
+        """Return the singleton Area priority and Project work signals.
 
         Stale rows are ignored rather than silently reclassifying a node. A
         later explicit selection atomically replaces the singleton for that
@@ -505,10 +543,11 @@ class GoalStore:
                 "SELECT kind,goal_id FROM goal_project_signal ORDER BY kind"):
             kind = str(row["kind"])
             node = self.get(int(row["goal_id"]))
+            expected_role = ("area" if kind == "highest_priority" else "project")
             if (kind in PROJECT_SIGNAL_KINDS and node
                     and node.get("status") == "active"
                     and node.get("type") == "subgoal"
-                    and self.resolved_semantic_role(int(node["id"])) == "project"):
+                    and self.resolved_semantic_role(int(node["id"])) == expected_role):
                 result[kind] = int(node["id"])
         return result
 
@@ -518,33 +557,71 @@ class GoalStore:
         return {
             "highest_priority": signals["highest_priority"] == goal_id,
             "currently_working": signals["currently_working"] == goal_id,
+            "auto_current": (signals["currently_working"] is None and
+                             self.effective_current_project_id() == goal_id),
         }
+
+    def effective_current_project_id(self) -> int | None:
+        signals = self.project_signals()
+        current = signals["currently_working"]
+        area = signals["highest_priority"]
+        if current is not None and (area is None or self._is_descendant(current, area)):
+            return int(current)
+        if area is None:
+            return None
+        queue = [int(row["id"]) for row in self.conn.execute(
+            "SELECT id FROM goal_node WHERE parent_id=? AND status IN ('active','paused') "
+            "ORDER BY position,id", (int(area),)).fetchall()]
+        while queue:
+            goal_id = queue.pop(0)
+            node = self.get(goal_id)
+            if not node:
+                continue
+            if (node["type"] == "subgoal" and
+                    self.resolved_semantic_role(goal_id) == "project"):
+                return goal_id
+            queue[0:0] = [int(row["id"]) for row in self.conn.execute(
+                "SELECT id FROM goal_node WHERE parent_id=? AND status IN ('active','paused') "
+                "ORDER BY position,id", (goal_id,)).fetchall()]
+        return None
 
     def set_project_signal(self, goal_id: int, kind: str,
                            enabled: bool = True) -> dict[str, int | None]:
-        """Set or clear one global Project-only attention signal."""
+        """Set or clear the global Area-priority or Project-current signal."""
         goal_id = int(goal_id)
         kind = str(kind or "").strip().lower()
         if kind not in PROJECT_SIGNAL_KINDS:
-            raise ValueError("unknown Project signal")
+            raise ValueError("unknown attention signal")
         node = self.get(goal_id)
+        expected_role = "area" if kind == "highest_priority" else "project"
         if (not node or node.get("status") != "active"
                 or node.get("type") != "subgoal"
-                or self.resolved_semantic_role(goal_id) != "project"):
-            raise ValueError("only an active Project can carry this signal")
+                or self.resolved_semantic_role(goal_id) != expected_role):
+            raise ValueError(f"only an active {expected_role.title()} can carry {kind}")
         if not self.semantic_role(goal_id):
             self._set_semantic_role(
-                goal_id, "project",
-                rationale="User selected this Project for explicit attention.",
+                goal_id, expected_role,
+                rationale=f"User selected this {expected_role.title()} for explicit attention.",
                 source="user", commit=False)
         previous = self.conn.execute(
             "SELECT goal_id FROM goal_project_signal WHERE kind=?", (kind,)).fetchone()
         if enabled:
+            if kind == "currently_working":
+                area = self.conn.execute(
+                    "SELECT goal_id FROM goal_project_signal WHERE kind='highest_priority'").fetchone()
+                if area and not self._is_descendant(goal_id, int(area["goal_id"])):
+                    raise ValueError("Current Project must live inside the Highest priority Area")
             self.conn.execute(
                 "INSERT INTO goal_project_signal (kind,goal_id,updated_at) VALUES (?,?,?) "
                 "ON CONFLICT(kind) DO UPDATE SET goal_id=excluded.goal_id,"
                 "updated_at=excluded.updated_at",
                 (kind, goal_id, _now()))
+            if kind == "highest_priority":
+                current = self.conn.execute(
+                    "SELECT goal_id FROM goal_project_signal WHERE kind='currently_working'").fetchone()
+                if current and not self._is_descendant(int(current["goal_id"]), goal_id):
+                    self.conn.execute(
+                        "DELETE FROM goal_project_signal WHERE kind='currently_working'")
         else:
             self.conn.execute(
                 "DELETE FROM goal_project_signal WHERE kind=? AND goal_id=?",
@@ -554,20 +631,35 @@ class GoalStore:
         self.conn.commit()
         return self.project_signals()
 
+    def _is_descendant(self, goal_id: int, ancestor_id: int) -> bool:
+        current, seen = int(goal_id), set()
+        while current and current not in seen:
+            if current == int(ancestor_id):
+                return True
+            seen.add(current)
+            row = self.conn.execute(
+                "SELECT parent_id FROM goal_node WHERE id=?", (current,)).fetchone()
+            current = int(row["parent_id"] or 0) if row else 0
+        return False
+
     def _validate_semantic_placement(self, node_type: str, semantic_role: str | None,
                                      parent_id: int, *,
                                      nested_stage_justification: str = "") -> None:
-        """Prevent accidental Stage → Stage chains while retaining explicit substages."""
+        """Enforce one unambiguous Area → Project → Stage hierarchy."""
         role = str(semantic_role or "").strip().lower() or None
-        if str(node_type) != "subgoal" or role != "stage":
+        if str(node_type) != "subgoal" or role not in {"area", "project", "stage"}:
             return
-        if self.resolved_semantic_role(int(parent_id)) != "stage":
-            return
-        explanation = " ".join(str(nested_stage_justification or "").split())
-        if len(explanation) < 20:
-            raise ValueError(
-                "placing a Stage beneath another Stage requires an explicit "
-                "macro-stage/substage justification")
+        parent = self.get(int(parent_id))
+        if not parent:
+            raise ValueError("semantic destination parent not found")
+        parent_role = (self.resolved_semantic_role(int(parent_id))
+                       if parent["type"] == "subgoal" else None)
+        if role == "area" and not (parent["type"] == "overgoal" or parent_role == "area"):
+            raise ValueError("an Area must live beneath a Root or another Area")
+        if role == "project" and not (parent["type"] == "overgoal" or parent_role == "area"):
+            raise ValueError("a Project must live beneath a Root or Area")
+        if role == "stage" and parent_role != "project":
+            raise ValueError("a Stage must live directly beneath a Project")
 
     def get(self, goal_id: int) -> dict | None:
         node = self._row(self.conn.execute(
@@ -1291,21 +1383,62 @@ class GoalStore:
             "open_after_create": existing_count + reserved_count + 1,
         }
 
+    def _project_subtree_plan_nodes(
+            self, project_id: int) -> tuple[list[dict], list[dict]]:
+        """(leaves, stages) of one project's live plan subtree.
+
+        Leaves are every non-archived task reachable through non-archived
+        Branch descendants, in depth-first (position,id) order — the same
+        flat execution order the focus path reads. Stages are the traversed
+        Branch descendants themselves, in the same order.
+        """
+        leaves: list[dict] = []
+        stages: list[dict] = []
+
+        def walk(parent_id: int) -> None:
+            rows = self.conn.execute(
+                "SELECT * FROM goal_node WHERE parent_id=? AND status!='archived' "
+                "ORDER BY position,id", (int(parent_id),)).fetchall()
+            for row in rows:
+                node = self._row(row)
+                if node["type"] == "task":
+                    leaves.append(node)
+                elif node["type"] == "subgoal":
+                    stages.append(node)
+                    walk(int(node["id"]))
+
+        walk(int(project_id))
+        return leaves, stages
+
+    def project_subtree_leaves(self, project_id: int) -> list[dict]:
+        """Every live Leaf of one project's plan, including under Stages."""
+        leaves, _stages = self._project_subtree_plan_nodes(project_id)
+        return leaves
+
+    def subtree_open_leaf_count(self, project_id: int) -> int:
+        """Open (active or paused) Leaves anywhere in one project's subtree."""
+        return sum(1 for leaf in self.project_subtree_leaves(project_id)
+                   if leaf.get("status") in {"active", "paused"})
+
     def replan_expected_versions(self, project_id: int) -> dict[str, str]:
-        """Version snapshot for one project and every direct live Leaf.
+        """Version snapshot for one project and its whole live plan subtree.
 
         Replan cards persist this snapshot when staged. Approval compares it
         inside the same savepoint as the apply so a newer edit can never be
-        overwritten by an older card.
+        overwritten by an older card. Stages are included so a structural
+        edit under the project invalidates older cards too.
         """
         project_id = int(project_id)
+        anchor = self.conn.execute(
+            "SELECT id FROM goal_node WHERE id=?", (project_id,)).fetchone()
+        if not anchor:
+            raise ValueError("replan target not found")
+        leaves, stages = self._project_subtree_plan_nodes(project_id)
+        ids = [project_id] + [int(node["id"]) for node in [*stages, *leaves]]
         rows = self.conn.execute(
             "SELECT id,parent_id,node_type,title,description,status,priority,due_date,"
-            "position,updated_at,completed_at FROM goal_node WHERE id=? OR "
-            "(parent_id=? AND node_type='task' AND status!='archived') "
-            "ORDER BY id", (project_id, project_id)).fetchall()
-        if not rows or not any(int(row["id"]) == project_id for row in rows):
-            raise ValueError("replan target not found")
+            f"position,updated_at,completed_at FROM goal_node WHERE id IN "
+            f"({','.join('?' for _ in ids)}) ORDER BY id", ids).fetchall()
         columns = ("id", "parent_id", "node_type", "title", "description",
                    "status", "priority", "due_date", "position", "updated_at",
                    "completed_at")
@@ -1345,10 +1478,10 @@ class GoalStore:
         if "description" in update:
             update["description"] = str(update.get("description") or "")
 
-        direct_rows = self.conn.execute(
-            "SELECT * FROM goal_node WHERE parent_id=? AND node_type='task' "
-            "AND status!='archived' ORDER BY position,id", (project_id,)).fetchall()
-        direct = {int(row["id"]): self._row(row) for row in direct_rows}
+        # The replan owns the project's whole live plan: Leaves under Stages
+        # are addressed too, and the applied plan is flat (see apply).
+        direct = {int(node["id"]): node
+                  for node in self.project_subtree_leaves(project_id)}
         if expected_versions is not None:
             expected = {str(key): str(value) for key, value in
                         dict(expected_versions).items()}
@@ -1446,7 +1579,8 @@ class GoalStore:
         if seen_ids != expected_ids:
             missing = sorted(expected_ids - seen_ids)
             raise ValueError(
-                "every non-archived direct Leaf must appear exactly once"
+                "every non-archived Leaf of the project, including those "
+                "under its Stages, must appear exactly once"
                 + (f" (missing: {', '.join(map(str, missing))})" if missing else ""))
         if len(final_open) > limit:
             raise LeafHorizonError(
@@ -1514,6 +1648,22 @@ class GoalStore:
                     self.delete_subtree(leaf_id, _commit=False)
                     counts["archive"] += 1
                     continue
+                # The applied plan is flat: a Leaf kept from under a Stage
+                # becomes a direct ordered step of the project.
+                if node and int(node.get("parent_id") or 0) != project_id:
+                    self.conn.execute(
+                        "UPDATE goal_node SET parent_id=?,updated_at=? WHERE id=?",
+                        (project_id, _now(), leaf_id))
+                    self.conn.execute(
+                        "INSERT INTO goal_restructure_history "
+                        "(goal_id,proposal_id,old_parent_id,new_parent_id,"
+                        "old_node_type,new_node_type,retained_counts_json,"
+                        "rationale,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (leaf_id, None, int(node.get("parent_id") or 0),
+                         project_id, "task", "task",
+                         json.dumps({}, sort_keys=True),
+                         crypto.enc("replan pulled this Leaf up to a direct "
+                                    "project step"), _now()))
                 if op == "complete":
                     if node and node.get("status") != "completed":
                         self.update(leaf_id, status="completed", _commit=False)
@@ -1535,6 +1685,20 @@ class GoalStore:
                     counts["keep"] += 1
                 ordered.append(leaf_id)
 
+            # A Stage whose every Leaf the plan archived or pulled up no
+            # longer groups anything; archive it (reversible) so the applied
+            # plan is genuinely flat. Deepest first so nested legacy Stages
+            # empty outward.
+            archived_stages: list[int] = []
+            _leaves, stages = self._project_subtree_plan_nodes(project_id)
+            for stage in reversed(stages):
+                stage_id = int(stage["id"])
+                remaining = self.conn.execute(
+                    "SELECT COUNT(*) FROM goal_node WHERE parent_id=? "
+                    "AND status!='archived'", (stage_id,)).fetchone()[0]
+                if not int(remaining):
+                    self.delete_subtree(stage_id, _commit=False)
+                    archived_stages.append(stage_id)
             tail = [int(row["id"]) for row in self.conn.execute(
                 "SELECT id FROM goal_node WHERE parent_id=? "
                 + (f"AND id NOT IN ({','.join('?' for _ in ordered)}) " if ordered else "")
@@ -1544,7 +1708,8 @@ class GoalStore:
                 self.conn.execute(
                     "UPDATE goal_node SET position=?,updated_at=? WHERE id=?",
                     (position, _now(), node_id))
-            self._mark_goal_ai_dirty(project_id, *ordered, *created)
+            self._mark_goal_ai_dirty(project_id, *ordered, *created,
+                                     *archived_stages)
             self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         except Exception:
             self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
@@ -1561,6 +1726,8 @@ class GoalStore:
             "open_leaf_ids": open_leaf_ids,
             "created_leaf_ids": created,
             "operation_counts": counts,
+            "archived_stage_ids": archived_stages,
+            "archived_stage_count": len(archived_stages),
         }
 
     def starter_root_catalog(self, language: str = "en") -> list[dict]:
@@ -1985,7 +2152,8 @@ class GoalStore:
         scope_ids = self._subtree_ids(int(goal_id))
         labels = {"umbrella": "Soul", "overgoal": "Root",
                   "subgoal": "Branch", "task": "Leaf"}
-        role_labels = {"area": "Area", "project": "Project", "stage": "Stage"}
+        # The stored "area" role is shown to the user as "Branch".
+        role_labels = {"area": "Branch", "project": "Project", "stage": "Stage"}
         current_path = " › ".join(self._goal_path_titles(int(goal_id)))
         proposed_path = " › ".join([*self._goal_path_titles(int(parent_id)), node["title"]])
         return {
@@ -2188,27 +2356,27 @@ class GoalStore:
 
         final_roles = dict(display_roles)
         final_roles.update({goal_id: item["role"] for goal_id, item in role_inputs.items()})
-        for goal_id, state in final.items():
-            if state["type"] != "subgoal" or final_roles.get(goal_id) != "stage":
-                continue
-            parent_id = int(state.get("parent_id") or 0)
-            if (not parent_id or final.get(parent_id, {}).get("type") != "subgoal" or
-                    final_roles.get(parent_id) != "stage"):
-                continue
-            original_parent = int(nodes[goal_id].get("parent_id") or 0)
-            already_nested = (
-                nodes[goal_id]["type"] == "subgoal" and
-                display_roles.get(goal_id) == "stage" and
-                original_parent == parent_id and
-                display_roles.get(original_parent) == "stage")
-            if already_nested:
-                continue
-            justification = str(
-                role_inputs.get(goal_id, {}).get("nested_stage_justification") or "")
-            if len(" ".join(justification.split())) < 20:
-                raise ValueError(
-                    "placing a Stage beneath another Stage requires an explicit "
-                    "macro-stage/substage justification")
+        final_children: dict[int, list[int]] = {}
+        for child_id, state in final.items():
+            final_children.setdefault(int(state.get("parent_id") or 0), []).append(child_id)
+        for goal_id, role_input in role_inputs.items():
+            role = role_input["role"]
+            parent_id = int(final[goal_id].get("parent_id") or 0)
+            parent = final.get(parent_id, {})
+            parent_role = final_roles.get(parent_id)
+            if role == "area" and not (
+                    parent.get("type") == "overgoal" or parent_role == "area"):
+                raise ValueError("an Area must live beneath a Root or another Area")
+            if role == "project" and not (
+                    parent.get("type") == "overgoal" or parent_role == "area"):
+                raise ValueError("a Project must live beneath a Root or Area")
+            if role == "stage":
+                if parent_role != "project":
+                    raise ValueError("a Stage must live directly beneath a Project")
+                if not any(final[child_id]["type"] == "task"
+                           for child_id in final_children.get(goal_id, [])):
+                    raise ValueError(
+                        "a Stage must group at least one concrete Leaf; terminal work is a Leaf")
         if not normalized and not normalized_roles:
             raise ValueError("the proposed structure is unchanged")
 
@@ -2299,7 +2467,8 @@ class GoalStore:
                     int(item["goal_id"]), item["proposed_role"],
                     rationale=(item.get("nested_stage_justification") or
                                item.get("reason") or rationale),
-                    source="ai", commit=False)
+                    source="approved_restructure", proposal_id=proposal_id,
+                    commit=False)
             self._mark_goal_ai_dirty(*preview["affected_node_ids"], *touched_parents)
             if commit:
                 self.conn.commit()
@@ -2308,6 +2477,86 @@ class GoalStore:
                 self.conn.rollback()
             raise
         return preview
+
+    def validate_merge_projects(self, source_id: int, target_id: int) -> dict:
+        """Validate that the target Project can absorb the source Project."""
+        try:
+            source_id = int(source_id)
+            target_id = int(target_id)
+        except (TypeError, ValueError):
+            raise ValueError("merging needs valid source and target Projects")
+        if source_id == target_id:
+            raise ValueError("a Project cannot be merged into itself")
+        source = self.get(source_id)
+        target = self.get(target_id)
+        for name, node in (("absorbed", source), ("surviving", target)):
+            if not node or node.get("status") == "archived":
+                raise ValueError(f"the {name} Project is missing or archived")
+            if (node["type"] != "subgoal"
+                    or self.resolved_semantic_role(int(node["id"])) != "project"):
+                raise ValueError(
+                    f"the {name} node is not a Project — only two Projects "
+                    "can be merged")
+        if (target_id in self._subtree_ids(source_id)
+                or source_id in self._subtree_ids(target_id)):
+            raise ValueError("one of those Projects contains the other")
+        return {"source": source, "target": target}
+
+    def merge_projects(self, source_id: int, target_id: int, *,
+                       proposal_id: int | None = None,
+                       rationale: str = "") -> dict:
+        """Fold one Project into another as a structural change.
+
+        Every non-archived child (Leaves, Stages, completed work) moves to the
+        end of the surviving Project's plan in its original order, and the
+        emptied source is soft-archived (reversible via restore_subtree). Like
+        restructure_batch, this does not enforce the open-Leaf horizon: the
+        merged plan may temporarily exceed it and is trimmed by a later replan.
+        """
+        checked = self.validate_merge_projects(source_id, target_id)
+        source, target = checked["source"], checked["target"]
+        children = [self._row(row) for row in self.conn.execute(
+            "SELECT * FROM goal_node WHERE parent_id=? AND status!='archived' "
+            "ORDER BY position,id", (int(source["id"]),)).fetchall()]
+        moved_scope: list[int] = []
+        for child in children:
+            moved_scope.extend(self._subtree_ids(int(child["id"])))
+        retained = self._restructure_retained_counts(sorted(set(moved_scope)))
+        now = _now()
+        started = False
+        try:
+            if not self.conn.in_transaction:
+                self.conn.execute("BEGIN IMMEDIATE")
+                started = True
+            base = int(self.conn.execute(
+                "SELECT COALESCE(MAX(position),-1)+1 FROM goal_node WHERE parent_id=?",
+                (int(target["id"]),)).fetchone()[0])
+            for offset, child in enumerate(children):
+                self.conn.execute(
+                    "UPDATE goal_node SET parent_id=?,position=?,updated_at=? "
+                    "WHERE id=?",
+                    (int(target["id"]), base + offset, now, int(child["id"])))
+                self.conn.execute(
+                    "INSERT INTO goal_restructure_history "
+                    "(goal_id,proposal_id,old_parent_id,new_parent_id,"
+                    "old_node_type,new_node_type,retained_counts_json,"
+                    "rationale,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (int(child["id"]), proposal_id, int(source["id"]),
+                     int(target["id"]), child["type"], child["type"],
+                     json.dumps(retained, sort_keys=True),
+                     crypto.enc(rationale), now))
+            archived = self.delete_subtree(int(source["id"]), _commit=False)
+            self._mark_goal_ai_dirty(
+                int(source["id"]), int(target["id"]),
+                *[int(child["id"]) for child in children])
+            self.conn.commit()
+        except Exception:
+            if started or self.conn.in_transaction:
+                self.conn.rollback()
+            raise
+        return {"moved": len(children), "archived": archived,
+                "source": source, "target": target,
+                "retained_counts": retained}
 
     def delete_subtree(self, goal_id: int, *, _commit: bool = True) -> int:
         """'Delete' a node and everything under it. Always a soft archive
@@ -2722,6 +2971,7 @@ class GoalStore:
             node["project_focus"] = {
                 "highest_priority": False,
                 "currently_working": False,
+                "auto_current": False,
             }
         for row in self.conn.execute(
                 "SELECT goal_id,role,source FROM goal_semantic_role ORDER BY goal_id"):
@@ -2808,6 +3058,9 @@ class GoalStore:
             for kind, goal_id in signals.items():
                 if goal_id in nodes:
                     nodes[goal_id]["project_focus"][kind] = True
+            effective_project = self.effective_current_project_id()
+            if (signals["currently_working"] is None and effective_project in nodes):
+                nodes[effective_project]["project_focus"]["auto_current"] = True
             inherit_curiosities(root, [])
             progress(root)
         return root or {}
@@ -2881,6 +3134,12 @@ class GoalStore:
             if existing.get("_placement"):
                 draft = dict(draft or {})
                 draft["_placement"] = existing["_placement"]
+        if row:
+            # One-Leaf model: keep only the first Leaf of each group so the
+            # stored draft, its review card, and the eventual commit all agree
+            # on a single NOW step per project.
+            draft = self._trim_draft_leaves(
+                int(row["target_parent_id"]), draft)
         if ready and row:
             self._validate_plan_draft_horizon(
                 int(session_id), int(row["target_parent_id"]), draft,
@@ -2891,6 +3150,45 @@ class GoalStore:
             (crypto.enc(json.dumps(draft)), crypto.enc(summary) if summary is not None else None,
              "ready" if ready else "active", _now(), int(session_id)))
         self.conn.commit()
+
+    def confirm_plan_placement(self, session_id: int, placement: dict) -> dict:
+        """Persist the user's final placement choice after planning dialogue."""
+        session = self.plan_session(int(session_id))
+        if session["status"] != "ready":
+            raise ValueError("summarize and review the plan before confirming placement")
+        placement = dict(placement or {})
+        try:
+            target_parent_id = int(placement.get("target_parent_id"))
+        except (TypeError, ValueError):
+            raise ValueError("choose where this plan should live") from None
+        target = self.get(target_parent_id)
+        if (not target or target.get("status") != "active" or
+                target.get("type") not in {"umbrella", "overgoal", "subgoal"}):
+            raise ValueError("planning target must be an active Soul, Root, or Branch")
+        if target["type"] == "umbrella":
+            if (placement.get("mode") != "new_root" or
+                    not placement.get("root_eligible") or
+                    not str(placement.get("root_title") or "").strip() or
+                    not str(placement.get("root_description") or "").strip()):
+                raise ValueError("a new Root requires an approved durable life-domain placement")
+        else:
+            placement.update({
+                "mode": "existing", "parent_id": target_parent_id,
+                "parent_path": " › ".join(self._goal_path_titles(target_parent_id)),
+            })
+        placement["target_parent_id"] = target_parent_id
+        placement["user_confirmed"] = True
+        placement.pop("review_required", None)
+        draft = dict(session.get("draft") or {})
+        draft["_placement"] = placement
+        self._validate_plan_draft_horizon(
+            int(session_id), target_parent_id, draft, allow_incomplete=True)
+        self.conn.execute(
+            "UPDATE goal_plan_session SET target_parent_id=?,draft_json=?,updated_at=? "
+            "WHERE id=? AND status='ready'",
+            (target_parent_id, crypto.enc(json.dumps(draft)), _now(), int(session_id)))
+        self.conn.commit()
+        return self.plan_session(int(session_id))
 
     def plan_session(self, session_id: int) -> dict:
         row = self.conn.execute(
@@ -2926,10 +3224,89 @@ class GoalStore:
             return "subgoal"
         return "task"
 
+    def _trim_draft_leaves(self, target_parent_id: int, draft: Mapping[str, Any],
+                           *, horizon: int = PLAN_LEAF_HORIZON) -> dict:
+        """Return a copy of the plan draft with at most `horizon` Leaf (task)
+        nodes per sibling group; extra Leaves are dropped. One-Leaf model: the
+        next Leaf is created just-in-time from the main chat after the current
+        one completes, so a project never commits more than its open-Leaf
+        horizon. Uses the same leaf-counting rule as _validate_plan_draft_horizon
+        so validation can never see an over-horizon group afterward."""
+        target = self.get(int(target_parent_id))
+        target_type = str(target.get("type") or "") if target else ""
+
+        def trim_group(nodes, parent_type: str) -> list:
+            kept: list = []
+            leaves = 0
+            for raw in list(nodes or []):
+                if not isinstance(raw, Mapping):
+                    continue
+                node = dict(raw)
+                if self._draft_effective_node_type(raw, parent_type) == "task":
+                    if leaves >= horizon:
+                        continue
+                    leaves += 1
+                else:
+                    node["children"] = trim_group(
+                        raw.get("children") or [],
+                        self._draft_effective_node_type(raw, parent_type))
+                kept.append(node)
+            return kept
+
+        trimmed = dict(draft or {})
+        trimmed["nodes"] = trim_group(trimmed.get("nodes") or [], target_type)
+        return trimmed
+
+    def _validate_plan_semantics(self, target_parent_id: int,
+                                 draft: Mapping[str, Any]) -> None:
+        target = self.get(int(target_parent_id))
+        if not target:
+            raise ValueError("planning target not found")
+        target_role = (self.resolved_semantic_role(int(target_parent_id))
+                       if target["type"] == "subgoal" else None)
+
+        def validate(nodes, parent_type: str, parent_role: str | None) -> None:
+            for raw in list(nodes or []):
+                if not isinstance(raw, Mapping):
+                    continue
+                node_type = self._draft_effective_node_type(raw, parent_type)
+                children = list(raw.get("children") or [])
+                role = str(raw.get("semantic_role") or "").strip().lower() or None
+                if node_type == "overgoal":
+                    validate(children, "overgoal", None)
+                    continue
+                if node_type == "subgoal":
+                    if role not in {"area", "project", "stage"}:
+                        role = ("project" if parent_type == "overgoal" or parent_role == "area"
+                                else "stage" if parent_role == "project" else None)
+                    if role not in {"area", "project", "stage"}:
+                        raise ValueError("every planned Branch needs an Area, Project, or Stage role")
+                    if role == "area" and not (
+                            parent_type == "overgoal" or parent_role == "area"):
+                        raise ValueError("an Area must live beneath a Root or another Area")
+                    if role == "project" and not (
+                            parent_type == "overgoal" or parent_role == "area"):
+                        raise ValueError("a Project must live beneath a Root or Area")
+                    if role == "stage":
+                        if parent_role != "project":
+                            raise ValueError("a Stage must live directly beneath a Project")
+                        if not any(self._draft_effective_node_type(child, "subgoal") == "task"
+                                   for child in children if isinstance(child, Mapping)):
+                            raise ValueError(
+                                "a Stage must group at least one concrete Leaf; terminal work is a Leaf")
+                    validate(children, node_type, role)
+                elif children:
+                    raise ValueError("a Leaf cannot contain child nodes")
+
+        validate(draft.get("nodes") or [], str(target["type"] or ""), target_role)
+
     def _validate_plan_draft_horizon(
             self, session_id: int, target_parent_id: int,
-            draft: Mapping[str, Any], *, allow_incomplete: bool = False) -> None:
-        """Preflight every draft sibling group before any goal rows are written."""
+            draft: Mapping[str, Any], *, allow_incomplete: bool = False,
+            horizon: int = PLAN_LEAF_HORIZON) -> None:
+        """Preflight every draft sibling group before any goal rows are written.
+        Drafts are trimmed to `horizon` Leaves per group before this runs, so an
+        over-horizon group here means a caller bypassed the trim."""
         target = self.get(int(target_parent_id))
         if not target:
             raise ValueError("planning target not found")
@@ -2957,9 +3334,9 @@ class GoalStore:
                     })
                 else:
                     branches.append((raw, node_type))
-            if len(candidates) > 2:
+            if len(candidates) > horizon:
                 raise LeafHorizonError(
-                    "planning draft exceeds the two-Leaf horizon",
+                    f"planning draft exceeds the {horizon}-Leaf horizon",
                     code="horizon_full")
             checked: list[str] = []
             for candidate in candidates:
@@ -2984,7 +3361,7 @@ class GoalStore:
                     self.validate_leaf_candidate(
                         int(persisted_parent_id), candidate["title"],
                         description=candidate["description"],
-                        reservations=[*reservations, *prior], horizon=2)
+                        reservations=[*reservations, *prior], horizon=horizon)
                     prior.append(candidate)
             for raw, node_type in branches:
                 validate_group(raw.get("children") or [], node_type)
@@ -3004,6 +3381,9 @@ class GoalStore:
             raise ValueError("draft has no goals to create")
         target = self.get(session["target_parent_id"])
         placement = session["draft"].get("_placement") or {}
+        if session.get("source_item_id") is not None and not placement.get("user_confirmed"):
+            raise ValueError(
+                "review and confirm where this plan should live before creating it")
         if target and target["type"] == "umbrella":
             if (placement.get("mode") != "new_root" or
                     not placement.get("root_eligible") or
@@ -3029,6 +3409,13 @@ class GoalStore:
 
         commit_draft = dict(session["draft"])
         commit_draft["nodes"] = nodes
+        # Defensive: the stored draft is already trimmed, but re-trim in case an
+        # older session was persisted before the one-Leaf model.
+        commit_draft = self._trim_draft_leaves(
+            int(session["target_parent_id"]), commit_draft)
+        nodes = list(commit_draft.get("nodes") or [])
+        self._validate_plan_semantics(
+            int(session["target_parent_id"]), commit_draft)
         self._validate_plan_draft_horizon(
             int(session_id), int(session["target_parent_id"]), commit_draft)
         persisted_reservations: list[dict] = []
@@ -3056,7 +3443,8 @@ class GoalStore:
             if node_type == "task":
                 new_id = self.create_ai_leaf(
                     title, parent_id=parent_id, description=description,
-                    priority=priority, due_date=raw.get("due_date"), horizon=2,
+                    priority=priority, due_date=raw.get("due_date"),
+                    horizon=PLAN_LEAF_HORIZON,
                     reservations=(persisted_reservations
                                   if int(parent_id) == int(session["target_parent_id"])
                                   else None),
@@ -3073,6 +3461,13 @@ class GoalStore:
                     description=description,
                     notes=str(raw.get("notes") or ""), priority=priority,
                     due_date=raw.get("due_date"), _commit=False)
+                semantic_role = str(raw.get("semantic_role") or "").strip().lower()
+                if node_type == "subgoal" and semantic_role in {"area", "project", "stage"}:
+                    self._set_semantic_role(
+                        new_id, semantic_role,
+                        rationale=("Planner-defined structure: Areas are ongoing scopes, "
+                                   "Projects are finite outcomes, and Stages are project phases."),
+                        source="planning", commit=False)
             for child in children:
                 add(child, new_id)
             return new_id
@@ -3286,11 +3681,29 @@ def record_experiment_outcome(config, goal_id: int, payload: dict) -> dict:
 
 
 PLANNER_SYSTEM = """You help turn one grounded suggestion into an actionable goal plan.
-Ask exactly one decision-bearing question at a time. Briefly recommend a current
-approach, then ask the question. Never activate goals yourself. Return strict JSON:
+While important decisions remain, ask exactly one decision-bearing question at a time and briefly
+recommend a current approach first. Once the outcome, scope, and first concrete action are clear,
+stop asking questions and explicitly tell the user: "The plan is ready—press Summarize & review
+below to review the structure before anything is created." Never activate goals yourself.
+
+Use the hierarchy by meaning, not by node count: a Root is a durable life domain; a Branch (emit
+semantic_role "area") is an ongoing scope inside that domain which survives any one project; a
+Project is one finite outcome; a Stage is a distinct phase inside that project; and a Leaf is one
+concrete action or finishable outcome. Related phases of one outcome belong under one Project, not
+as several sibling Projects. A finite action such as mapping, tracking, designing, testing, or
+deciding is normally a Project, never a Branch merely because it has child phases. Add a Branch
+wrapper only when its title names a genuinely ongoing scope beyond the current project. Skip Stage
+when the Project only needs Leaves.
+
+Return strict JSON:
 {"message": str, "draft": {"rationale": str, "nodes": [goal nodes]}}.
-Goal nodes use type overgoal|subgoal|task, title, description, priority
-low|normal|high, due_date YYYY-MM-DD or null, and children. Tasks have no children.
+Goal nodes use type overgoal|subgoal|task, semantic_role area|project|stage|null, title,
+description, priority low|normal|high, due_date YYYY-MM-DD or null, and children. semantic_role is
+required for subgoal nodes and null otherwise. Tasks have no children.
+ONE-LEAF RULE: give each Project (or Stage) exactly ONE Leaf — the single concrete NOW action.
+Never draft a second Leaf or a checklist of steps under the same parent: the next Leaf is created
+later in the main chat once the current one is finished, carrying its handoff. If you can only
+name a series of actions and not a single first one, ask the user which comes first instead.
 Never use type "umbrella". Use TODAY from the prompt for any dates. Keep
 descriptions short so the JSON reply never exceeds ~1500 tokens.
 """
@@ -3364,19 +3777,33 @@ Return strict JSON:
 Include a node only when its type, parent, or Branch role should change. Use only supplied ids.
 Area/Project/Stage applies only when new_type is subgoal. Ask at most one short question when the
 meaning is genuinely uncertain. Return at most 16 node changes.
-Normally normalize Stage → Stage to Project → Stage or Stage → Leaf. Keep nested Stages only when
-the child entry explicitly explains the macro-stage/substage distinction.
+Use a strict hierarchy: Area may live beneath Root/Area; Project may live beneath Root/Area;
+Stage may live directly beneath Project; Project → Project and Stage → Stage are invalid. A Stage
+must group concrete Leaves. Terminal tracking, capture, analysis, design, or decision work is a
+Leaf, not an empty Stage. Prefer Project → Leaves when a phase would contain only one Leaf.
 """
 
 SUMMARY_SYSTEM = """Turn this planning dialogue into one concise editable goal tree.
 Use the user's decisions as authoritative. Return strict JSON:
 {"summary": str, "draft": {"rationale": str, "nodes": [goal nodes]}}.
+Use the hierarchy by meaning: Root = durable life domain; Branch (semantic_role "area") = ongoing
+scope that survives any one project; Project = one finite outcome; Stage = a distinct project
+phase; Leaf = one concrete action or finishable outcome. Related phases of a single outcome must be
+nested under one Project, not emitted as several sibling Projects. Mapping, tracking, designing,
+testing, and deciding are finite project work, not Branches. When the target is a Root, add a
+Branch wrapper only if the dialogue supports a genuinely ongoing scope beyond this project;
+otherwise create the Project directly.
+Small Projects should connect directly to Leaves and omit Stage.
+ONE-LEAF RULE: emit exactly ONE Leaf per Project (or per Stage) — the single concrete NOW action.
+Never emit two Leaves under the same parent or a step-by-step checklist; the next Leaf is created
+later in the main chat after the current one is finished. Use priority high only when the user
+explicitly identified urgency; otherwise default every new node to normal.
 The first node must fit below the supplied target: overgoal below umbrella,
 otherwise subgoal below an overgoal/subgoal. Never use type "umbrella".
-Include concrete tasks when known; do not invent dates, and derive any dates
-from TODAY in the prompt. Nodes use type, title, description, priority,
-due_date, children. Keep descriptions short so the JSON reply never exceeds
-~1500 tokens.
+Include concrete tasks when known; do not invent dates, and derive any dates from TODAY in the
+prompt. Nodes use type, semantic_role, title, description, priority, due_date, children.
+semantic_role is required as area|project|stage for subgoal nodes and null otherwise. Keep
+descriptions short so the JSON reply never exceeds ~1500 tokens.
 """
 
 
@@ -3692,21 +4119,29 @@ class StubGoalPlanner:
     def reply(self, session: dict, answer: str, target: dict) -> tuple[str, dict]:
         draft = dict(session.get("draft") or {})
         draft["success"] = answer.strip()
-        return ("That gives the plan a finish line. I would start with one small experiment "
-                "and one review task. What is the first concrete action you want to take?", draft)
+        user_turns = sum(message.get("role") == "user"
+                         for message in session.get("messages", [])) + 1
+        if user_turns >= 2:
+            return ("The plan is ready—press Summarize & review below to review the "
+                    "structure before anything is created.", draft)
+        return ("That gives the plan a finish line. What is the first concrete action "
+                "you want to take?", draft)
 
     def summarize(self, session: dict, target: dict) -> tuple[str, dict]:
         suggestion = session.get("draft", {}).get("rationale") or "Implement the idea"
         success = session.get("draft", {}).get("success") or "Define a useful outcome"
         placement = session.get("draft", {}).get("_placement") or {}
-        project = {"type": "subgoal", "title": suggestion[:80], "description": success,
+        project = {"type": "subgoal", "semantic_role": "project",
+                   "title": suggestion[:80], "description": success,
                    "priority": "normal", "due_date": None, "children": [{
-                       "type": "task", "title": "Take the first concrete step",
+                       "type": "task", "semantic_role": None,
+                       "title": "Take the first concrete step",
                        "description": "", "priority": "normal", "due_date": None,
                        "children": [],
                    }]}
         if target["type"] == "umbrella":
-            nodes = [{"type": "overgoal", "title": placement.get("root_title", "New life domain"),
+            nodes = [{"type": "overgoal", "semantic_role": None,
+                      "title": placement.get("root_title", "New life domain"),
                       "description": placement.get("root_description", ""), "priority": "normal",
                       "due_date": None, "children": [project]}]
         else:
@@ -3811,7 +4246,8 @@ def get_goal_planner(config):
 
 
 def recommend_suggestion_placement(config, planner, source_item_id: int,
-                                     *, max_candidates: int = 80) -> dict:
+                                     *, max_candidates: int = 80,
+                                     planning_context: str = "") -> dict:
     """Recommend a semantic owner before a suggestion can become a plan.
 
     This deliberately remains separate from overlap detection: overlap asks
@@ -3834,15 +4270,21 @@ def recommend_suggestion_placement(config, planner, source_item_id: int,
             if entry["type"] not in {"Root", "Branch"} or entry["status"] != "active":
                 continue
             node = store.get(entry["id"])
+            semantic_role = (store.resolved_semantic_role(int(entry["id"]))
+                             if node["type"] == "subgoal" else None)
             candidates.append({
                 "id": int(entry["id"]), "node_type": node["type"],
-                "type_label": entry["type"], "title": entry["title"],
+                "type_label": semantic_role.title() if semantic_role else entry["type"],
+                "semantic_role": semantic_role, "title": entry["title"],
                 "path": entry["path"],
                 "description": str(node.get("description") or "")[:700],
             })
             if len(candidates) >= max_candidates:
                 break
-        raw = planner.place(suggestion, candidates, soul) or {}
+        placement_text = suggestion
+        if str(planning_context or "").strip():
+            placement_text += "\n\nREFINED PLANNING CONTEXT:\n" + str(planning_context)[:6000]
+        raw = planner.place(placement_text, candidates, soul) or {}
         candidate_by_id = {item["id"]: item for item in candidates}
         try:
             parent_id = int(raw.get("parent_id")) if raw.get("parent_id") is not None else None
@@ -4059,6 +4501,12 @@ def recommend_goal_tree_restructure(config, planner, goal_id: int,
                     structural.append({"goal_id": node_id, "new_type": new_type,
                                        "parent_id": parent_id, "reason": reason})
                 role = str(raw_node.get("semantic_role") or "").strip().lower()
+                locked_sources = {"user", "chat", "manual", "approved_restructure"}
+                if (role and role != str(current_node.get("semantic_role") or "") and
+                        str(current_node.get("semantic_role_source") or "") in locked_sources):
+                    raw.setdefault("warnings", []).append(
+                        f"Kept approved role for {current_node['title']}; change it manually if intent changed.")
+                    role = str(current_node.get("semantic_role") or "")
                 if new_type == "subgoal" and role in {"area", "project", "stage"}:
                     roles.append({
                         "goal_id": node_id, "role": role, "reason": reason,
@@ -4300,10 +4748,12 @@ def start_planning(store: GoalStore, planner, source_item_id: int,
         raise ValueError("planning target must be an active Soul, Root, or Branch")
     placement = dict(placement or {})
     if target["type"] == "umbrella":
-        if (placement.get("mode") != "new_root" or
-                not placement.get("root_eligible") or
-                not str(placement.get("root_title") or "").strip() or
-                not str(placement.get("root_description") or "").strip()):
+        pending = placement.get("mode") == "pending" and not placement.get("user_confirmed")
+        approved_root = (placement.get("mode") == "new_root" and
+                         placement.get("root_eligible") and
+                         str(placement.get("root_title") or "").strip() and
+                         str(placement.get("root_description") or "").strip())
+        if not pending and not approved_root:
             raise ValueError("a new Root requires an approved durable life-domain placement")
     else:
         placement.update({

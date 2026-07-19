@@ -6,32 +6,42 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 ## Start Here
 
 - Branch: `main`
-- Parent HEAD: `598e85c`
-- Generated UTC: `2026-07-18T15:40:37+00:00`
-- Changed areas: companion, filing, review
+- Parent HEAD: `487246e`
+- Generated UTC: `2026-07-19T14:55:32+00:00`
+- Changed areas: agent-context, companion, filing, review, storage
 - Read the latest commit message, then run the narrow context command below.
 - Do not scan README, FEATURES, design documents, or devlogs unless the task requires history.
 
 ## Changed Files In This Commit
 
-- `companion.py`
+- `.gitignore`
+- `FEATURES.md`
+- `README.md`
+- `agent_window.py`
+- `bats/New Test Instance.bat`
+- `bats/Portable Backup.bat`
+- `bats/README.md`
+- `bats/Restore Backup.bat`
+- `docs/BACKUP_RECOVERY.md`
 - `gui.py`
+- `livingpc/backup_profile.py`
+- `livingpc/backup_prompt.py`
+- `livingpc/backup_runtime.py`
+- `livingpc/backup_task.py`
 - `livingpc/companion/brain.py`
+- `livingpc/config.py`
+- `livingpc/curiosity.py`
+- `livingpc/forget.py`
 - `livingpc/goal_ai.py`
 - `livingpc/goals.py`
-- `livingpc/ui/agent_window.html`
-- `livingpc/ui/memory.html`
-- `tests/test_agent_window.py`
-- `tests/test_companion.py`
-- `tests/test_goal_ai.py`
-- `tests/test_goals.py`
-- `tests/test_memory_html_ui.py`
+- ...and 28 more; use `git show --stat -1`.
 
 ## Context Commands
 
 - `python tools/project_context.py companion`
 - `python tools/project_context.py filing`
 - `python tools/project_context.py review`
+- `python tools/project_context.py storage`
 
 ## Verification
 
@@ -41,6 +51,6 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 
 ## Recent History Before This Commit
 
+- 487246e Update 2026-07-18
 - 598e85c Update 2026-07-17
 - 1e23f21 Update 2026-07-16
-- 55c6cd3 your message

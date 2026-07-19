@@ -129,6 +129,17 @@ class Config:
     backup_enabled: bool = True
     backup_dir: str = ""                        # empty => <data>/backups
     backup_keep: int = 14                       # snapshots retained
+    # Portable, encrypted whole-instance backups.  These are deliberately
+    # separate from the small legacy memory.db checkpoints above: the primary
+    # destination must be selected explicitly before unattended backups run.
+    instance_backup_enabled: bool = False
+    instance_backup_primary_dir: str = ""
+    instance_backup_secondary_dir: str = ""
+    instance_backup_hour: int = 20
+    instance_backup_keep_daily: int = 14
+    instance_backup_keep_weekly: int = 4
+    instance_backup_keep_monthly: int = 12
+    instance_backup_include_blobs: bool = False
     # Consolidation (the scale plan): nightly hygiene pass that merges
     # near-duplicate active facts (newest kept; older copies closed like a
     # supersession, never deleted) and prunes stale rejections/evidence.
@@ -192,9 +203,10 @@ class Config:
     goal_ai_context_max_chars: int = 14000
     goal_ai_max_open_proposals: int = 3
     # Just-in-time planning: max open (non-completed) Leaves per project.
-    # 2 = one committed step plus one provisional next; the next real step is
-    # decided in chat at the completion debrief, not pre-generated.
-    goal_ai_leaf_horizon: int = 2
+    # 1 = a single concrete NOW step; the next real step is decided in the main
+    # chat at the completion debrief (which carries the finished Leaf's handoff),
+    # never pre-generated. This keeps the tree uncluttered and the focus singular.
+    goal_ai_leaf_horizon: int = 1
     goal_ai_notifications: bool = True
     goal_relevance_stale_days: int = 30         # gentle check after a month without movement
     # Shared unsolicited-reflection rhythm. Explicit /remind reminders bypass
@@ -270,13 +282,26 @@ def load(path: str | None = None) -> Config:
     """Load config from a TOML file if present, else return defaults."""
     cfg = Config()
     config_path = _project_path(path) if path else None
+    cfg._config_path = config_path
     if config_path and os.path.exists(config_path):
         try:
             import tomllib  # Python 3.11+
         except ModuleNotFoundError:  # pragma: no cover
             import tomli as tomllib  # type: ignore
         with open(config_path, "rb") as f:
-            data = tomllib.load(f)
+            try:
+                data = tomllib.load(f)
+            except tomllib.TOMLDecodeError as error:
+                # A malformed config.toml otherwise fails silently at launch
+                # (no window, only a buried diagnostic). The most common cause is
+                # a Windows path written as a double-quoted string, where \\U, \\D
+                # etc. are read as invalid escapes. Point straight at the fix.
+                raise ValueError(
+                    f"config.toml is not valid TOML: {error}. If a value is a "
+                    r"Windows path, wrap it in single quotes so the backslashes "
+                    r"stay literal, e.g. dir = 'C:\Users\you\Backups' (not "
+                    r'"C:\Users\you\Backups"). ' f"File: {config_path}"
+                ) from error
         known = {f.name for f in fields(Config)}
         for key, value in data.items():
             if key in known:
@@ -285,6 +310,10 @@ def load(path: str | None = None) -> Config:
     cfg.blob_dir = _project_path(cfg.blob_dir)
     cfg.memory_db_path = _project_path(cfg.memory_db_path)
     cfg.browser_assistant_profile_dir = _project_path(cfg.browser_assistant_profile_dir)
+    if cfg.instance_backup_primary_dir:
+        cfg.instance_backup_primary_dir = _project_path(cfg.instance_backup_primary_dir)
+    if cfg.instance_backup_secondary_dir:
+        cfg.instance_backup_secondary_dir = _project_path(cfg.instance_backup_secondary_dir)
     if getattr(cfg, "profile", "personal") == "launch":
         cfg.ocr_enabled = False
         cfg.browser_history_enabled = False

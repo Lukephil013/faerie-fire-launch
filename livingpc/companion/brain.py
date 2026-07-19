@@ -117,8 +117,8 @@ not enough. Prefer the most specific existing owner and never duplicate equivale
 
 Growth rules: create_branch may represent area, project, or stage; create_leaf is one concrete
 action/outcome; record_goal_progress is preferred when an equivalent node already exists and never
-marks it complete. set_project_signal is only for an explicit request to mark or clear one supplied
-semantic Project as highest_priority or currently_working; it never targets an Area, Stage, or Leaf.
+marks it complete. set_project_signal is only for an explicit attention request. highest_priority targets one
+semantic Area; currently_working targets one semantic Project inside that Area. It never targets a Stage or Leaf.
 Investigation rules: add_investigation_context is preferred over a new
 start_investigation when an active or paused Investigation overlaps. User-confirmed preferences can
 be useful Investigation context. Use only supplied ids and user-authored statements. Return at most
@@ -214,6 +214,9 @@ class Companion:
         # each remains independently approvable instead of overwriting the
         # previous one.
         self._pending_proposals: list[dict] = self.chats.pending_proposals(self.chat_id)
+        # Human-readable reasons why cards were dropped in the current
+        # extraction pass, so the chat note can say what actually failed.
+        self._drop_reasons: list[str] = []
 
     def _default_chat(self):
         backend = getattr(self.cfg, "companion_backend", "claude")
@@ -600,7 +603,7 @@ class Companion:
             "<<<faerie_proposal\n"
             "{\"action\": one of \"attach_existing\" | \"create_branch\" | "
             "\"create_root_branch\" | \"create_leaf\" | \"rename_node\" | "
-            "\"delete_node\" | \"move_node\" | \"reclassify_node\" | \"replan_project\" | \"start_investigation\" | "
+            "\"delete_node\" | \"move_node\" | \"reclassify_node\" | \"replan_project\" | \"merge_projects\" | \"start_investigation\" | "
             "\"set_project_signal\" | "
             "\"add_investigation_context\" | \"start_exploration\" | "
             "\"rename_investigation\" | \"merge_investigations\" | "
@@ -614,7 +617,8 @@ class Companion:
             " If the concrete facts aren't in the conversation yet, ask for them instead of proposing.\n"
             " \"reasoning\": \"one sentence on why it fits there\",\n"
             " \"confidence\": a number 0-1 (REQUIRED for every action except start_investigation),\n"
-            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/reclassify_node/replan_project/set_project_signal),\n"
+            " \"target_node_id\": the id from the tree list above (REQUIRED for attach_existing/create_branch/create_leaf/rename_node/delete_node/move_node/reclassify_node/replan_project/set_project_signal; for merge_projects it is the SURVIVING Project),\n"
+            " \"source_node_id\": the id of the Project being absorbed (REQUIRED for merge_projects),\n"
             " \"signal_kind\": \"highest_priority\"|\"currently_working\" "
             "(REQUIRED for set_project_signal),\n"
             " \"enabled\": true|false (set_project_signal only; true marks the "
@@ -659,7 +663,15 @@ class Companion:
             "REPLANNING A PROJECT WHEN ITS PLAN GOES STALE: replan_project restructures "
             "all the Leaves under one project node in a single approval — its steps "
             "list is the complete new ordered plan (keep/rename/update existing Leaves "
-            "by id, create new ones, archive whatever no longer belongs). Reach for it "
+            "by id, create new ones, archive whatever no longer belongs). The plan "
+            "covers the project's WHOLE subtree: Leaves sitting under Stage Branches "
+            "are addressed by id like any other, every live Leaf of the subtree must "
+            "appear exactly once, and the applied plan is flat — kept Leaves become "
+            "direct ordered steps and any Stage the plan empties is archived "
+            "automatically (reversible). So consolidating a cluttered, Stage-heavy "
+            "project is ONE replan_project card; never stage delete_node cards for "
+            "its Stages first. Steps reference Leaves only — never a Stage id. "
+            "Reach for it "
             "proactively, without being asked: whenever the conversation makes a "
             "project's current Leaves stale, mis-ordered, or wrongly framed — a "
             "decision just made or approved, a priority that shifted, work the user "
@@ -688,37 +700,41 @@ class Companion:
             "the card, never replaces it — they can approve or redirect from the draft. "
             "Related: create_leaf never targets "
             "a Leaf — a follow-up action belongs under the project node itself.\n"
-            "PROJECT ATTENTION: when the user explicitly asks to make a Project "
-            "their highest/top priority, mark it currently working, or clear either "
-            "marker, emit set_project_signal in the same reply. Copy the real Project "
-            "id from the tree, use signal_kind highest_priority or currently_working, "
-            "and enabled true or false. The approval card is the permission step. "
-            "Only semantic Projects can carry these markers; never reinterpret a "
-            "Leaf's low/normal/high execution metadata as Project attention. Each "
-            "marker is global, so approving a new Project automatically moves that "
-            "marker from the old Project.\n"
-            f"JUST-IN-TIME LEAVES (the horizon rule): a project holds at most "
-            f"{min(2, max(1, int(getattr(self.cfg, 'goal_ai_leaf_horizon', 2))))} open Leaves "
-            "— the step being worked now, plus at most one tentative next step. "
-            "Public NOW/TENTATIVE-NEXT labels appear only for a Project marked "
-            "CURRENTLY_WORKING or HIGHEST_PRIORITY; unmarked projects retain "
-            "backend position without an execution label. "
-            "Never queue more: pre-built leaf sequences go stale the moment the "
-            "first one finishes (the user's own words: they want to follow the "
-            "river — structure that responds to where they went, not structure "
-            "that predicts where they'll go). The app enforces this cap, so a "
-            "create_leaf or replan that would exceed it is dropped. Treat the "
-            "second open Leaf as a cheap-to-rewrite guess, and rewrite it freely "
-            "via replan_project when reality turns. THE DEBRIEF MOMENT: when the "
-            "user arrives saying they completed the NOW Leaf, stage exactly ONE "
-            "replan_project card: include op:\"complete\" for that Leaf, promote "
-            "or rewrite the existing tentative-next Leaf, and, if the project "
-            "continues, create exactly one new tentative-next Leaf. Do not also emit "
-            "record_goal_progress or a standalone create_leaf for that project in "
-            "the same reply. The replan card is the only mutation and remains "
-            "approval-gated. Then sanity-"
-            "check the chain above it: does the project, its Branch, and its Root "
-            "still point at what they actually want? Say so plainly if not.\n"
+            "MERGING PROJECTS: when the user asks to combine, merge, or fold two "
+            "Projects into one, emit ONE merge_projects card: target_node_id is "
+            "the surviving Project and source_node_id is the Project being "
+            "absorbed. Every Leaf and Stage of the absorbed Project moves to the "
+            "end of the surviving plan and the emptied Project is archived "
+            "(reversible). NEVER express a merge as replan_project — a replan can "
+            "only keep/rename/complete/archive the target project's OWN direct "
+            "Leaves and is rejected if it references another project's work. A "
+            "freshly merged plan may temporarily hold more open Leaves than the "
+            "horizon allows; after the merge is approved, offer one follow-up "
+            "replan_project card to trim and reorder the combined plan.\n"
+            "FOCUS BY ORDER: priority is the sibling ORDER set on each Root, Branch, "
+            "and Project. The top-ordered Root, then its top-ordered Branch, then "
+            "that Branch's top-ordered Project, and that Project's single Leaf form "
+            "the one FOCUS/NOW path; every other Branch and Project shows only its "
+            "order number. When the user asks to make something their priority or "
+            "work on it next, emit move_node to reorder that node to the front of "
+            "its siblings (position 1) — there is no separate priority marker. Never "
+            "reinterpret a Leaf's low/normal/high execution metadata as order.\n"
+            "ONE-LEAF RULE (the horizon): a Project holds exactly ONE open Leaf — the "
+            "single concrete step being worked NOW. Never queue a second Leaf or a "
+            "pre-built sequence: the next step is decided here at the completion "
+            "debrief, carrying the finished Leaf's handoff, not predicted in advance "
+            "(the user's words: follow the river — structure that responds to where "
+            "they went, not structure that predicts where they'll go). The app "
+            "enforces this cap, so a create_leaf or replan that would leave more than "
+            "one open Leaf is dropped. THE DEBRIEF MOMENT: when the user says they "
+            "completed the NOW Leaf, stage exactly ONE replan_project card: "
+            "op:\"complete\" for that Leaf and, if the project continues, op:\"create\" "
+            "for exactly ONE new Leaf (the next NOW) that carries what the finished "
+            "Leaf handed off. Do not also emit record_goal_progress or a standalone "
+            "create_leaf for that project in the same reply. The replan card is the "
+            "only mutation and remains approval-gated. Then sanity-check the chain "
+            "above it: does the Project, its Branch, and its Root still point at what "
+            "they actually want? Say so plainly if not.\n"
             "EXPLORATION THREADS — A REAL FEATURE YOU KNOW ABOUT: every Investigation "
             "can hold Exploration Threads: named routes inside the same investigation "
             "(same story, new direction), each steering its own questions. The current "
@@ -740,7 +756,7 @@ class Companion:
             f"HARD CONFIDENCE GATE: only emit attach_existing/create_branch/"
             f"create_root_branch/create_leaf/rename_node/delete_node/move_node/"
             f"reclassify_node/"
-            f"replan_project/set_project_signal/add_investigation_context/start_exploration/"
+            f"replan_project/merge_projects/set_project_signal/add_investigation_context/start_exploration/"
             f"rename_investigation/merge_investigations/archive_investigation/"
             f"record_goal_progress/set_project_signal/browser_task at "
             f"confidence {self.PROPOSAL_CONFIDENCE_GATE} or above, and only with a "
@@ -1675,9 +1691,10 @@ class Companion:
                            "reclassify_node"}
     _REPLAN_ACTIONS = {"replan_project"}
     _PROJECT_SIGNAL_ACTIONS = {"set_project_signal"}
+    _MERGE_PROJECT_ACTIONS = {"merge_projects"}
     _LEAF_GROWTH_ACTIONS = {
         "create_leaf", "rename_node", "delete_node", "move_node",
-        "record_goal_progress", "replan_project",
+        "record_goal_progress", "replan_project", "merge_projects",
     }
     _INVESTIGATION_ACTIONS = {
         "add_investigation_context", "start_exploration",
@@ -1689,12 +1706,12 @@ class Companion:
     # node via target_node_id, verified against the catalog before acting.
     _TARGETED_ACTIONS = ((_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS |
                           _REPLAN_ACTIONS | _PROGRESS_ACTIONS |
-                          _PROJECT_SIGNAL_ACTIONS)
+                          _PROJECT_SIGNAL_ACTIONS | _MERGE_PROJECT_ACTIONS)
                          - {"create_root_branch"})
     _ALL_ACTIONS = (_PLACEMENT_ACTIONS | _STRUCTURAL_ACTIONS | _REPLAN_ACTIONS |
                     _INVESTIGATION_ACTIONS | _PROGRESS_ACTIONS |
-                    _PROJECT_SIGNAL_ACTIONS | _BROWSER_ACTIONS |
-                    {"start_investigation"})
+                    _PROJECT_SIGNAL_ACTIONS | _MERGE_PROJECT_ACTIONS |
+                    _BROWSER_ACTIONS | {"start_investigation"})
     _REPLAN_STEP_OPS = {"create", "keep", "rename", "update", "archive", "complete"}
     _REPLAN_MAX_STEPS = 12
     _SCOUT_ACTIONS = {"create_branch", "create_root_branch", "create_leaf",
@@ -1753,12 +1770,8 @@ class Companion:
             details = [str(node["type"])]
             role = str(node.get("semantic_role") or "").strip()
             if role:
-                details.append(f"role={role.upper()}")
-            focus = node.get("project_focus") or {}
-            if focus.get("highest_priority"):
-                details.append("HIGHEST_PRIORITY")
-            if focus.get("currently_working"):
-                details.append("CURRENTLY_WORKING")
+                # The "area" role is shown to the user as "Branch".
+                details.append(f"role={'BRANCH' if role == 'area' else role.upper()}")
             lines.append(
                 f"- id={node['id']} [{'; '.join(details)}] "
                 f"{node['path'] or node['title']}")
@@ -1815,20 +1828,13 @@ class Companion:
             return "(no projects with Leaves yet)"
         lines = []
         for project in projects:
-            focus = project.get("project_focus") or {}
-            attention = "/".join(name for name, active in (
-                ("CURRENTLY_WORKING", focus.get("currently_working")),
-                ("HIGHEST_PRIORITY", focus.get("highest_priority")),
-            ) if active)
-            suffix = f" attention={attention}" if attention else ""
             lines.append(f"- {project['path'] or project['project_title']} "
-                         f"(id={project['project_id']}{suffix})")
+                         f"(id={project['project_id']})")
             for index, leaf in enumerate(project["open"]):
-                marker = ("NOW" if index == 0 else "TENTATIVE_NEXT"
-                          if index == 1 else "OUTSIDE_HORIZON")
+                # One-Leaf model: a project holds a single open Leaf (the NOW).
+                marker = "NOW" if index == 0 else "OUTSIDE_HORIZON"
                 description = f" — {leaf['description']}" if leaf["description"] else ""
-                visible_marker = f"[{marker}]" if project.get("attention_active") else ""
-                lines.append(f"    open{visible_marker} id={leaf['id']} "
+                lines.append(f"    open[{marker}] id={leaf['id']} "
                              f"{leaf['title']}{description}")
             if not project["open"]:
                 lines.append("    (no open Leaf — next step undecided; "
@@ -1878,7 +1884,7 @@ class Companion:
                     "status": node.get("status"),
                     "project_focus": (goals.project_focus(int(entry["id"]))
                                       if node["type"] == "subgoal" and
-                                      goals.resolved_semantic_role(int(entry["id"])) == "project"
+                                      goals.resolved_semantic_role(int(entry["id"])) in {"area", "project"}
                                       else None),
                 })
         finally:
@@ -1951,9 +1957,16 @@ class Companion:
                 target = goals.get(int(proposal.get("target_node_id")))
                 if not target:
                     return set()
-                if action in {"create_leaf", "replan_project"}:
+                if action in {"create_leaf", "replan_project", "merge_projects"}:
                     if target["type"] in {"overgoal", "subgoal"}:
                         projects.add(int(target["id"]))
+                    if action == "merge_projects":
+                        try:
+                            source = goals.get(int(proposal.get("source_node_id")))
+                        except (TypeError, ValueError):
+                            source = None
+                        if source and source["type"] in {"overgoal", "subgoal"}:
+                            projects.add(int(source["id"]))
                     return projects
                 if target["type"] == "task" and target.get("parent_id"):
                     projects.add(int(target["parent_id"]))
@@ -2289,6 +2302,10 @@ class Companion:
             "add_thread": "start_exploration",
             "start_thread": "start_exploration",
             "merge_investigation": "merge_investigations",
+            "merge_project": "merge_projects",
+            "combine_projects": "merge_projects",
+            "combine_project": "merge_projects",
+            "fold_project": "merge_projects",
             "rename_curiosity": "rename_investigation",
             "archive_curiosity": "archive_investigation",
             "delete_investigation": "archive_investigation",
@@ -2337,6 +2354,21 @@ class Companion:
                     "0", "false", "no", "off", "clear", "remove"}
             else:
                 normalized["enabled"] = bool(raw_enabled)
+        if action == "merge_projects":
+            # The surviving Project rides in target_node_id; recover the
+            # absorbed Project from the model's most likely alias keys.
+            source_value = next((normalized.get(key) for key in (
+                "source_node_id", "source_project_id", "merge_node_id",
+                "from_node_id", "absorbed_node_id")
+                if normalized.get(key) not in (None, "")), None)
+            if source_value is not None:
+                normalized["source_node_id"] = source_value
+            target_value = next((normalized.get(key) for key in (
+                "target_node_id", "target_project_id", "into_node_id",
+                "surviving_node_id")
+                if normalized.get(key) not in (None, "")), None)
+            if target_value is not None:
+                normalized["target_node_id"] = target_value
         if action == "replan_project":
             # Optimistic-lock snapshots are app-owned. Never accept a model-
             # supplied version map; arbitration stamps the current tree after
@@ -2673,6 +2705,19 @@ class Companion:
                         f"Project framing → {project_update.get('description') or '(clear)'}",
                         f"프로젝트 설명 → {project_update.get('description') or '(비움)'}"))
             lines.extend(self._render_replan_steps(proposal))
+        elif action == "merge_projects":
+            source = self._catalog_lookup(proposal.get("source_node_id"))
+            target = self._catalog_lookup(proposal.get("target_node_id"))
+            source_label = source["title"] if source else "?"
+            target_label = target["title"] if target else "?"
+            lines.append(lang_T(
+                f"{conf_text}merge Project **{source_label}** into "
+                f"**{target_label}** — its Leaves and Stages move to the end "
+                "of the surviving plan, and the emptied Project is archived "
+                "(reversible)",
+                f"{conf_text}**{source_label}** 프로젝트를 **{target_label}**에 "
+                "합쳐요 — Leaf와 Stage가 남는 계획 뒤로 옮겨지고, 비워진 "
+                "프로젝트는 보관돼요 (되돌릴 수 있어요)"))
         elif action in self._STRUCTURAL_ACTIONS:
             lines.append(f"{conf_text}{self._describe_target(proposal)}")
         else:
@@ -2848,7 +2893,10 @@ class Companion:
                                     combined, parent_id))
                         finally:
                             goals.close()
-                    except (TypeError, ValueError, OSError):
+                    except (TypeError, ValueError, OSError) as error:
+                        self._note_drop_reason(
+                            f"the new Leaf was rejected: {error}"
+                            if isinstance(error, ValueError) else "")
                         valid = False
             if valid and proposal["action"] == "create_branch":
                 target = self._catalog_lookup(proposal.get("target_node_id"))
@@ -2857,10 +2905,11 @@ class Companion:
                 valid = valid and (not role or role in {"area", "project", "stage"})
             if valid and proposal["action"] == "set_project_signal":
                 target = self._catalog_lookup(proposal.get("target_node_id"))
+                signal_kind = proposal.get("signal_kind")
+                expected_role = "area" if signal_kind == "highest_priority" else "project"
                 valid = (bool(target) and target["type"] == "Branch"
-                         and target.get("semantic_role") == "project"
-                         and proposal.get("signal_kind") in {
-                             "highest_priority", "currently_working"}
+                         and target.get("semantic_role") == expected_role
+                         and signal_kind in {"highest_priority", "currently_working"}
                          and isinstance(proposal.get("enabled"), bool))
             if valid and proposal["action"] == "replan_project":
                 target = self._catalog_lookup(proposal.get("target_node_id"))
@@ -2883,7 +2932,45 @@ class Companion:
                                 expected_versions=proposal.get("expected_versions"))
                         finally:
                             goals.close()
-                    except (TypeError, ValueError, OSError):
+                    except (TypeError, ValueError, OSError) as error:
+                        self._note_drop_reason(
+                            f"the replan was rejected: {error}"
+                            if isinstance(error, ValueError) else "")
+                        valid = False
+                elif isinstance(steps, list) and any(
+                        not self._valid_replan_step(step) for step in steps):
+                    self._note_drop_reason(
+                        "a replan step must reference a real Leaf id — never a "
+                        "Stage id (Stages dissolve automatically once the plan "
+                        "empties them), and work from another project needs a "
+                        "merge_projects or move_node card instead")
+            if valid and proposal["action"] == "merge_projects":
+                target = self._catalog_lookup(proposal.get("target_node_id"))
+                source = self._catalog_lookup(proposal.get("source_node_id"))
+                valid = (bool(target) and bool(source)
+                         and target["type"] == "Branch"
+                         and source["type"] == "Branch"
+                         and target.get("semantic_role") == "project"
+                         and source.get("semantic_role") == "project"
+                         and int(target["id"]) != int(source["id"]))
+                if not valid:
+                    self._note_drop_reason(
+                        "a Project merge needs two distinct existing Projects "
+                        "(a surviving target_node_id and an absorbed "
+                        "source_node_id)")
+                else:
+                    try:
+                        from ..goals import GoalStore
+                        goals = GoalStore(self.cfg.memory_db_path)
+                        try:
+                            goals.validate_merge_projects(
+                                int(source["id"]), int(target["id"]))
+                        finally:
+                            goals.close()
+                    except (TypeError, ValueError, OSError) as error:
+                        self._note_drop_reason(
+                            f"the Project merge was rejected: {error}"
+                            if isinstance(error, ValueError) else "")
                         valid = False
             if valid and proposal["action"] == "record_goal_progress":
                 valid = bool(str(proposal.get("directive") or "").strip())
@@ -2897,6 +2984,17 @@ class Companion:
                 except (ValueError, TypeError, RuntimeError):
                     valid = False
         return bool(valid)
+
+    def _note_drop_reason(self, reason: str) -> None:
+        """Remember why a card failed validation for the visible chat note.
+
+        Reasons accumulate during one extraction pass and are cleared by
+        _extract_proposal; blank reasons (unexpected internal errors) are
+        ignored so the note never exposes raw exception noise.
+        """
+        cleaned = " ".join(str(reason or "").split())
+        if cleaned:
+            self._drop_reasons.append(cleaned)
 
     def _extract_proposal(self, text: str, *, preserve_pending: bool = False) -> str:
         """Extract up to three distinct proposal blocks from a model reply.
@@ -2917,6 +3015,7 @@ class Companion:
                 "_(My proposal got cut off mid-draft — say “try again” and I'll "
                 "re-emit it in full.)_",
                 "_(제안이 중간에 잘렸어요 — “다시 시도”라고 하면 전체를 다시 만들게요.)_")
+        self._drop_reasons = []
         matches = list(self._PROPOSAL_BLOCK_RE.finditer(text))
         if not matches:
             return text
@@ -2965,14 +3064,22 @@ class Companion:
         if dropped:
             # Silence here is a trust bug: a card the model tried to stage
             # vanishing without a trace looks like it was staged and applied.
-            note = lang_T(
-                f"_({dropped} proposed card{'s' if dropped != 1 else ''} couldn't "
-                "be staged — it was invalid or stale, duplicated another Leaf, "
-                "the project's leaf horizon was full, or the change was already "
-                "covered by this project's replan.)_",
-                f"_(제안 카드 {dropped}개를 준비하지 못했어요 — 대상이 잘못됐거나 "
-                "프로젝트의 Leaf 한도가 가득 찬 경우가 대부분이에요. 필요하면 "
-                "리플랜으로 합쳐 달라고 말씀해 주세요.)_")
+            reasons = list(dict.fromkeys(self._drop_reasons))[:2]
+            if reasons:
+                detail = "; ".join(reasons)
+                note = lang_T(
+                    f"_({dropped} proposed card{'s' if dropped != 1 else ''} "
+                    f"couldn't be staged — {detail}.)_",
+                    f"_(제안 카드 {dropped}개를 준비하지 못했어요 — {detail}.)_")
+            else:
+                note = lang_T(
+                    f"_({dropped} proposed card{'s' if dropped != 1 else ''} couldn't "
+                    "be staged — it was invalid or stale, duplicated another Leaf, "
+                    "the project's leaf horizon was full, or the change was already "
+                    "covered by this project's replan.)_",
+                    f"_(제안 카드 {dropped}개를 준비하지 못했어요 — 대상이 잘못됐거나 "
+                    "프로젝트의 Leaf 한도가 가득 찬 경우가 대부분이에요. 필요하면 "
+                    "리플랜으로 합쳐 달라고 말씀해 주세요.)_")
             cleaned = (cleaned + "\n\n" + note).strip() if cleaned else note
         return cleaned
 
@@ -3266,11 +3373,12 @@ class Companion:
 
                 if action == "set_project_signal":
                     target = goals.get(int(proposal.get("target_node_id")))
+                    signal_kind = str(proposal.get("signal_kind") or "")
+                    expected_role = "area" if signal_kind == "highest_priority" else "project"
                     if (not target or target.get("status") != "active"
                             or target.get("type") != "subgoal"
-                            or goals.resolved_semantic_role(int(target["id"])) != "project"):
+                            or goals.resolved_semantic_role(int(target["id"])) != expected_role):
                         return gone
-                    signal_kind = str(proposal.get("signal_kind") or "")
                     enabled = bool(proposal.get("enabled", True))
                     signals = goals.project_signals()
                     previous_id = signals.get(signal_kind)
@@ -3293,7 +3401,7 @@ class Companion:
                     if enabled:
                         return lang_T(
                             f"Set — **{target['title']}** is now **{marker}**. "
-                            "Its Leaves will show NOW and TENTATIVE NEXT.",
+                            "The focus path will choose the current Project and show NOW and TENTATIVE NEXT.",
                             f"설정했어요 — **{target['title']}** 프로젝트가 이제 "
                             f"**{marker}**이에요. Leaf에 NOW와 잠정 다음이 표시돼요.")
                     return lang_T(
@@ -3433,6 +3541,46 @@ class Companion:
                             f"{ordered_count} ordered step{'s' if ordered_count != 1 else ''} "
                             f"({summary}). Archived Leaves are reversible.")
 
+                if action == "merge_projects":
+                    target = goals.get(int(proposal.get("target_node_id")))
+                    source = goals.get(int(proposal.get("source_node_id")))
+                    if (not target or target.get("status") == "archived"
+                            or not source or source.get("status") == "archived"):
+                        return gone
+                    result = goals.merge_projects(
+                        int(source["id"]), int(target["id"]),
+                        rationale=reasoning or directive)
+                    # A merge changes both projects' plans, so any older
+                    # standalone Growth card for either is stale now.
+                    self._retire_project_growth_proposals(int(source["id"]))
+                    self._retire_project_growth_proposals(int(target["id"]))
+                    goals.retire_pending_leaf_operations(int(target["id"]))
+                    moved = int(result["moved"])
+                    open_count = goals.open_leaf_count(int(target["id"]))
+                    horizon = self._leaf_horizon_limit()
+                    if lang_is_ko():
+                        message = (
+                            f"합쳤어요 — **{source['title']}** 프로젝트가 이제 "
+                            f"**{target['title']}** 안에서 이어져요. 항목 {moved}개가 "
+                            "옮겨졌고, 비워진 프로젝트는 보관됐어요 (되돌릴 수 있어요).")
+                        if open_count > horizon:
+                            message += (
+                                f" 합쳐진 계획에 열린 Leaf가 {open_count}개라 평소 "
+                                f"한도({horizon}개)를 넘었어요 — 원하시면 리플랜으로 "
+                                "정리해 드릴게요.")
+                        return message
+                    message = (
+                        f"Merged — **{source['title']}** now continues inside "
+                        f"**{target['title']}**: {moved} item"
+                        f"{'s' if moved != 1 else ''} moved over and the emptied "
+                        "Project was archived (reversible).")
+                    if open_count > horizon:
+                        message += (
+                            f" The combined plan now holds {open_count} open "
+                            f"Leaves — above the usual {horizon}-Leaf horizon — "
+                            "so say the word and I'll propose a replan to trim it.")
+                    return message
+
                 if action == "rename_node":
                     target = goals.get(int(proposal.get("target_node_id")))
                     if not target:
@@ -3528,7 +3676,8 @@ class Companion:
             finally:
                 goals.close()
         except Exception as e:
-            if action in {"create_leaf", "replan_project"} and isinstance(e, ValueError):
+            if (action in {"create_leaf", "replan_project", "merge_projects"}
+                    and isinstance(e, ValueError)):
                 return self._stale_proposal_reply()
             return lang_T(f"(I had trouble making that change: {type(e).__name__})",
                          f"(그 변경을 적용하는 데 문제가 있었어요: {type(e).__name__})")

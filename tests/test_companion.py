@@ -1142,6 +1142,7 @@ def test_replan_project_restructures_a_projects_leaves_in_one_approval():
 
         cfg = Config(db_path=os.path.join(directory, "e.db"),
                      memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2  # exercise replan mechanics at a 2-Leaf horizon
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Money & Resources")
         project = goals.create("subgoal", "Run Upwork automation micro-test",
@@ -1220,6 +1221,92 @@ def test_replan_project_requires_a_project_target_and_real_leaves():
         assert companion.pending_proposals() == []
         companion.reply("Try again.")
         assert companion.pending_proposals() == []
+        companion.close()
+
+
+def _two_role_projects(goals):
+    root = goals.create("overgoal", "Health & Energy")
+    area = goals.create("subgoal", "Nervous System", parent_id=root)
+    goals._set_semantic_role(area, "area", rationale="Ongoing domain.")
+    rage = goals.create("subgoal", "Map Rage Triggers", parent_id=area)
+    dread = goals.create("subgoal", "Map Dread Sources", parent_id=area)
+    for project in (rage, dread):
+        goals._set_semantic_role(project, "project",
+                                 rationale="Finite mapping effort.")
+    return rage, dread
+
+
+def test_merge_projects_card_stages_and_applies_a_cross_project_merge():
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        rage, dread = _two_role_projects(goals)
+        goals.create("task", "Choose tool", parent_id=rage)
+        goals.create("task", "Pattern analysis", parent_id=rage)
+        moved_leaf = goals.create("task", "Decide: batch or delegate",
+                                  parent_id=dread)
+        goals.close()
+        response = (
+            "They're one story — let's fold them together.\n"
+            '<<<faerie_proposal\n{"action":"merge_projects",'
+            '"label":"Combine the nervous-system projects",'
+            '"directive":"Rage and dread tracking are one project.",'
+            '"reasoning":"Both map the same nervous-system pattern.",'
+            f'"confidence":0.9,"target_node_id":{rage},'
+            f'"source_node_id":{dread}}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply(
+            "Can you combine the two projects under the nervous system area?")
+        assert "merge Project" in rendered
+        assert "Map Dread Sources" in rendered and "Map Rage Triggers" in rendered
+        assert len(companion.pending_proposals()) == 1
+
+        result = companion.approve_proposal(0)
+        assert "Merged" in result
+        # 3 open leaves > the 2-leaf horizon: the reply must surface that.
+        assert "3 open" in result
+
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            assert goals.get(dread)["status"] == "archived"
+            assert goals.get(moved_leaf)["parent_id"] == rage
+            assert goals.get(moved_leaf)["status"] == "active"
+        finally:
+            goals.close()
+        companion.close()
+
+
+def test_merge_expressed_as_replan_is_dropped_with_the_real_reason():
+    # Regression: asking Faerie to combine two projects used to produce a
+    # replan card referencing the other project's Leaves; it was silently
+    # dropped with a four-way guess of a note. The note must now name the
+    # actual rejection.
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.goals import GoalStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        goals = GoalStore(cfg.memory_db_path)
+        rage, dread = _two_role_projects(goals)
+        keep = goals.create("task", "Choose tool", parent_id=rage)
+        foreign = goals.create("task", "Decide: batch or delegate",
+                               parent_id=dread)
+        goals.close()
+        response = (
+            '<<<faerie_proposal\n{"action":"replan_project","label":"Combined plan",'
+            f'"confidence":0.9,"target_node_id":{rage},"steps":['
+            f'{{"op":"keep","leaf_id":{keep}}},'
+            f'{{"op":"keep","leaf_id":{foreign}}}]}}\nfaerie_proposal>>>'
+        )
+        companion = Companion(cfg=cfg, chat=ScriptedChat(response))
+        rendered = companion.reply("Combine the two projects into one.")
+        assert companion.pending_proposals() == []
+        assert "couldn't be staged" in rendered
+        assert "does not belong to the target project" in rendered
         companion.close()
 
 
@@ -1326,7 +1413,9 @@ def test_leaf_horizon_caps_create_leaf_proposals_at_open_leaf_limit():
         # must be visible, not a silent disappearance.
         assert companion.pending_proposals() == []
         assert "couldn't be staged" in rendered
-        assert "leaf horizon" in rendered
+        # The note now carries the validator's actual reason instead of the
+        # generic four-way guess; it must still name the horizon.
+        assert "leaf horizon" in rendered.lower()
         companion.close()
 
 
@@ -1336,6 +1425,7 @@ def test_pending_leaf_cards_reserve_capacity_and_semantic_identity():
 
         cfg = Config(db_path=os.path.join(directory, "e.db"),
                      memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2  # exercise reservation mechanics at a 2-Leaf horizon
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Money & Resources")
         project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
@@ -1402,6 +1492,7 @@ def test_replan_approval_retires_pending_growth_cards_across_surfaces():
 
         cfg = Config(db_path=os.path.join(directory, "e.db"),
                      memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2  # exercise replan mechanics at a 2-Leaf horizon
         goals = GoalStore(cfg.memory_db_path)
         project = goals.create("overgoal", "Profile launch")
         current = goals.create("task", "Draft profile", parent_id=project)
@@ -1453,6 +1544,7 @@ def test_replan_owns_project_growth_but_keeps_unrelated_investigation_card():
 
         cfg = Config(db_path=os.path.join(directory, "e.db"),
                      memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2  # exercise replan mechanics at a 2-Leaf horizon
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Money & Resources")
         project = goals.create("subgoal", "Upwork micro-test", parent_id=root)
@@ -1507,6 +1599,7 @@ def test_replan_owns_moves_into_project_and_project_level_renames():
 
         cfg = Config(db_path=os.path.join(directory, "e.db"),
                      memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2  # exercise replan mechanics at a 2-Leaf horizon
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Money & Resources")
         source = goals.create("subgoal", "Source project", parent_id=root)
@@ -1583,6 +1676,7 @@ def test_pending_rename_reserves_a_replacement_slot_not_an_extra_leaf():
 
         cfg = Config(db_path=os.path.join(directory, "e.db"),
                      memory_db_path=os.path.join(directory, "m.db"))
+        cfg.goal_ai_leaf_horizon = 2  # exercise reservation mechanics at a 2-Leaf horizon
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Work")
         project = goals.create("subgoal", "Profile project", parent_id=root)
@@ -1874,10 +1968,13 @@ def test_prompt_carries_project_horizons_and_just_in_time_rules():
         goals.close()
         companion = Companion(cfg=cfg, chat=StubChat())
         prompt = companion.system_prompt()
-        assert "JUST-IN-TIME LEAVES" in prompt
+        assert "ONE-LEAF RULE" in prompt and "FOCUS BY ORDER" in prompt
         assert "ACTIVE PROJECT HORIZONS" in prompt
-        assert "open[NOW]" in prompt and "open[TENTATIVE_NEXT]" in prompt
-        assert "CURRENTLY_WORKING" in prompt
+        # One-Leaf model: the single open step is NOW; any extra open Leaf is
+        # flagged OUTSIDE_HORIZON, never TENTATIVE_NEXT.
+        assert "open[NOW]" in prompt
+        assert "TENTATIVE_NEXT" not in prompt
+        assert "open[OUTSIDE_HORIZON]" in prompt
         whiteboard_line = next(line for line in prompt.splitlines()
                                if "Computer Whiteboard" in line)
         assert "open[" not in whiteboard_line
@@ -1914,7 +2011,8 @@ def test_goalstore_leaf_horizon_reports_open_and_recent_done_leaves():
         assert "Upwork micro-test" in entry["path"]
         assert entry["attention_active"] is False
         assert entry["project_focus"] == {
-            "highest_priority": False, "currently_working": False}
+            "highest_priority": False, "currently_working": False,
+            "auto_current": False}
         goals.close()
 
 
@@ -2152,7 +2250,10 @@ def test_replan_can_mark_finished_work_complete():
         companion.close()
 
 
-def test_completion_debrief_promotes_now_and_adds_one_provisional_leaf():
+def test_completion_debrief_completes_now_and_adds_exactly_one_leaf():
+    """One-Leaf model: on completion the debrief marks the NOW Leaf done and, if
+    the project continues, creates exactly ONE new Leaf — never a tentative
+    second — so the project holds a single open Leaf afterward."""
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore
 
@@ -2163,22 +2264,17 @@ def test_completion_debrief_promotes_now_and_adds_one_provisional_leaf():
         project = goals.create("subgoal", "Upwork application experiment",
                                parent_id=root)
         now = goals.create("task", "Publish Upwork profile", parent_id=project)
-        provisional = goals.create(
-            "task", "Scan suitable postings", parent_id=project)
         goals.close()
         response = (
-            'The profile is done, so the horizon should move with you.\n'
+            'The profile is done, so the next step follows what you learned.\n'
             f'<<<faerie_proposal\n{{"action":"replan_project",'
             f'"label":"Advance the Upwork horizon",'
-            f'"directive":"Mark the profile complete and adapt the next two steps.",'
-            f'"reasoning":"Completed work promotes the next step and makes only one new guess.",'
+            f'"directive":"Mark the profile complete and set the single next step.",'
+            f'"reasoning":"Completed work hands off to exactly one new NOW Leaf.",'
             f'"confidence":0.95,"target_node_id":{project},"steps":['
             f'{{"op":"complete","leaf_id":{now}}},'
-            f'{{"op":"rename","leaf_id":{provisional},'
-            f'"new_title":"Apply to first suitable posting",'
-            f'"description":"Use the AI and novelty filter on the current scan."}},'
-            f'{{"op":"create","title":"Review outcome and adapt the filter",'
-            f'"description":"Treat this as provisional until the first application is sent."}}]}}'
+            f'{{"op":"create","title":"Apply to first suitable posting",'
+            f'"description":"Use the AI and novelty filter on the current scan."}}]}}'
             '\nfaerie_proposal>>>'
         )
         companion = Companion(cfg=cfg, chat=ScriptedChat(response))
@@ -2197,9 +2293,8 @@ def test_completion_debrief_promotes_now_and_adds_one_provisional_leaf():
                            if item["project_id"] == project)
             assert [item["title"] for item in horizon["open"]] == [
                 "Apply to first suitable posting",
-                "Review outcome and adapt the filter",
             ]
-            assert goals.open_leaf_count(project) == 2
+            assert goals.open_leaf_count(project) == 1
         finally:
             goals.close()
         companion.close()
@@ -2268,7 +2363,7 @@ def test_prompt_instructs_proactive_replanning_over_clarifying_menus():
         c.close()
 
 
-def test_main_chat_can_set_move_and_clear_project_attention_signals():
+def test_main_chat_can_set_area_priority_and_current_project_signals():
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore
 
@@ -2276,200 +2371,132 @@ def test_main_chat_can_set_move_and_clear_project_attention_signals():
                      memory_db_path=os.path.join(directory, "m.db"))
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Career & Building")
-        upwork = goals.create("subgoal", "Run Upwork micro-test", parent_id=root)
-        portfolio = goals.create("subgoal", "Refresh portfolio", parent_id=root)
-        goals._set_semantic_role(
-            upwork, "project", rationale="Explicit test Project.", source="user")
-        goals._set_semantic_role(
-            portfolio, "project", rationale="Explicit test Project.", source="user")
+        area = goals.create("subgoal", "Independent work", parent_id=root)
+        goals._set_semantic_role(area, "area", rationale="Ongoing work.", source="user")
+        portfolio = goals.create("subgoal", "Refresh portfolio", parent_id=area)
+        goals._set_semantic_role(portfolio, "project", rationale="Finite result.", source="user")
         goals.close()
 
         def proposal(target, kind, enabled=True):
             return (
-                "I'll stage that Project marker for approval.\n"
+                "I'll stage that marker for approval.\n"
                 '<<<faerie_proposal\n'
-                '{"action":"set_project_signal","label":"Project attention",'
-                '"directive":"Use this Project attention marker.",'
-                '"reasoning":"The user explicitly requested this Project marker.",'
-                f'"confidence":1.0,"target_node_id":{target},'
-                f'"signal_kind":"{kind}","enabled":'
-                f'{str(enabled).lower()}}}\nfaerie_proposal>>>'
+                '{"action":"set_project_signal","label":"Attention",'
+                '"directive":"Use this attention marker.","reasoning":"Explicit request.",'
+                f'"confidence":1.0,"target_node_id":{target},"signal_kind":"{kind}",'
+                f'"enabled":{str(enabled).lower()}}}\n'
+                'faerie_proposal>>>'
             )
 
         companion = Companion(cfg=cfg, chat=ScriptedChat(
-            proposal(upwork, "highest_priority"),
+            proposal(area, "highest_priority"),
             proposal(portfolio, "currently_working"),
-            proposal(portfolio, "highest_priority"),
             proposal(portfolio, "currently_working", False),
         ))
-
-        rendered = companion.reply("Make the Upwork Project my highest priority.")
-        assert "mark **Run Upwork micro-test** as **Highest priority**" in rendered
-        assert "Set — **Run Upwork micro-test** is now **Highest priority**" in (
-            companion.approve_proposal(0))
-
+        assert "mark **Independent work** as **Highest priority**" in companion.reply(
+            "Make Independent work my priority Area.")
+        assert "Set — **Independent work** is now **Highest priority**" in companion.approve_proposal(0)
         companion.reply("Mark the portfolio Project as currently working.")
         companion.approve_proposal(0)
         goals = GoalStore(cfg.memory_db_path)
-        assert goals.project_signals() == {
-            "highest_priority": upwork,
-            "currently_working": portfolio,
-        }
+        assert goals.project_signals() == {"highest_priority": area, "currently_working": portfolio}
         goals.close()
-
-        companion.reply("Actually, make the portfolio my highest priority too.")
+        companion.reply("Clear currently working from the portfolio.")
         companion.approve_proposal(0)
         goals = GoalStore(cfg.memory_db_path)
-        assert goals.project_signals() == {
-            "highest_priority": portfolio,
-            "currently_working": portfolio,
-        }
-        goals.close()
+        assert goals.project_signals() == {"highest_priority": area, "currently_working": None}
+        goals.close(); companion.close()
 
-        rendered = companion.reply("Clear currently working from the portfolio.")
-        assert "clear **Currently working** from **Refresh portfolio**" in rendered
-        assert "Cleared — **Refresh portfolio** is no longer **Currently working**" in (
-            companion.approve_proposal(0))
-        goals = GoalStore(cfg.memory_db_path)
-        assert goals.project_signals() == {
-            "highest_priority": portfolio,
-            "currently_working": None,
-        }
-        goals.close()
-        companion.close()
-
-
-def test_proposal_scout_can_recover_an_explicit_project_priority_request():
+def test_proposal_scout_can_recover_an_explicit_area_priority_request():
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore
-
-        cfg = Config(db_path=os.path.join(directory, "e.db"),
-                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg = Config(db_path=os.path.join(directory, "e.db"), memory_db_path=os.path.join(directory, "m.db"))
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Career")
-        project = goals.create("subgoal", "Ship portfolio", parent_id=root)
-        goals._set_semantic_role(
-            project, "project", rationale="Explicit test Project.", source="user")
+        area = goals.create("subgoal", "Independent work", parent_id=root)
+        goals._set_semantic_role(area, "area", rationale="Ongoing scope.", source="user")
         goals.close()
-        scout = ScriptedScout({
-            "decision": "propose", "reason": "Explicit Project priority request.",
-            "question": "", "proposals": [{
-                "action": "set_project_signal", "label": "Portfolio priority",
-                "directive": "Make Ship portfolio the highest-priority Project.",
-                "reasoning": "The user explicitly requested this marker.",
-                "confidence": 1.0, "target_node_id": project,
-                "signal_kind": "highest_priority", "enabled": True,
-            }],
-        })
-        companion = Companion(
-            cfg=cfg, chat=ScriptedChat("I'll update the priority."),
-            proposal_scout=scout)
-
-        rendered = companion.reply("Make Ship portfolio my highest priority.")
-
-        assert len(scout.contexts) == 1
-        assert scout.contexts[0]["signals"]["explicit"] is True
-        assert companion.pending_proposal()["action"] == "set_project_signal"
-        assert "mark **Ship portfolio** as **Highest priority**" in rendered
+        scout = ScriptedScout({"decision":"propose","reason":"Explicit Area priority request.",
+            "question":"","proposals":[{"action":"set_project_signal","label":"Area priority",
+            "directive":"Make Independent work the priority Area.","reasoning":"Explicit request.",
+            "confidence":1.0,"target_node_id":area,"signal_kind":"highest_priority","enabled":True}]})
+        companion = Companion(cfg=cfg, chat=ScriptedChat("I'll update the priority."), proposal_scout=scout)
+        rendered = companion.reply("Make Independent work my highest priority Area.")
+        assert companion.pending_proposal()["target_node_id"] == area
+        assert "mark **Independent work** as **Highest priority**" in rendered
         companion.close()
 
-
-def test_main_and_scout_priority_proposals_deduplicate_by_project_and_signal():
+def test_main_and_scout_priority_proposals_deduplicate_by_area_and_signal():
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore
-
-        cfg = Config(db_path=os.path.join(directory, "e.db"),
-                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg = Config(db_path=os.path.join(directory, "e.db"), memory_db_path=os.path.join(directory, "m.db"))
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Career")
-        project = goals.create("subgoal", "Ship portfolio", parent_id=root)
-        goals._set_semantic_role(
-            project, "project", rationale="Explicit test Project.", source="user")
+        area = goals.create("subgoal", "Independent work", parent_id=root)
+        goals._set_semantic_role(area, "area", rationale="Ongoing scope.", source="user")
         goals.close()
-        main_reply = (
-            "I'll stage the change.\n"
-            '<<<faerie_proposal\n'
-            '{"action":"set_project_signal","label":"Top portfolio priority",'
-            '"directive":"Make the portfolio top priority.",'
-            '"reasoning":"Explicit request.","confidence":1.0,'
-            f'"target_node_id":{project},"signal_kind":"highest_priority",'
-            '"enabled":true}\nfaerie_proposal>>>'
+        block = (
+            'Stage it.\n<<<faerie_proposal\n'
+            '{"action":"set_project_signal","label":"Priority Area",'
+            '"directive":"Prioritize the Area.","reasoning":"Explicit.","confidence":1.0,'
+            f'"target_node_id":{area},"signal_kind":"highest_priority","enabled":true}}\n'
+            'faerie_proposal>>>'
         )
-        scout = ScriptedScout({
-            "decision": "propose", "reason": "Explicit request.", "question": "",
-            "proposals": [{
-                "action": "set_project_signal", "label": "Highest priority Project",
-                "directive": "Set the Project marker.",
-                "reasoning": "Explicit request.", "confidence": 1.0,
-                "target_node_id": project, "signal_kind": "highest_priority",
-                "enabled": True,
-            }],
-        })
-        companion = Companion(
-            cfg=cfg, chat=ScriptedChat(main_reply), proposal_scout=scout)
-
-        rendered = companion.reply("Make Ship portfolio my highest priority.")
-
+        scout = ScriptedScout({"decision":"propose","reason":"Explicit.","question":"","proposals":[{
+            "action":"set_project_signal","label":"Priority Area","directive":"Prioritize it.",
+            "reasoning":"Explicit.","confidence":1.0,"target_node_id":area,
+            "signal_kind":"highest_priority","enabled":True}]})
+        companion = Companion(cfg=cfg, chat=ScriptedChat(block), proposal_scout=scout)
+        rendered = companion.reply("Make Independent work my priority Area.")
         assert len(companion.pending_proposals()) == 1
-        assert rendered.count("mark **Ship portfolio** as **Highest priority**") == 1
+        assert rendered.count("mark **Independent work** as **Highest priority**") == 1
         companion.close()
 
-
-def test_main_chat_rejects_project_attention_for_non_project_nodes():
+def test_main_chat_accepts_area_priority_but_rejects_wrong_signal_role():
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore
-
-        cfg = Config(db_path=os.path.join(directory, "e.db"),
-                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg = Config(db_path=os.path.join(directory, "e.db"), memory_db_path=os.path.join(directory, "m.db"))
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Life")
         area = goals.create("subgoal", "Career", parent_id=root)
-        goals._set_semantic_role(
-            area, "area", rationale="Explicit test Area.", source="user")
+        goals._set_semantic_role(area, "area", rationale="Ongoing Area.", source="user")
         goals.close()
         response = (
-            "I can't safely target a non-Project.\n"
-            '<<<faerie_proposal\n'
+            'Stage it.\n<<<faerie_proposal\n'
             '{"action":"set_project_signal","label":"Career priority",'
-            '"directive":"Mark Career as highest priority.",'
-            '"reasoning":"Requested by the user.","confidence":1.0,'
-            f'"target_node_id":{area},"signal_kind":"highest_priority",'
-            '"enabled":true}\nfaerie_proposal>>>'
+            '"directive":"Mark Career highest.","reasoning":"Requested.","confidence":1.0,'
+            f'"target_node_id":{area},"signal_kind":"highest_priority","enabled":true}}\n'
+            'faerie_proposal>>>'
         )
         companion = Companion(cfg=cfg, chat=ScriptedChat(response))
-        rendered = companion.reply("Make Career my highest priority.")
-        assert "faerie_proposal" not in rendered
-        assert companion.pending_proposals() == []
+        rendered = companion.reply("Make Career my priority Area.")
+        assert "mark **Career** as **Highest priority**" in rendered
+        companion.approve_proposal(0)
         goals = GoalStore(cfg.memory_db_path)
-        assert goals.project_signals()["highest_priority"] is None
-        goals.close()
-        companion.close()
+        assert goals.project_signals()["highest_priority"] == area
+        goals.close(); companion.close()
 
-
-def test_main_chat_prompt_exposes_project_signal_action_and_current_marker():
+def test_main_chat_prompt_exposes_order_based_focus_and_branch_role():
+    """Order-based model: the prompt teaches FOCUS BY ORDER and reordering via
+    move_node, and the catalog labels the area role as Branch — no signal
+    markers."""
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore
-
-        cfg = Config(db_path=os.path.join(directory, "e.db"),
-                     memory_db_path=os.path.join(directory, "m.db"))
+        cfg = Config(db_path=os.path.join(directory, "e.db"), memory_db_path=os.path.join(directory, "m.db"))
         goals = GoalStore(cfg.memory_db_path)
         root = goals.create("overgoal", "Career")
-        project = goals.create("subgoal", "Ship portfolio", parent_id=root)
-        goals._set_semantic_role(
-            project, "project", rationale="Explicit test Project.", source="user")
-        goals.set_project_signal(project, "currently_working")
+        area = goals.create("subgoal", "Independent work", parent_id=root)
+        project = goals.create("subgoal", "Ship portfolio", parent_id=area)
+        goals._set_semantic_role(area, "area", rationale="Ongoing scope.", source="user")
+        goals._set_semantic_role(project, "project", rationale="Finite result.", source="user")
         goals.close()
-
         companion = Companion(cfg=cfg, chat=StubChat())
         prompt = companion.system_prompt()
-        assert "PROJECT ATTENTION" in prompt
-        assert "set_project_signal" in prompt
-        assert '"signal_kind": "highest_priority"|"currently_working"' in prompt
-        assert "[Branch; role=PROJECT; CURRENTLY_WORKING]" in prompt
-        assert companion._proposal_signals(
-            "Make Ship portfolio my highest priority.")["explicit"] is True
+        assert "FOCUS BY ORDER" in prompt
+        assert "reorder that node to the front of its siblings" in prompt
+        assert "role=BRANCH" in prompt and "role=PROJECT" in prompt
+        assert "CURRENTLY_WORKING" not in prompt and "HIGHEST_PRIORITY" not in prompt
         companion.close()
-
 
 def test_imitation_proposal_card_is_flagged_and_typed_yes_is_answered_honestly():
     """A reply that mimics a rendered card without emitting the machine block

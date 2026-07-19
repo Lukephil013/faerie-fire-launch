@@ -64,8 +64,24 @@ class AgentWindowApi:
             from livingpc.goals import GoalStore
             store = GoalStore(self.cfg.memory_db_path)
             try:
-                return {"ok": True, "mode": self.mode,
-                        "session": store.plan_session(self.entity_id)}
+                session = store.plan_session(self.entity_id)
+                result = {"ok": True, "mode": self.mode, "session": session}
+                placement = dict(session.get("draft", {}).get("_placement") or {})
+                if session.get("status") == "ready" and not placement.get("user_confirmed"):
+                    try:
+                        from livingpc.goals import (get_goal_planner,
+                                                    recommend_suggestion_placement)
+                        context = (f"REFINED SUMMARY: {session.get('summary', '')}\n"
+                                   f"REFINED DRAFT: {session.get('draft', {})}")[:6000]
+                        result["placement_review"] = recommend_suggestion_placement(
+                            self.cfg, get_goal_planner(self.cfg),
+                            int(session["source_item_id"]), planning_context=context)
+                    except Exception as error:
+                        result["placement_review"] = {
+                            "ok": False,
+                            "message": f"{type(error).__name__}: {error}",
+                        }
+                return result
             finally:
                 store.close()
         except Exception as error:
@@ -152,6 +168,9 @@ class AgentWindowApi:
             from livingpc.goals import GoalStore
             store = GoalStore(self.cfg.memory_db_path)
             try:
+                if payload.get("placement") is not None:
+                    store.confirm_plan_placement(
+                        self.entity_id, dict(payload.get("placement") or {}))
                 if payload.get("draft") is not None:
                     session = store.plan_session(self.entity_id)
                     store.set_plan_draft(self.entity_id, dict(payload["draft"]),
@@ -229,7 +248,7 @@ def main(argv=None):
         window = webview.create_window(
             "Faerie Agent", url=os.path.join(UI_DIR, "agent_window.html"), js_api=api,
             width=680, height=720, min_size=(500, 520), frameless=True,
-            easy_drag=False, on_top=True, resizable=True, text_select=True,
+            easy_drag=False, on_top=False, resizable=True, text_select=True,
             background_color="#06070f")
         api._window = window
         webview.start()
