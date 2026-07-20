@@ -2345,6 +2345,51 @@ def _relevant_chat_context(db_path: str, directive: str, items: list[dict]) -> s
     return "\n".join(lines) or "  (no directly relevant recent chat)"
 
 
+def _related_investigations_block(store: CuriosityStore, curiosity_id: int,
+                                  *, limit: int = 3, threshold: float = 0.08) -> str:
+    """Other active/paused investigations most related to this one, with their
+    latest synthesis. This keeps question generation from being blind to what
+    the user has already worked out in a different investigation."""
+    from .inference import concept_similarity
+    try:
+        this = store.get_curiosity(int(curiosity_id))
+        rows = [r for r in store.list_curiosities()
+                if r["status"] in {"active", "paused"}
+                and int(r["id"]) != int(curiosity_id)]
+    except Exception:
+        return ""
+    if not this or not rows:
+        return ""
+    query = f"{this.get('label', '')} {this.get('directive', '')}"
+    scored = []
+    for row in rows:
+        score = concept_similarity(query, f"{row.get('label', '')} {row.get('directive', '')}")
+        if score >= threshold:
+            scored.append((score, row))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    lines = []
+    for _score, row in scored[:limit]:
+        line = f"  - {row['label']}: {row['directive']}"
+        try:
+            synthesis = (store.latest_synthesis(row["id"], status="approved")
+                         or store.latest_synthesis(row["id"]))
+        except Exception:
+            synthesis = None
+        interpretation = str(
+            ((synthesis or {}).get("payload") or {}).get("interpretation") or "").strip()
+        if interpretation:
+            if len(interpretation) > 600:
+                interpretation = interpretation[:600].rstrip() + "…"
+            line += f"\n    what Faerie concluded there: {interpretation}"
+        lines.append(line)
+    if not lines:
+        return ""
+    return ("\n\nRELATED INVESTIGATIONS (what other investigations of theirs have "
+            "already surfaced — use this so you do not re-ask what is settled "
+            "elsewhere; it is background, not answers to THIS investigation):\n"
+            + "\n".join(lines))
+
+
 def _build_context(mem, inf, store: CuriosityStore, curiosity_id: int) -> CuriosityContext:
     curiosity = store.get_curiosity(curiosity_id)
     directive = curiosity["directive"]
@@ -2444,7 +2489,8 @@ def _build_context(mem, inf, store: CuriosityStore, curiosity_id: int) -> Curios
         attachment_block=attachment_block,
         person_block=_person_block(store),
         chat_context_block=_relevant_chat_context(store.db_path, directive, items),
-        investigation_context_block=_investigation_context_block(store, curiosity_id),
+        investigation_context_block=(_investigation_context_block(store, curiosity_id)
+                                     + _related_investigations_block(store, curiosity_id)),
     )
 
 
@@ -3295,6 +3341,12 @@ def reassess_open_questions(mem, inf, store: CuriosityStore,
     return saved
 
 
+# Investigations no longer surface their own proposals/suggestions — an
+# Investigation builds understanding, and the main chat does the analysis and
+# any tree/action work. Flip this to re-enable the dormant suggestion path.
+INVESTIGATION_PROPOSALS_ENABLED = False
+
+
 def generate_items(mem, inf, store: CuriosityStore, curiosity_id: int, model, *,
                    thread_id: int | None = None,
                    limit: int | None = None,
@@ -3374,9 +3426,13 @@ def generate_items(mem, inf, store: CuriosityStore, curiosity_id: int, model, *,
         it["kind"] == "question" and it["status"] == "answered" for it in existing)
     has_open_suggestion = any(
         it["kind"] == "suggestion" and it["status"] == "open" for it in existing)
-    proactive_suggestion_due = answered_count >= 15 and not has_open_suggestion
+    proactive_suggestion_due = (INVESTIGATION_PROPOSALS_ENABLED
+                                and answered_count >= 15 and not has_open_suggestion)
     gated = []
     for item in sorted(raw_items, key=lambda candidate: candidate.confidence, reverse=True):
+        # Suggestions are disabled: an Investigation only queues questions now.
+        if item.kind == "suggestion" and not INVESTIGATION_PROPOSALS_ENABLED:
+            continue
         floor = suggestion_min_confidence if item.kind == "suggestion" else question_min_confidence
         if item.kind == "suggestion" and proactive_suggestion_due:
             # At the checkpoint, favor a safe revisable proposal over endless

@@ -239,10 +239,15 @@ def test_investigation_sessions_show_progress_proposals_and_advance_the_queue():
     render = _function_body(script, "renderCuriosity")
 
     assert "Estimated understanding" in progress and "Synthesis confidence" in progress
-    assert "proactive proposal checkpoint" in progress
+    # Rapid-fire model: progress counts down to a synthesize handoff, not proposals.
+    assert "until Faerie can synthesize" in progress
+    assert "ready to synthesize" in progress
+    assert "proactive proposal checkpoint" not in progress
     assert "curQueuedIds" in finish and "nextQueued" in finish
     assert "Continuing with the next queued Investigation" in finish
-    assert "answeredTotal>=15" in finish and "continueCuriosity" in finish
+    # Auto-continue keeps asking until the understanding target, then stops.
+    assert "CUR_SYNTHESIS_ANSWER_TARGET" in finish and "continueCuriosity" in finish
+    assert "keepAsking" in finish
     assert "kind:'proposals'" in step
     assert step.index("if(suggestions)") < step.index("if(questions)")
     assert "curProposalReviewHtml" in render and "bindCuriosityProposals" in render
@@ -506,6 +511,82 @@ def test_planning_roles_mark_a_single_order_based_focus_path():
     assert out["focusA"] is True and out["focusB"] is False
     assert out["now1"] == "now"
     assert out["now2"] in (None, "", "null") or out["now2"] is None
+
+
+def test_investigations_group_into_completion_tiers():
+    """The shelf groups investigations into completion tiers by understanding %:
+    not started / exploring / developing / ready(90%+) / synthesized."""
+    node = shutil.which("node")
+    if not node:
+        return
+    script = _script()
+    pct = _function_body(script, "curUnderstandingPct")
+    tier = _function_body(script, "curCompletionTier")
+
+    # The shelf renders one section per tier (most complete first), not tabs.
+    shelf = _function_body(script, "curShelfHtml")
+    assert "CUR_COMPLETION_TIERS" in script
+    assert "curCompletionTier" in shelf and "cur-shelf-tier-head" in shelf
+    assert "tierOrder=['synthesized','ready','developing','early','notstarted']" in shelf
+
+    harness = (
+        "function curUnderstandingPct(cur){" + pct + "}\n"
+        "function curCompletionTier(cur){" + tier + "}\n"
+        "const C=(answered,syntheses)=>({item_counts:{answered},syntheses:syntheses||[]});\n"
+        "console.log(JSON.stringify({\n"
+        "  notstarted:curCompletionTier(C(0)),\n"
+        "  early:curCompletionTier(C(5)),\n"          # 25%
+        "  developing:curCompletionTier(C(11)),\n"    # 55%
+        "  ready:curCompletionTier(C(18)),\n"         # 90%
+        "  synthesized:curCompletionTier(C(4,[{status:'approved',payload:{confidence:0.4}}])),\n"
+        "}));\n"
+    )
+    result = subprocess.run(
+        [node, "-e", harness], text=True, encoding="utf-8",
+        cwd=ROOT, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    import json
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    assert out == {"notstarted": "notstarted", "early": "early",
+                   "developing": "developing", "ready": "ready",
+                   "synthesized": "synthesized"}
+
+
+def test_investigation_proposals_ui_is_gated_off():
+    """P1c: the proposal review panel, its recommended-step entry, and inline
+    suggestion sections are all gated behind CUR_PROPOSALS_UI_ENABLED (false),
+    so no proposals surface in the Investigations UI."""
+    script = _script()
+    assert "const CUR_PROPOSALS_UI_ENABLED=false" in script
+    review = _function_body(script, "curProposalReviewHtml")
+    step = _function_body(script, "curRecommendedStep")
+    card = _function_body(script, "curCardHtml")
+
+    assert "if(!CUR_PROPOSALS_UI_ENABLED) return ''" in review
+    assert "CUR_PROPOSALS_UI_ENABLED?(cur.open_suggestions||[]).length:0" in step
+    assert "CUR_PROPOSALS_UI_ENABLED?(cur.open_suggestions||[]).filter" in card
+
+
+def test_synthesis_hands_off_to_the_main_chat():
+    """At ~90% understanding the session offers 'Synthesize & discuss in main
+    chat', which synthesizes, switches to the Command Center, and posts an
+    analysis prompt so the main chat restates and analyzes the investigation."""
+    script = _script()
+    session = _function_body(script, "renderCuriositySession")
+    handoff = _function_body(script, "synthesizeAndHandoff")
+    post = _function_body(script, "sendCommandPrompt")
+
+    # The button appears only once understanding is reached.
+    assert "cur-session-synthesize" in session
+    assert "answered>=CUR_SYNTHESIS_ANSWER_TARGET||syntheses>0" in session
+    # Handoff: synthesize → leave investigation → main chat → seed analysis.
+    assert "curiosity_synthesize" in handoff
+    assert "switchView('self')" in handoff
+    assert "sendCommandPrompt" in handoff
+    assert "give me your own analysis" in handoff
+    # The post helper reaches the main chat send path / API.
+    assert "sendCommandMessage" in post and "command_send" in post
 
 
 def test_focus_refresh_preserves_an_open_restructure_proposal():
@@ -2056,7 +2137,10 @@ def test_investigation_shelf_search_grows_and_keeps_keyboard_focus():
     card = _function_body(script, "curShelfCardHtml")
     bind = _function_body(script, "bindCuriosityOverview")
 
-    assert "filtered.map(c=>curShelfCardHtml(c,selected))" in shelf
+    # Cards render grouped into completion-tier sections (no flat map, no tabs).
+    assert "group.items.map(c=>curShelfCardHtml(c,selected))" in shelf
+    assert "cur-shelf-tier" in shelf and "curCompletionTier" in shelf
+    assert "cur-board-filters" not in shelf  # filter tabs removed from the shelf
     assert "CUR_SHELF_PAGE_SIZE" not in script
     assert "cur-shelf-prev" not in shelf and "cur-shelf-next" not in shelf
     assert "curBoardQuery=search.value" in bind

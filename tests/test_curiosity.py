@@ -376,7 +376,7 @@ class TestCuriosityStore(unittest.TestCase):
         self.assertEqual(self.store.list_curiosities(status="active"), [])
 
 
-class TestGeneration(unittest.TestCase):
+class TestProposalsDisabledByDefault(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         db = os.path.join(self.tmp.name, "memory.db")
@@ -385,6 +385,38 @@ class TestGeneration(unittest.TestCase):
         self.store = CuriosityStore(db)
 
     def tearDown(self):
+        self.mem.close(); self.inf.close(); self.store.close(); self.tmp.cleanup()
+
+    def test_no_suggestions_are_generated_by_default(self):
+        # An Investigation only queues questions now; the stub model would offer
+        # a suggestion after two answers, but the disabled flag must drop it.
+        cid = self.store.add_curiosity("fitness goals", "fitness")
+        model = StubCuriosityModel()
+        generate_items(self.mem, self.inf, self.store, cid, model)
+        for item in self.store.open_items(cid):
+            self.store.mark_answered(item["id"], "an answer", None)
+        generate_items(self.mem, self.inf, self.store, cid, model)
+        kinds = {i["kind"] for i in self.store.open_items(cid)}
+        self.assertNotIn("suggestion", kinds)
+        self.assertEqual(kinds, {"question"} if kinds else set())
+
+
+class TestGeneration(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db = os.path.join(self.tmp.name, "memory.db")
+        self.mem = MemoryStore(db)
+        self.inf = InferenceStore(db)
+        self.store = CuriosityStore(db)
+        # These cases exercise the (now dormant) suggestion machinery, which is
+        # disabled by default. Enable it here so the preserved path stays covered.
+        import livingpc.curiosity as _cur
+        self._proposals_prev = _cur.INVESTIGATION_PROPOSALS_ENABLED
+        _cur.INVESTIGATION_PROPOSALS_ENABLED = True
+
+    def tearDown(self):
+        import livingpc.curiosity as _cur
+        _cur.INVESTIGATION_PROPOSALS_ENABLED = self._proposals_prev
         self.mem.close()
         self.inf.close()
         self.store.close()

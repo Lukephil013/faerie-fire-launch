@@ -1107,6 +1107,11 @@
   .cur-shelf-tools { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:12px; }
   .cur-shelf-tools .cur-board-search { min-width:210px; }
   .cur-shelf-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .cur-shelf-tier { margin-bottom:16px; }
+  .cur-shelf-tier-head { display:flex; align-items:center; gap:8px; margin:2px 2px 8px;
+    padding-bottom:5px; border-bottom:1px solid var(--line);
+    font-size:12px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:var(--cyan); }
+  .cur-shelf-tier-count { color:var(--muted); font-weight:700; letter-spacing:0; }
   .cur-shelf-card { border:1px solid var(--line); border-radius:14px; padding:13px;
     background:linear-gradient(145deg,rgba(5,24,15,.72),rgba(2,12,8,.55)); min-width:0;
     cursor:pointer; transition:border-color .16s ease,background .16s ease,box-shadow .16s ease,transform .16s ease; }
@@ -1198,6 +1203,8 @@
     background:rgba(3,16,10,.72); }
   .cur-session-save { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:11.5px; }
   .cur-session-footer .accent { min-width:190px; }
+  .cur-session-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+  #cur-session-synthesize { border-color:var(--green); color:var(--green); font-weight:700; }
   @media(max-width:900px){
     #view-curiosity { height:auto; min-height:100vh; overflow:auto; padding:4px 18px 18px; }
     .curiosity-shell { min-height:760px; }
@@ -6090,7 +6097,7 @@ function selfCardBackgroundStyle(index, images){
 
 function curiosityOpenCount(cur){
   const counts=cur.item_counts||{};
-  return (counts.open_questions||0)+(counts.open_suggestions||0);
+  return (counts.open_questions||0)+(CUR_PROPOSALS_UI_ENABLED?(counts.open_suggestions||0):0);
 }
 
 function curiosityTopicTokens(cur){
@@ -6136,7 +6143,7 @@ function dedupeCuriositiesForDisplay(curiosities){
 
 function selfInvestigationCardHtml(cur, index, images){
   const counts=cur.item_counts||{};
-  const waiting=(counts.open_questions||0)+(counts.open_suggestions||0);
+  const waiting=(counts.open_questions||0)+(CUR_PROPOSALS_UI_ENABLED?(counts.open_suggestions||0):0);
   const total=counts.total||0;
   const percent=total?Math.round(((counts.resolved||0)/total)*100):0;
   return '<div class="self-pursuit self-investigation-card" data-curiosity-id="'+cur.id+
@@ -11192,7 +11199,7 @@ function selectedCuriosity(curiosities){
 
 function curOpenCount(cur){
   const counts=cur.item_counts||{};
-  return (counts.open_questions||0)+(counts.open_suggestions||0);
+  return (counts.open_questions||0)+(CUR_PROPOSALS_UI_ENABLED?(counts.open_suggestions||0):0);
 }
 
 function curPlacementText(cur){
@@ -11205,10 +11212,39 @@ function curReadyToClassify(cur){
     (cur.status==='active' && curOpenCount(cur)===0);
 }
 
+// Understanding %, matching the session meter: synthesis confidence once one
+// exists, otherwise the answered-question baseline (answered/20 → 100%).
+function curUnderstandingPct(cur){
+  const syn=(cur.syntheses||[]).find(s=>s.status==='approved')||
+    (cur.syntheses||[]).find(s=>s.status==='draft');
+  if(syn) return Math.round(Number((syn.payload||{}).confidence||0)*100);
+  const answered=(cur.item_counts||{}).answered||0;
+  return Math.min(100,Math.round((answered/20)*100));
+}
+// Completion tiers for grouping the shelf.
+const CUR_COMPLETION_TIERS=[
+  ['notstarted','Not started','시작 안 함'],
+  ['early','Exploring','탐색 중'],
+  ['developing','Developing','발전 중'],
+  ['ready','Ready · 90%+','준비됨 · 90%+'],
+  ['synthesized','Synthesized','종합 완료'],
+];
+function curCompletionTier(cur){
+  if((cur.syntheses||[]).some(s=>s.status==='approved')) return 'synthesized';
+  const answered=(cur.item_counts||{}).answered||0;
+  if(answered===0) return 'notstarted';
+  const pct=curUnderstandingPct(cur);
+  if(pct>=90) return 'ready';
+  if(pct>=50) return 'developing';
+  return 'early';
+}
+const CUR_TIER_KEYS=CUR_COMPLETION_TIERS.map(tier=>tier[0]);
+
 function curMatchesBoardFilter(cur){
   if(curBoardFilter==='waiting') return curOpenCount(cur)>0;
   if(curBoardFilter==='classify') return curReadyToClassify(cur);
   if(curBoardFilter==='active') return cur.status==='active';
+  if(CUR_TIER_KEYS.includes(curBoardFilter)) return curCompletionTier(cur)===curBoardFilter;
   return true;
 }
 
@@ -11228,12 +11264,16 @@ function curFilteredBoardCuriosities(curiosities){
 }
 
 function curBoardCounts(curiosities){
-  return {
+  const counts={
     all:curiosities.length,
     waiting:curiosities.filter(c=>curOpenCount(c)>0).length,
     classify:curiosities.filter(curReadyToClassify).length,
     active:curiosities.filter(c=>c.status==='active').length,
   };
+  CUR_TIER_KEYS.forEach(key=>{
+    counts[key]=curiosities.filter(c=>curCompletionTier(c)===key).length;
+  });
+  return counts;
 }
 
 function curBoardToolsHtml(curiosities, filtered){
@@ -11255,7 +11295,7 @@ function curBoardToolsHtml(curiosities, filtered){
 
 function curSwitcherCardHtml(cur, isSelected, index, images){
   const counts=cur.item_counts||{};
-  const openCount=(counts.open_questions||0)+(counts.open_suggestions||0);
+  const openCount=(counts.open_questions||0)+(CUR_PROPOSALS_UI_ENABLED?(counts.open_suggestions||0):0);
   const waiting=openCount ? openCount+' waiting on you' : 'Nothing waiting';
   const placement=curPlacementText(cur);
   return '<div class="cur-card-tile'+(isSelected?' active':'')+(cur.status==='paused'?' paused':'')+
@@ -12074,7 +12114,7 @@ function curThreadsHtml(cur){
   const threads=cur.threads||[];
   const ko=APP_LANG==='ko';
   const rows=threads.map(thread=>{
-    const openQ=thread.open_questions||[], openS=thread.open_suggestions||[];
+    const openQ=thread.open_questions||[], openS=CUR_PROPOSALS_UI_ENABLED?(thread.open_suggestions||[]):[];
     const count=openQ.length+openS.length;
     return '<details class="metric-panel metric-collapsible cur-thread" data-thread-id="'+thread.id+'" data-ckey="cur-thread-'+thread.id+'">'+
       '<summary class="metric-summary"><span class="metric-summary-title">'+esc(thread.title)+'</span>'+
@@ -12105,7 +12145,7 @@ function curCardHtml(cur){
   const statusChip = cur.status==='paused'
     ? '<span class="cur-status-chip paused">paused</span>' : '';
   const openQ = (cur.open_questions||[]).filter(item=>!item.thread_id);
-  const openS = (cur.open_suggestions||[]).filter(item=>!item.thread_id);
+  const openS = CUR_PROPOSALS_UI_ENABLED?(cur.open_suggestions||[]).filter(item=>!item.thread_id):[];
   const resolved = (cur.resolved||[]).filter(item=>!item.thread_id);
   return '<div class="card" id="cur-'+cur.id+'">' +
     '<div class="cur-head">' +
@@ -12151,6 +12191,7 @@ function curCardHtml(cur){
 }
 
 function curProposalReviewHtml(cur){
+  if(!CUR_PROPOSALS_UI_ENABLED) return '';
   const suggestions=(cur.open_suggestions||[]).filter(item=>!item.thread_id);
   return '<div class="card cur-proposal-review" id="cur-proposals-'+cur.id+'">'+
     '<div class="cur-eyebrow">✦ '+curT('Proposals from this Investigation','이 탐구의 제안')+'</div>'+
@@ -12830,7 +12871,7 @@ function curLatestApprovedInterpretation(cur){
 
 function curRecommendedStep(cur){
   const questions=(cur.open_questions||[]).length;
-  const suggestions=(cur.open_suggestions||[]).length;
+  const suggestions=CUR_PROPOSALS_UI_ENABLED?(cur.open_suggestions||[]).length:0;
   const draft=(cur.syntheses||[]).find(item=>item.status==='draft');
   const placements=(cur.classification_proposals||[]).length;
   if(cur.status==='paused') return {
@@ -12955,9 +12996,17 @@ function curShelfCardHtml(cur,selected){
 }
 
 function curShelfHtml(curiosities,filtered,selected){
-  const counts=curBoardCounts(curiosities);
-  const filters=[['all',curT('All','전체'),counts.all],['waiting',curT('Needs answer','답변 필요'),counts.waiting],
-    ['classify',curT('Ready to classify','분류 준비'),counts.classify],['active',curT('Active','활성'),counts.active]];
+  // Grouped by completion tier (most complete first). Each tier is a header line
+  // with its investigations underneath — no filter tabs.
+  const tierLabel={};
+  CUR_COMPLETION_TIERS.forEach(([key,en,ko])=>{tierLabel[key]=curT(en,ko);});
+  const tierOrder=['synthesized','ready','developing','early','notstarted'];
+  const sections=tierOrder
+    .map(key=>({key,label:tierLabel[key],items:filtered.filter(c=>curCompletionTier(c)===key)}))
+    .filter(group=>group.items.length)
+    .map(group=>'<div class="cur-shelf-tier"><div class="cur-shelf-tier-head">'+esc(group.label)+
+      ' <span class="cur-shelf-tier-count">'+group.items.length+'</span></div>'+
+      '<div class="cur-shelf-grid">'+group.items.map(c=>curShelfCardHtml(c,selected)).join('')+'</div></div>').join('');
   return '<div class="cur-shelf-head"><div class="cur-shelf-title"><h3>▤ '+curT('Investigation shelf','탐구 선반')+'</h3>'+
       '<span>'+curT('Switch investigations without losing your place.','현재 위치를 잃지 않고 탐구를 전환하세요.')+'</span></div>'+
       '<button type="button" id="cur-new-toggle">＋ '+curT('New investigation','새 탐구')+'</button></div>'+
@@ -12966,10 +13015,8 @@ function curShelfHtml(curiosities,filtered,selected){
       '<textarea id="cur-new-directive" rows="2" placeholder="'+curT('What have you been noticing? Describe the pattern, question, or tension…','무엇이 계속 눈에 띄나요? 패턴, 질문 또는 긴장을 설명하세요…')+'"></textarea>'+
       '<button type="button" class="accent" id="cur-new-create">'+curT('Start investigation','탐구 시작')+'</button></div>'+
     '<div class="cur-shelf-tools"><input id="cur-board-search" class="cur-board-search" type="text" placeholder="'+
-      curT('Search investigations…','탐구 검색…')+'" value="'+esc(curBoardQuery)+'"><div class="cur-board-filters">'+
-      filters.map(([key,label,count])=>'<button type="button" class="cur-filter '+(curBoardFilter===key?'active':'')+'" data-cur-filter="'+key+'">'+esc(label)+' · '+count+'</button>').join('')+
-      '</div></div>'+
-    (filtered.length?'<div class="cur-shelf-grid">'+filtered.map(c=>curShelfCardHtml(c,selected)).join('')+'</div>':
+      curT('Search investigations…','탐구 검색…')+'" value="'+esc(curBoardQuery)+'"></div>'+
+    (sections?sections:
       '<div class="empty" style="padding:24px">'+curT('No investigations match this view.','이 보기에 맞는 탐구가 없어요.')+'</div>')+
     '<p class="hint" style="margin:10px 2px 0">✦ '+curT('Progress and unfinished answers are saved automatically.','진행 상황과 작성 중인 답변은 자동 저장돼요.')+'</p>';
 }
@@ -13134,9 +13181,15 @@ function exitCuriositySession(completed){
       Number(candidate.id)===completedCuriosityId);
     const answeredTotal=completedRow?(completedRow.resolved||[]).filter(item=>
       item.kind==='question'&&item.status==='answered').length:0;
-    const proactiveDue=completedRow&&answeredTotal>=15&&!(completedRow.open_questions||[]).length&&
-      !(completedRow.open_suggestions||[]).length;
-    if(proactiveDue) setTimeout(()=>continueCuriosity(completedCuriosityId,null,{auto:true}),0);
+    // Rapid-fire: when the batch empties and understanding is still under ~90%,
+    // auto-generate the next questions so the session keeps flowing instead of
+    // dumping the user back to the overview. Stops once the target is reached
+    // (or a synthesis already exists) so the synthesize handoff can take over.
+    const hasApprovedSynthesis=!!(completedRow&&(completedRow.syntheses||[]).some(s=>s.status==='approved'));
+    const keepAsking=completedRow&&completedRow.status==='active'&&
+      !(completedRow.open_questions||[]).length&&
+      answeredTotal<CUR_SYNTHESIS_ANSWER_TARGET&&!hasApprovedSynthesis;
+    if(keepAsking) setTimeout(()=>continueCuriosity(completedCuriosityId,null,{auto:true}),0);
     if(completedCuriosityId!==null&&curQueuedIds.has(completedCuriosityId)){
       curQueuedIds.delete(completedCuriosityId);saveCuriosityQueue();
     }
@@ -13162,21 +13215,63 @@ function exitCuriositySession(completed){
   loadCuriosity({force:true});
 }
 
+// Rapid-fire target: keep asking until ~90% understanding (baseline hits 90 at
+// this many answers), then offer to synthesize. The user can always continue.
+const CUR_SYNTHESIS_ANSWER_TARGET=18;
+
+// Investigations no longer surface proposals in the UI (they build understanding
+// and hand off to the main chat). Mirrors the backend INVESTIGATION_PROPOSALS_ENABLED
+// gate; flip both to bring the dormant proposal review back.
+const CUR_PROPOSALS_UI_ENABLED=false;
+
+// Post a message to the main chat programmatically. Prefer the normal send path
+// (optimistic bubble + thinking state); fall back to the raw API if the command
+// UI isn't mounted yet.
+function sendCommandPrompt(text){
+  const input=$('cc-input');
+  if(input&&typeof sendCommandMessage==='function'&&commandChatState){
+    input.value=text;autoGrow(input);sendCommandMessage();return;
+  }
+  if(api()&&pywebview.api.command_send) pywebview.api.command_send(text).then(()=>{
+    if(typeof loadCommandChat==='function') loadCommandChat();
+  }).catch(()=>{});
+}
+
+// Phase-3 handoff: synthesize the investigation, then leave it, land in the main
+// chat, and have Faerie restate + analyze it against everything else it knows.
+function synthesizeAndHandoff(cur,button){
+  if(!api()||!cur) return;
+  if(button){button.disabled=true;button.innerHTML=thinkingDotsHtml(curT('Synthesizing','종합 중'));}
+  const restore=()=>{if(button){button.disabled=false;button.textContent='✦ '+curT('Synthesize & discuss in main chat','종합해서 메인 채팅에서 논의');}};
+  autoDatabaseRescue('before investigation synthesis').then(()=>pywebview.api.curiosity_synthesize(cur.id)).then(r=>{
+    if(!r||r.ok===false){restore();toast((r&&r.message)||'Could not synthesize.',true);return;}
+    curiositySession=null;saveCuriositySession();curiosityMode='overview';
+    switchView('self');
+    const label=cur.label||'this';
+    const prompt=curT(
+      'I just finished my "'+label+'" investigation and synthesized what it found. Summarize what it concluded, then give me your own analysis — bring in my other investigations and anything else relevant you know.',
+      '방금 "'+label+'" 탐구를 마치고 알아낸 내용을 종합했어요. 그 결론을 요약한 다음, 다른 탐구들과 관련해 아는 것들을 활용해 분석을 들려주세요.');
+    setTimeout(()=>sendCommandPrompt(prompt),150);
+  }).catch(e=>{restore();toast('Could not synthesize: '+e,true);});
+}
 function curSessionUnderstandingProgressHtml(cur,answered){
   const synthesis=(cur.syntheses||[]).find(item=>item.status==='draft')||curLatestApprovedInterpretation(cur);
   const confidence=synthesis?Math.round(Number((synthesis.payload||{}).confidence||0)*100):
     Math.min(85,Math.round((answered/20)*85));
   const baseline=Math.min(100,Math.round((answered/20)*100));
-  const proposals=(cur.open_suggestions||[]).filter(item=>!item.thread_id).length;
-  let checkpoint;
-  if(proposals) checkpoint=curT(proposals+' proposal'+(proposals===1?' is':'s are')+' ready for review',proposals+'개의 제안을 검토할 수 있어요');
-  else if(answered>=15) checkpoint=curT('A proactive proposal is due at this batch boundary','이 질문 묶음이 끝나면 선제적 제안을 준비해요');
-  else checkpoint=curT((15-answered)+' answer'+(15-answered===1?'':'s')+' until the proactive proposal checkpoint','선제적 제안 확인 지점까지 답변 '+(15-answered)+'개');
+  // Understanding drives a single synthesize gate (~90%). Investigations no
+  // longer surface proposals — they build understanding, then hand off.
+  const understanding=synthesis?confidence:baseline;
+  const target=CUR_SYNTHESIS_ANSWER_TARGET;
+  const remaining=Math.max(1,target-answered);
+  const checkpoint=understanding>=90
+    ? curT('Faerie understands this well — ready to synthesize and take it to the main chat.','페어리가 충분히 이해했어요 — 종합해서 메인 채팅으로 넘길 준비가 됐어요.')
+    : curT(remaining+' more answer'+(remaining===1?'':'s')+' until Faerie can synthesize','종합하기까지 답변 '+remaining+'개 남았어요');
   const confidenceLabel=synthesis?curT('Synthesis confidence','종합 신뢰도'):curT('Estimated understanding','예상 이해도');
   return '<div class="cur-understanding-progress"><div class="cur-understanding-progress-copy"><b>'+
       curT(answered+' questions answered',answered+'개 질문 답변')+'</b><span>'+confidenceLabel+' · '+confidence+'%</span></div>'+
     '<div class="cur-understanding-track"><i style="width:'+baseline+'%"></i></div>'+
-    '<div class="cur-proposal-checkpoint">'+esc(checkpoint)+(answered>=20?'<br>'+curT('Baseline complete; questions may continue while they remain useful.','기본 이해가 완성됐어요. 유용한 동안 질문은 계속될 수 있어요.'):'')+'</div></div>';
+    '<div class="cur-proposal-checkpoint">'+esc(checkpoint)+(understanding>=90?'<br>'+curT('You can keep answering as long as it stays useful.','유용한 동안 계속 답해도 좋아요.'):'')+'</div></div>';
 }
 
 function curSessionStarterOptions(item){
@@ -13217,7 +13312,9 @@ function renderCuriositySession(cur){
     '</div>'+
     '<div class="cur-session-footer"><div class="cur-session-save"><button type="button" id="cur-session-skip">'+curT('Skip for now','지금은 건너뛰기')+'</button>'+
       '<span>✓ '+curT('Draft saved locally · Encrypted investigation','초안 로컬 저장 · 암호화된 탐구')+'</span></div>'+
-      '<button type="button" class="accent" id="cur-session-continue">'+curT('Save & continue','저장하고 계속')+' →</button></div>';
+      '<div class="cur-session-actions">'+
+      ((answered>=CUR_SYNTHESIS_ANSWER_TARGET||syntheses>0)?'<button type="button" id="cur-session-synthesize">✦ '+curT('Synthesize & discuss in main chat','종합해서 메인 채팅에서 논의')+'</button>':'')+
+      '<button type="button" class="accent" id="cur-session-continue">'+curT('Save & continue','저장하고 계속')+' →</button></div></div>';
   const textarea=$('cur-session-answer');
   const saveDraft=()=>{try{if(textarea.value) localStorage.setItem(draftKey,textarea.value);else localStorage.removeItem(draftKey);}catch(e){}};
   textarea.addEventListener('input',()=>{saveDraft();autoGrow(textarea);});autoGrow(textarea);
@@ -13247,6 +13344,7 @@ function renderCuriositySession(cur){
     }).catch(e=>{button.disabled=false;button.innerHTML=originalButtonHtml;toast('Could not save answer: '+e,true);});
   };
   $('cur-session-continue').onclick=submit;
+  if($('cur-session-synthesize')) $('cur-session-synthesize').onclick=()=>synthesizeAndHandoff(cur,$('cur-session-synthesize'));
   textarea.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();submit();}});
 }
 
