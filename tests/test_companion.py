@@ -2210,6 +2210,70 @@ def test_prompt_knows_explorations_and_lists_open_threads():
         companion.close()
 
 
+def test_main_chat_prompt_includes_investigation_synthesis():
+    """The companion must see each investigation's synthesis so it can reason
+    from it directly ('based on my Chronic Depletion synthesis…')."""
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        store = CuriosityStore(cfg.memory_db_path)
+        cid = store.add_curiosity("Why am I always depleted?", "Chronic Depletion")
+        synthesis = store.add_synthesis(cid, {
+            "interpretation": "A nervous system stuck in threat mode; weekends "
+                              "don't restore because dread returns Sunday.",
+            "confidence": 0.72,
+            "unknowns": ["Is it worsening or steady?"],
+        })
+        store.decide_synthesis(synthesis["id"], "approve")
+        store.close()
+
+        companion = Companion(cfg=cfg, chat=StubChat())
+        prompt = companion.system_prompt()
+        assert "synthesis [approved, 72% confidence]" in prompt
+        assert "stuck in threat mode" in prompt
+        assert "still unknown: Is it worsening or steady?" in prompt
+        # The header tells the model the synthesis is citable context.
+        assert "based on your Chronic Depletion synthesis" in prompt
+        companion.close()
+
+
+def test_relevant_investigations_are_pulled_with_a_safety_floor():
+    """Over the limit, the main chat loads the investigations most related to
+    the live conversation, but always keeps the 'greatest' one and any named
+    by label; with no conversation it falls back to the original order."""
+    def row(i, label, directive, greatest=False):
+        return {"id": i, "label": label, "directive": directive,
+                "is_greatest": greatest, "status": "active"}
+    rows = [
+        row(1, "Chronic Depletion", "why am I always depleted and tired"),
+        row(2, "League of Legends", "improve at midlane mechanics"),
+        row(3, "Money & Escape", "escape the corporate trap financially"),
+        row(4, "Sleep Quality", "restless nights and waking tired"),
+        row(5, "Meaning", "the deepest question about meaning", greatest=True),
+        row(6, "Cooking", "learn faster weeknight meals"),
+    ]
+
+    picked = Companion._select_relevant_curiosities(
+        rows, "I feel so depleted and exhausted lately", max_items=3)
+    labels = [r["label"] for r in picked]
+    assert "Chronic Depletion" in labels      # relevance
+    assert "Meaning" in labels                 # safety floor: greatest
+    assert len(picked) <= 3
+
+    named = Companion._select_relevant_curiosities(
+        rows, "let's talk about Cooking tonight", max_items=2)
+    assert "Cooking" in [r["label"] for r in named]   # named by label → forced
+
+    # No conversation yet → prior behavior (first max_items, stable order).
+    first = Companion._select_relevant_curiosities(rows, "", max_items=2)
+    assert [r["id"] for r in first] == [1, 2]
+
+    # At or under the limit, everything is kept.
+    assert Companion._select_relevant_curiosities(rows[:2], "anything", 5) == rows[:2]
+
+
 def test_replan_can_mark_finished_work_complete():
     with tempfile.TemporaryDirectory() as directory:
         from livingpc.goals import GoalStore

@@ -1374,6 +1374,11 @@
     box-sizing:border-box; padding:10px; }
   #view-goals > .goal-list-view { height:100%; min-height:0; overflow:auto; }
   .goal-focus-panel .cur-head { align-items:flex-start; }
+  .goal-focus-priority { margin:9px 0 4px; display:flex; align-items:center; gap:9px;
+    flex-wrap:wrap; font-size:13px; }
+  .goal-focus-priority label { display:flex; align-items:center; gap:7px; font-weight:600; }
+  .goal-focus-priority select { padding:3px 7px; border-radius:7px;
+    background:#0c231a; color:var(--fg); border:1px solid var(--line); font:inherit; }
   .goal-focus-title { font-size:18px; line-height:1.25; font-weight:800; color:var(--fg); }
   .goal-focus-path { color:var(--muted); font-size:11px; line-height:1.45; margin:4px 0 8px; }
   .goal-focus-desc { line-height:1.55; color:var(--fg); background:rgba(4,16,10,.48);
@@ -7199,20 +7204,35 @@ function goalPriorityOrderFieldHtml(node){
     '<select id="goal-position">'+opts+'</select></label>';
 }
 
+// Compact, self-applying priority-order picker shown on the map's focus panel.
+// Changing it reorders the node among its siblings (goal_move) immediately.
+function goalPriorityControlHtml(node){
+  if(!node||node.type==='umbrella'||!goalState||!goalState.tree) return '';
+  const parent=goalFindParent(goalState.tree,node.id);
+  const sibs=parent?(parent.children||[]).filter(child=>child.status!=='archived'):[];
+  if(sibs.length<2) return '';
+  const current=Math.max(0,sibs.findIndex(child=>child.id===node.id));
+  let opts='';
+  for(let i=0;i<sibs.length;i++) opts+='<option value="'+i+'"'+(i===current?' selected':'')+'>'+(i+1)+' / '+sibs.length+'</option>';
+  const kind=goalTypeLabel(node.type,node);
+  return '<div class="goal-focus-priority"><label>'+
+    esc(APP_LANG==='ko'?'우선순위 순서':'Priority order')+
+    ' <select data-priority-order title="'+esc(APP_LANG==='ko'?'같은 '+kind+' 중에서의 순서. 1이 집중 대상.':'Order among sibling '+kind+'s. 1 is the focus.')+'">'+
+    opts+'</select></label> <span class="goal-focus-muted">'+
+    esc(APP_LANG==='ko'?'1 = 집중':'1 = focus')+'</span></div>';
+}
+
 function bindGoalProjectSignalControls(node,container){
-  if(!container||!(goalIsProject(node)||(node&&node.semantic_role==='area'))) return;
-  container.querySelectorAll('[data-project-signal]').forEach(control=>{
-    control.onchange=()=>{
-      const kind=control.dataset.projectSignal;
-      const enabled=!!control.checked;
-      control.disabled=true;
-      pywebview.api.goal_set_project_signal(node.id,kind,enabled).then(result=>{
-        handleGoalMutation(result);
-      }).catch(error=>{
-        control.checked=!enabled;
-        control.disabled=false;
-        toast('Could not update Project attention: '+error,true);
-      });
+  // Priority order: changing the picker reorders the node among its siblings.
+  if(!container||!node) return;
+  const parent=goalFindParent(goalState&&goalState.tree,node.id);
+  container.querySelectorAll('[data-priority-order]').forEach(select=>{
+    select.onchange=()=>{
+      const position=Math.max(0,parseInt(select.value,10)||0);
+      select.disabled=true;
+      pywebview.api.goal_move(node.id,parent?parent.id:node.parent_id,position)
+        .then(handleGoalMutation)
+        .catch(error=>{ select.disabled=false; toast('Could not set priority order: '+error,true); });
     };
   });
 }
@@ -9347,6 +9367,7 @@ function renderGoalFocusPanel(){
     panel.innerHTML='<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
       '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
       '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span>'+goalPlanningRoleChip(node)+goalProjectSignalChips(node)+'</div>'+
+      goalPriorityControlHtml(node)+
       goalDefinitionStarterHtml(node)+goalProjectSignalActionsHtml(node)+
       goalEditNodeActionsHtml(node,'goal-focus-restructure','goal-focus-restructure-panel');
     const draft=$('goal-focus-draft-steps');
@@ -9425,7 +9446,7 @@ function renderGoalFocusPanel(){
   const focusIdentity=node.type==='umbrella'?'':('<div class="cur-head"><div><div class="goal-focus-title">'+esc(node.title)+'</div>'+
     '<div class="goal-focus-path">'+esc(path.join(' › '))+'</div></div></div>'+
     '<div><span class="goal-chip">'+esc(goalTypeLabel(node.type,node))+'</span>'+goalPlanningRoleChip(node)+goalProjectSignalChips(node)+'<span class="goal-chip">'+
-    esc(node.status||'active')+'</span>'+(node.type==='task'?'<span class="goal-chip">'+esc(node.priority||'normal')+'</span>':'')+'</div>');
+    esc(node.status||'active')+'</span>'+(node.type==='task'?'<span class="goal-chip">'+esc(node.priority||'normal')+'</span>':'')+'</div>'+goalPriorityControlHtml(node));
   panel.innerHTML=focusIdentity+
     (node.type==='task'?(workspaceHtml||(recap+relevance+goalLeafStepsHtml(node))):
       ((node.type==='umbrella'?'':recap+relevance)+progressHtml))+

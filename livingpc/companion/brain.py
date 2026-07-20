@@ -337,38 +337,94 @@ class Companion:
         max_items = getattr(self.cfg, "companion_inference_max_items", 10)
         return "\n".join(f"- [{b['theme']}] {b['statement']}" for b in beliefs[:max_items])
 
-    def _curiosities_block(self) -> str:
-        """Active (and paused) curiosities — the user's stated goals — plus
-        whatever question or suggestion is currently sitting open on each,
-        so the companion can be talked to about them directly."""
+    @staticmethod
+    def _select_relevant_curiosities(rows: list[dict], context_text: str,
+                                     max_items: int) -> list[dict]:
+        """Pick which investigations the main chat loads: the ones most related
+        to the live conversation, with a safety floor that always keeps the
+        'greatest' investigation and any the user names by label. On the first
+        turn (no conversation yet) this falls back to the original order."""
+        if max_items <= 0 or not rows:
+            return []
+        if len(rows) <= max_items:
+            return rows
+        context = (context_text or "").strip()
+        if not context:
+            return rows[:max_items]
+        from ..inference import concept_similarity
+        context_lower = context.lower()
+        forced, scored = [], []
+        for index, row in enumerate(rows):
+            label = str(row.get("label") or "")
+            if bool(row.get("is_greatest")) or (label and label.lower() in context_lower):
+                forced.append(row)
+                continue
+            text = f"{label} {row.get('directive') or ''}"
+            scored.append((concept_similarity(context, text), -index, row))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected = list(forced)
+        for _score, _tiebreak, row in scored:
+            if len(selected) >= max_items:
+                break
+            selected.append(row)
+        # Stable, readable order for the prompt regardless of ranking.
+        selected.sort(key=lambda candidate: int(candidate.get("id") or 0))
+        return selected
+
+    @staticmethod
+    def _curiosity_detail_line(store, row: dict) -> str:
+        open_items = store.open_items(row["id"])
+        question = next((i["text"] for i in open_items if i["kind"] == "question"), None)
+        suggestion = next((i["text"] for i in open_items if i["kind"] == "suggestion"), None)
+        tag = " (greatest)" if row["is_greatest"] else ""
+        status_tag = "" if row["status"] == "active" else f" [{row['status']}]"
+        line = f"- id={row['id']} {row['label']}{tag}{status_tag}: {row['directive']}"
+        if question:
+            line += f"\n  open question: {question}"
+        if suggestion:
+            line += f"\n  open suggestion: {suggestion}"
+        # The synthesis is what Faerie has actually learned about this
+        # investigation — the main chat must be able to reason from it directly
+        # ("based on my depletion synthesis…").
+        try:
+            synthesis = (store.latest_synthesis(row["id"], status="approved")
+                         or store.latest_synthesis(row["id"]))
+        except Exception:
+            synthesis = None
+        payload = (synthesis or {}).get("payload") or {}
+        interpretation = str(payload.get("interpretation") or "").strip()
+        if interpretation:
+            confidence = round(float(payload.get("confidence") or 0) * 100)
+            state = (synthesis or {}).get("status") or "draft"
+            if len(interpretation) > 900:
+                interpretation = interpretation[:900].rstrip() + "…"
+            line += f"\n  synthesis [{state}, {confidence}% confidence]: {interpretation}"
+            unknowns = [u for u in (payload.get("unknowns") or []) if u][:3]
+            if unknowns:
+                line += "\n  still unknown: " + "; ".join(unknowns)
+        try:
+            threads = store.threads(row["id"])
+        except Exception:
+            threads = []
+        for thread in threads[:4]:
+            status = "" if thread["status"] == "active" else f" [{thread['status']}]"
+            line += (f"\n  exploration thread: {thread['title']}"
+                     f"{status} — {thread['directive'][:160]}")
+        return line
+
+    def _curiosities_block(self, context_text: str = "") -> str:
+        """Active (and paused) curiosities — the user's stated goals — plus each
+        one's open question/suggestion and latest synthesis. When there are more
+        than the limit, the ones most related to the live conversation are
+        pulled in (see _select_relevant_curiosities)."""
         try:
             from ..curiosity import CuriosityStore
             store = CuriosityStore(self.cfg.memory_db_path)
             try:
                 rows = [r for r in store.list_curiosities() if r["status"] != "archived"]
                 max_items = getattr(self.cfg, "companion_curiosity_max_items", 8)
-                lines = []
-                for row in rows[:max_items]:
-                    open_items = store.open_items(row["id"])
-                    question = next((i["text"] for i in open_items if i["kind"] == "question"), None)
-                    suggestion = next((i["text"] for i in open_items if i["kind"] == "suggestion"), None)
-                    tag = " (greatest)" if row["is_greatest"] else ""
-                    status_tag = "" if row["status"] == "active" else f" [{row['status']}]"
-                    line = f"- id={row['id']} {row['label']}{tag}{status_tag}: {row['directive']}"
-                    if question:
-                        line += f"\n  open question: {question}"
-                    if suggestion:
-                        line += f"\n  open suggestion: {suggestion}"
-                    try:
-                        threads = store.threads(row["id"])
-                    except Exception:
-                        threads = []
-                    for thread in threads[:4]:
-                        status = ("" if thread["status"] == "active"
-                                  else f" [{thread['status']}]")
-                        line += (f"\n  exploration thread: {thread['title']}"
-                                 f"{status} — {thread['directive'][:160]}")
-                    lines.append(line)
+                selected = self._select_relevant_curiosities(rows, context_text, max_items)
+                lines = [self._curiosity_detail_line(store, row) for row in selected]
             finally:
                 store.close()
         except Exception:
@@ -812,7 +868,10 @@ class Companion:
             "WHAT YOU KNOW ABOUT THEM (relevant memory):\n" + memory
             + "\n\nTHEIR CURRENT GOALS / CURIOSITIES (things they're actively "
               "working toward, with any open question or suggestion still "
-              "sitting with them):\n" + self._curiosities_block()
+              "sitting with them, and Faerie's latest synthesis for each — treat "
+              "that synthesis as known context you can reason and cross-reference "
+              "directly, e.g. 'based on your Chronic Depletion synthesis…'):\n"
+            + self._curiosities_block(context_text)
             + "\n\nACTIVE PROJECT HORIZONS (open Leaves with descriptions, plus "
               "what just finished — your live view for judging whether each "
               "plan still fits; when one of these projects comes up, check the "
