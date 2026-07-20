@@ -105,9 +105,9 @@ class TestMetricScoring:
         assert created
         snapshot = self.store.build_snapshot(1, "2026-07-01")
         assert snapshot.overall_mastery == 100
-        assert snapshot.total_xp == 5
+        assert snapshot.total_xp == 12
         assert snapshot.level == 1
-        assert snapshot.xp_into_level == 5
+        assert snapshot.xp_into_level == 12
         assert snapshot.state["energy"] == 75
         assert "private note" not in snapshot.summary
 
@@ -149,16 +149,23 @@ class TestMetricScoring:
             1, "milestone", "milestone:a", occurred_on="2026-07-01")
         self.store.record_event(1, "milestone", "milestone:b", occurred_on="2026-07-01")
         self.store.record_event(1, "milestone", "milestone:c", occurred_on="2026-07-01")
+        # Add enough to exceed generous new cap and prove capping applies
+        self.store.record_event(1, "milestone", "milestone:d", occurred_on="2026-07-01")
+        self.store.record_event(1, "milestone", "milestone:e", occurred_on="2026-07-01")
         snapshot = self.store.build_snapshot(1, "2026-07-01")
         assert snapshot.xp_delta == DAILY_XP_CAP
         assert snapshot.total_xp == DAILY_XP_CAP
-        assert snapshot.level == 2
+        assert snapshot.level == 4
         assert snapshot.xp_into_level == 0
 
     def test_global_xp_has_one_cap_and_survives_other_investigations(self):
         self.store.record_event(1, "milestone", "one", occurred_on="2026-07-01")
         self.store.record_event(2, "milestone", "two", occurred_on="2026-07-01")
         self.store.record_event(2, "milestone", "three", occurred_on="2026-07-01")
+        # Extra to exceed the (now generous) single daily global cap
+        self.store.record_event(1, "milestone", "four", occurred_on="2026-07-01")
+        self.store.record_event(2, "milestone", "five", occurred_on="2026-07-01")
+        self.store.record_event(2, "milestone", "six", occurred_on="2026-07-01")
         assert self.store.global_xp("2026-07-01") == DAILY_XP_CAP
 
     def test_replacing_checkin_does_not_duplicate_xp(self):
@@ -166,7 +173,7 @@ class TestMetricScoring:
         assert self.store.record_checkin(1, {}, growth, checkin_date="2026-07-01")
         assert not self.store.record_checkin(1, {}, growth, checkin_date="2026-07-01")
         snapshot = self.store.build_snapshot(1, "2026-07-01")
-        assert snapshot.total_xp == 5
+        assert snapshot.total_xp == 12
 
     def test_trend_compares_two_seven_day_windows(self):
         start = date(2026, 7, 1)

@@ -2,7 +2,10 @@
 
 Raw check-in notes stay local.  The deterministic scorer consumes explicit
 ratings and verified effort events; passive capture never awards XP or changes
-mastery.  Notion receives only snapshots and sanitized summaries.
+mastery.  Explicit user actions (chats, investigation steps, inquiry replies,
+resolutions, approvals, creations) award generous XP to the global Soul economy
+(curiosity_id=0) and/or per-Investigation when linked. Notion receives only
+snapshots and sanitized summaries.
 """
 from __future__ import annotations
 
@@ -22,18 +25,26 @@ from .db import connect as db_connect
 
 CHECKIN_CONFIDENCE = 0.8
 XP_BY_EVENT = {
-    "checkin": 5,
-    "assessment": 10,
-    "practice": 20,
-    "milestone": 50,
+    "checkin": 12,
+    "assessment": 18,
+    "practice": 30,
+    "milestone": 75,
+    # Generous rewards for nearly everything deliberate the user does:
+    "chat_turn": 15,
+    "inquiry_turn": 22,
+    "investigation_create": 28,
+    "investigation_action": 10,
+    "approval": 20,
+    "resolution": 35,
+    "reflection": 15,
 }
-DAILY_XP_CAP = 100
+DAILY_XP_CAP = 300
 CALIBRATION_DAYS = 7
 # Approved Leaf completions are explicit, user-verified effort — they award
 # XP with a sentinel curiosity_id of 0 when no Investigation is linked, so
 # the global economy sees them while per-Investigation mastery never does.
-LEAF_COMPLETION_XP = 25
-PROJECT_COMPLETION_XP = 50
+LEAF_COMPLETION_XP = 40
+PROJECT_COMPLETION_XP = 80
 
 
 def _now() -> str:
@@ -460,6 +471,8 @@ class MetricStore:
             occurred_on = datetime.now().astimezone().date().isoformat()
         score = None if observed_score is None else _clamp(observed_score)
         try:
+            before = self.global_xp()
+            before_level = before // 100 + 1
             self.conn.execute(
                 "INSERT INTO curiosity_metric_event "
                 "(curiosity_id,dimension_slug,event_type,observed_score,xp,confidence,"
@@ -469,6 +482,10 @@ class MetricStore:
                  max(0.0, min(1.0, float(confidence))), source_key, occurred_on, _now()),
             )
             self.conn.commit()
+            after = self.global_xp()
+            after_level = after // 100 + 1
+            if after_level > before_level:
+                self._on_level_up(after_level)
             return True
         except sqlite3.IntegrityError:
             return False
@@ -691,6 +708,35 @@ class MetricStore:
             "SELECT occurred_on,SUM(xp) total FROM curiosity_metric_event" + clauses +
             " GROUP BY occurred_on", params).fetchall()
         return sum(min(DAILY_XP_CAP, int(row["total"] or 0)) for row in rows)
+
+    def _on_level_up(self, new_level: int) -> None:
+        """Fire a desktop popup (toast) when global Soul level increases.
+        Respects notifications_enabled. Best effort; never affects the award.
+        """
+        try:
+            from .notify import notify
+            from .config import load
+            cfg = load()
+            if not getattr(cfg, "notifications_enabled", True):
+                return
+            title = f"Level {new_level}!"
+            body = "The Faerie Fire within you grows stronger. Well done."
+            notify(title, body, cfg=cfg)
+        except Exception:
+            # Silent; popup is pure delight, not critical.
+            pass
+
+    def award_xp(self, curiosity_id: int, event_type: str, source_key: str, *,
+                 xp: int | None = None, confidence: float = 0.7) -> bool:
+        """Award XP for deliberate user action (chat, inquiry, create, resolve, etc).
+        Uses curiosity_id=0 for global Soul XP not tied to a specific Investigation.
+        Idempotent via source_key; safe (never raises).
+        """
+        try:
+            return self.record_event(curiosity_id, event_type, source_key,
+                                     xp=xp, confidence=confidence)
+        except Exception:
+            return False
 
     def _trend(self, curiosity_id: int, snapshot_date: str,
                current: float | None, *, has_evidence: bool,

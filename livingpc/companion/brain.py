@@ -3901,6 +3901,18 @@ class Companion:
         self.chats.append(self.chat_id, "user", persisted)
         self.chats.title_from_first_message(self.chat_id, shown)
         self.last_reply_choices = []
+        # Every chat turn (any companion chat) awards generous XP
+        try:
+            from ..curiosity_metrics import MetricStore
+            ms = MetricStore(self.cfg.memory_db_path)
+            try:
+                turn_idx = len(self.history)
+                ms.award_xp(0, "chat_turn", f"companion:{self.chat_id}:{turn_idx}",
+                            xp=None, confidence=0.7)
+            finally:
+                ms.close()
+        except Exception:
+            pass
         filing_text = user_text
         if att_texts and user_text.strip().lower().startswith("/file"):
             extra = "\n\n".join(f"[{a.get('name', 'file')}]\n{a['text']}"

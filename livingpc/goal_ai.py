@@ -6312,6 +6312,18 @@ def chat_with_goal_agent(config, node_id: int, text: str, *, model=None) -> dict
         if not node:
             raise ValueError("goal not found")
         agents.add_message(node_id, "user", text)
+        # Goal agent / Leaf chat turns award XP (generous for deliberate work)
+        try:
+            from .curiosity_metrics import MetricStore
+            ms = MetricStore(config.memory_db_path)
+            try:
+                msgs = agents.messages(node_id, 50)
+                ms.award_xp(0, "chat_turn", f"goal-agent:{node_id}:{len(msgs)}",
+                            xp=None, confidence=0.7)
+            finally:
+                ms.close()
+        except Exception:
+            pass
         context = build_agent_context(goals, agents, node_id,
                                       max_chars=int(getattr(config, "goal_ai_context_max_chars", 14000)))
         messages = agents.messages(node_id, 12)

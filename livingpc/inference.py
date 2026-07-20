@@ -209,6 +209,7 @@ def _bump(conf) -> float:
 class InferenceStore:
     def __init__(self, db_path: str):
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        self.db_path = db_path
         self.conn = _connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
@@ -894,6 +895,17 @@ class InferenceStore:
             (outcome, outcome, canonical_id, now, now, int(inquiry_id)),
         )
         self.conn.commit()
+        # Explicit resolution of an investigation awards generous XP
+        try:
+            from .curiosity_metrics import MetricStore
+            ms = MetricStore(self.db_path)
+            try:
+                ms.award_xp(0, "resolution", f"resolve-inquiry:{int(inquiry_id)}",
+                            xp=None, confidence=1.0)
+            finally:
+                ms.close()
+        except Exception:
+            pass
         return canonical_id
 
     def find_canonical_match(self, statement: str, *, theme: str | None = None,

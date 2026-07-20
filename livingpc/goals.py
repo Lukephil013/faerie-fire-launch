@@ -342,6 +342,7 @@ def _derived_branch_role(title: str, description: str, *, parent_type: str,
 class GoalStore:
     def __init__(self, db_path: str):
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        self.db_path = db_path
         self.conn = db_connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -5011,6 +5012,20 @@ def continue_planning(store: GoalStore, planner, session_id: int, answer: str) -
     target = store.get(session["target_parent_id"])
     message, draft = planner.reply(session, answer, target)
     store.add_plan_message(session_id, "user", answer)
+    # Planning chat / investigation steps award XP
+    try:
+        from .curiosity_metrics import MetricStore
+        ms = MetricStore(store.db_path)
+        try:
+            cnt = store.conn.execute(
+                "SELECT COUNT(*) c FROM goal_plan_message WHERE session_id=?",
+                (int(session_id),)
+            ).fetchone()["c"]
+            ms.award_xp(0, "chat_turn", f"goal-plan:{session_id}:{int(cnt)}", xp=None, confidence=0.65)
+        finally:
+            ms.close()
+    except Exception:
+        pass
     store.add_plan_message(session_id, "assistant", message)
     store.set_plan_draft(session_id, draft)
     return store.plan_session(session_id)

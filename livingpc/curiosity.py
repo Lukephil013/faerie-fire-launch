@@ -325,7 +325,19 @@ class CuriosityStore:
             (crypto.enc(directive), crypto.enc(label), _now()),
         )
         self.conn.commit()
-        return int(cur.lastrowid)
+        cid = int(cur.lastrowid)
+        # Generous XP for creating an Investigation (covers onboarding, companion /investigate, goal_ai, etc.)
+        try:
+            from .curiosity_metrics import MetricStore
+            ms = MetricStore(self.db_path)
+            try:
+                ms.award_xp(cid, "investigation_create", f"investigation-create:{cid}",
+                            xp=None, confidence=0.85)
+            finally:
+                ms.close()
+        except Exception:
+            pass  # XP never blocks creation
+        return cid
 
     def get_curiosity(self, curiosity_id: int):
         row = self.conn.execute(

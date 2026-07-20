@@ -3041,9 +3041,10 @@ def test_approved_leaf_completion_awards_xp_once(world):
     try:
         rows = metrics.conn.execute(
             "SELECT xp, source_key FROM curiosity_metric_event").fetchall()
+        from livingpc.curiosity_metrics import LEAF_COMPLETION_XP, PROJECT_COMPLETION_XP
         assert [(r["xp"], r["source_key"]) for r in rows] == [
-            (25, f"leaf-completion:{leaf}")]
-        assert metrics.global_xp() == 25
+            (LEAF_COMPLETION_XP, f"leaf-completion:{leaf}")]
+        assert metrics.global_xp() == LEAF_COMPLETION_XP
         # Completing the project's last Leaf is milestone-tier.
         open_leaf_workspace(cfg, second, model=RecordingWorkspaceModel(["Go."]))
         pending2 = send_leaf_workspace(
@@ -3055,7 +3056,7 @@ def test_approved_leaf_completion_awards_xp_once(world):
                 }, "rationale": "Project over."})]))
         proposal2 = pending2["messages"][-1]["payload"]["proposal"]
         decide_leaf_workspace_proposal(cfg, second, proposal2["id"], "approve")
-        assert metrics.global_xp() == 75  # 25 + 50 milestone
+        assert metrics.global_xp() == (LEAF_COMPLETION_XP + PROJECT_COMPLETION_XP)  # leaf + project milestone
     finally:
         metrics.close()
 

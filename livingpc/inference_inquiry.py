@@ -173,6 +173,16 @@ def start_inquiry(config, inf: InferenceStore, mem: MemoryStore, *,
     turn = (model or get_inquiry_model(config)).reply(context, [], draft)
     inf.add_inquiry_message(inquiry_id, "assistant", turn.reply)
     inf.update_inquiry_draft(inquiry_id, turn.draft_claim, turn.confidence)
+    # Starting an investigation inquiry also awards (user intent to investigate)
+    try:
+        from .curiosity_metrics import MetricStore
+        ms = MetricStore(config.memory_db_path)
+        try:
+            ms.award_xp(0, "investigation_action", f"inquiry-start:{inquiry_id}", xp=None, confidence=0.6)
+        finally:
+            ms.close()
+    except Exception:
+        pass
     return inf.inquiry(inquiry_id)
 
 
@@ -185,6 +195,17 @@ def reply_to_inquiry(config, inf: InferenceStore, mem: MemoryStore,
     if not text:
         raise ValueError("reply cannot be empty")
     inf.add_inquiry_message(inquiry_id, "user", text)
+    # Every user turn in an investigation inquiry awards generous XP
+    try:
+        from .curiosity_metrics import MetricStore
+        ms = MetricStore(config.memory_db_path)
+        try:
+            n = len((inf.inquiry(inquiry_id) or {}).get("messages") or [])
+            ms.award_xp(0, "inquiry_turn", f"inquiry:{inquiry_id}:turn:{n}", xp=None, confidence=0.75)
+        finally:
+            ms.close()
+    except Exception:
+        pass
     inquiry = inf.inquiry(inquiry_id)
     context = build_inquiry_context(
         inf, mem, inquiry,

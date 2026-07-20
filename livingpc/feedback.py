@@ -176,4 +176,16 @@ def submit_feedback(inf: InferenceStore, inference_id: int, action: str,
         inf.kind_of(inference_id)
     log_diag("inference", f"feedback action={action} theme={claim['theme']} "
              f"lesson={'yes' if lesson else 'no'} refs={len(refs)}")
+    # User giving feedback on inference is deliberate reflection -> XP
+    try:
+        path = getattr(inf, "db_path", None)
+        if path:
+            from .curiosity_metrics import MetricStore
+            ms = MetricStore(path)
+            try:
+                ms.award_xp(0, "reflection", f"feedback:{inference_id}:{action}", xp=None, confidence=0.6)
+            finally:
+                ms.close()
+    except Exception:
+        pass
     return {"lesson": lesson, "references": refs, "theme": claim["theme"]}

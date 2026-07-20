@@ -573,6 +573,8 @@ class TestGoalMastery(GoalTestCase):
 
     def test_existing_curiosity_profiles_are_mirrored_without_mutation(self):
         cid = self.curiosities.add_curiosity("learn Korean", "Korean")
+        # Force a legacy-shaped table for the 'pre-existing profile' mirror test.
+        self.goals.conn.execute("DROP TABLE IF EXISTS curiosity_metric_profile")
         self.goals.conn.execute(
             "CREATE TABLE IF NOT EXISTS curiosity_metric_profile ("
             "curiosity_id INTEGER PRIMARY KEY,status TEXT,dimensions_json TEXT,"
