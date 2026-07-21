@@ -46,6 +46,41 @@ CALIBRATION_DAYS = 7
 LEAF_COMPLETION_XP = 40
 PROJECT_COMPLETION_XP = 80
 
+# --- leveling curve --------------------------------------------------------
+# Leveling is intentionally EASY: every level below three digits costs a small,
+# flat amount of XP, so the number climbs fast and feels rewarding. Once you
+# reach level 100 (three digits) each further level costs a bit more. Changing
+# these only re-derives the level shown from lifetime XP — no data migration.
+EASY_XP_PER_LEVEL = 50          # levels 1..99 — cheap, fast
+HARD_XP_PER_LEVEL = 120         # levels 100+ — slightly harder
+EASY_LEVEL_CEILING = 100        # first level that uses the harder rate
+_EASY_XP_TOTAL = (EASY_LEVEL_CEILING - 1) * EASY_XP_PER_LEVEL  # XP at start of L100
+# Only *milestone* levels (multiples of this) fire a desktop toast, so easy,
+# frequent leveling doesn't spam notifications. The level number still climbs
+# every level; the popup is reserved for the round numbers.
+LEVEL_NOTIFY_STEP = 5
+
+
+def level_for_xp(total_xp: int) -> int:
+    """Lifetime XP -> level. Easy (50 XP/level) until level 100, then 120/level."""
+    xp = max(0, int(total_xp))
+    if xp < _EASY_XP_TOTAL:
+        return xp // EASY_XP_PER_LEVEL + 1
+    return EASY_LEVEL_CEILING + (xp - _EASY_XP_TOTAL) // HARD_XP_PER_LEVEL
+
+
+def xp_into_level(total_xp: int) -> int:
+    """XP earned since the start of the current level (for progress display)."""
+    xp = max(0, int(total_xp))
+    if xp < _EASY_XP_TOTAL:
+        return xp % EASY_XP_PER_LEVEL
+    return (xp - _EASY_XP_TOTAL) % HARD_XP_PER_LEVEL
+
+
+def xp_for_level(total_xp: int) -> int:
+    """Total XP the current level spans (its width) — the denominator for a bar."""
+    return HARD_XP_PER_LEVEL if int(total_xp) >= _EASY_XP_TOTAL else EASY_XP_PER_LEVEL
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -131,6 +166,15 @@ CREATE TABLE IF NOT EXISTS curiosity_metric_profile (
     publication_approved_at TEXT,
     last_published_at TEXT,
     CHECK (status IN ('draft', 'approved'))
+);
+
+-- High-water mark for the level-up toast. Persisting the highest level we've
+-- already congratulated makes the notification idempotent: it never re-fires
+-- the same (or a lower) level after a DB restore, a re-run, or a race between
+-- two award connections.
+CREATE TABLE IF NOT EXISTS metric_notify_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_notified_level INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS curiosity_metric_event (
@@ -363,6 +407,13 @@ class MetricStore:
             if name not in columns:
                 self.conn.execute(
                     f"ALTER TABLE curiosity_metric_profile ADD COLUMN {name} {declaration}")
+        # Seed the level-up high-water at the CURRENT level the first time, so
+        # existing progress doesn't replay every past milestone as a toast.
+        if self.conn.execute(
+                "SELECT 1 FROM metric_notify_state WHERE id=1").fetchone() is None:
+            self.conn.execute(
+                "INSERT INTO metric_notify_state (id,last_notified_level) VALUES (1,?)",
+                (level_for_xp(self.global_xp()),))
 
     def close(self) -> None:
         self.conn.close()
@@ -471,8 +522,7 @@ class MetricStore:
             occurred_on = datetime.now().astimezone().date().isoformat()
         score = None if observed_score is None else _clamp(observed_score)
         try:
-            before = self.global_xp()
-            before_level = before // 100 + 1
+            before_level = level_for_xp(self.global_xp())
             self.conn.execute(
                 "INSERT INTO curiosity_metric_event "
                 "(curiosity_id,dimension_slug,event_type,observed_score,xp,confidence,"
@@ -482,10 +532,9 @@ class MetricStore:
                  max(0.0, min(1.0, float(confidence))), source_key, occurred_on, _now()),
             )
             self.conn.commit()
-            after = self.global_xp()
-            after_level = after // 100 + 1
+            after_level = level_for_xp(self.global_xp())
             if after_level > before_level:
-                self._on_level_up(after_level)
+                self._maybe_notify_level(after_level)
             return True
         except sqlite3.IntegrityError:
             return False
@@ -618,7 +667,7 @@ class MetricStore:
         overall_conf = sum(populated_conf) / len(populated_conf) if populated_conf else 0.0
         xp_delta = min(DAILY_XP_CAP, sum(int(row["xp"]) for row in events))
         total_xp = self._total_xp(curiosity_id, snapshot_date)
-        level = total_xp // 100 + 1
+        level = level_for_xp(total_xp)
         calibration_days = int(self.conn.execute(
             "SELECT COUNT(*) FROM curiosity_metric_checkin WHERE curiosity_id=? "
             "AND checkin_date<=?", (curiosity_id, snapshot_date),
@@ -635,7 +684,7 @@ class MetricStore:
         snapshot = DailySnapshot(
             curiosity_id, snapshot_date, profile.version, metrics, state,
             None if overall is None else round(overall, 2), round(overall_conf, 4),
-            xp_delta, total_xp, level, total_xp % 100,
+            xp_delta, total_xp, level, xp_into_level(total_xp),
             None if trend is None else round(trend, 2), evidence_count,
             calibration_days, summary,
         )
@@ -708,6 +757,35 @@ class MetricStore:
             "SELECT occurred_on,SUM(xp) total FROM curiosity_metric_event" + clauses +
             " GROUP BY occurred_on", params).fetchall()
         return sum(min(DAILY_XP_CAP, int(row["total"] or 0)) for row in rows)
+
+    def _maybe_notify_level(self, new_level: int) -> None:
+        """Decide whether reaching `new_level` warrants a toast.
+
+        Two gates make this quiet and idempotent:
+        - High-water mark: we never notify for a level at or below the highest
+          we've already reached, so a DB restore, re-run, or concurrent award
+          can't replay old level-ups (the "keeps triggering" symptom).
+        - Milestone-only: we only celebrate multiples of LEVEL_NOTIFY_STEP, so
+          easy, frequent leveling climbs the number silently between milestones.
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT last_notified_level FROM metric_notify_state WHERE id=1").fetchone()
+            prev = int(row["last_notified_level"]) if row else 0
+            if new_level <= prev:
+                return
+            prev_milestone = (prev // LEVEL_NOTIFY_STEP) * LEVEL_NOTIFY_STEP
+            new_milestone = (new_level // LEVEL_NOTIFY_STEP) * LEVEL_NOTIFY_STEP
+            self.conn.execute(
+                "INSERT INTO metric_notify_state (id,last_notified_level) VALUES (1,?) "
+                "ON CONFLICT(id) DO UPDATE SET last_notified_level=excluded.last_notified_level",
+                (new_level,))
+            self.conn.commit()
+            if new_milestone > prev_milestone and new_milestone >= LEVEL_NOTIFY_STEP:
+                self._on_level_up(new_milestone)
+        except Exception:
+            # Notification bookkeeping must never break an XP award.
+            pass
 
     def _on_level_up(self, new_level: int) -> None:
         """Fire a desktop popup (toast) when global Soul level increases.

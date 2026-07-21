@@ -18,6 +18,7 @@ _ALLOWED_SKINS = {"classic", "dark", "cat", "knight", "meditate"}
 _ALLOWED_KEYS = {
     "mascot_skin", "details_open", "growth_map_layout",
     "soul_calibration_enabled",
+    "music_enabled", "music_volume",
 }
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ui_preference (
@@ -45,6 +46,18 @@ def _validated(key: str, value):
         if not isinstance(value, bool):
             raise ValueError("soul_calibration_enabled must be a boolean")
         return value
+    if key == "music_enabled":
+        if not isinstance(value, bool):
+            raise ValueError("music_enabled must be a boolean")
+        return value
+    if key == "music_volume":
+        try:
+            volume = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("music_volume must be a number")
+        if not math.isfinite(volume):
+            raise ValueError("music_volume must be finite")
+        return max(0.0, min(1.0, volume))
     if key == "growth_map_layout":
         if not isinstance(value, dict):
             raise ValueError("growth_map_layout must be an object")

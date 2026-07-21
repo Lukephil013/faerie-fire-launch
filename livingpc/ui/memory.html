@@ -1929,6 +1929,11 @@
   .onboard-dots span.on { background:var(--green); box-shadow:0 0 8px rgba(47,227,160,.5); }
 </style></head>
 <body>
+<!-- Looping background music. Volume/enabled are controlled from Settings and
+     persisted via ui_preferences (music_enabled / music_volume). Autoplay is
+     often blocked until a user gesture, so playback is also (re)started on the
+     first interaction — see the music JS near the mascot settings. -->
+<audio id="bg-music" loop preload="auto" src="assets/audio/moss-on-the-wind.wav"></audio>
 <div id="motes">
   <span style="left:6%;  width:4px; height:4px;  --drift:18px;  animation-duration:16s; animation-delay:-2s;"></span>
   <span style="left:14%; width:3px; height:3px;  --drift:-14px; animation-duration:21s; animation-delay:-9s;"></span>
@@ -2165,6 +2170,15 @@
             <button type="button" data-mascot-skin="meditate">Meditating Lotus Cat</button>
           </div>
         </div>
+      </section>
+      <section class="settings-group">
+        <h3>Ambience</h3>
+        <label class="settings-choice mascot-choice" for="settings-music-enabled" data-help-en="Play looping background music while the app is open." data-help-ko="앱이 열려 있는 동안 반복 배경 음악을 재생합니다."><span>Background Music<span class="hint" style="display:block;font-size:11px;margin-top:2px">Moss on the Wind</span></span>
+          <input type="checkbox" id="settings-music-enabled" checked>
+        </label>
+        <label class="settings-choice" for="settings-music-volume">Music Volume
+          <input type="range" id="settings-music-volume" min="0" max="100" step="1" value="40" style="width:100%;accent-color:var(--green)">
+        </label>
       </section>
       <section class="settings-group">
         <h3>Usage & Reports</h3>
@@ -3714,6 +3728,17 @@ let soulCalibrationEnabled=(function(){
   try{ return localStorage.getItem('ffSoulCalibrationEnabled')!=='0'; }
   catch(e){ return true; }
 })();
+let musicEnabled=(function(){
+  try{ return localStorage.getItem('ffMusicEnabled')!=='0'; }
+  catch(e){ return true; }
+})();
+let musicVolume=(function(){
+  try{
+    const saved=parseFloat(localStorage.getItem('ffMusicVolume'));
+    return Number.isFinite(saved)?Math.max(0,Math.min(1,saved)):0.4;
+  }catch(e){ return 0.4; }
+})();
+let musicGestureHooked=false;
 let faerieMascotTimer=null;
 let faerieMascotPosition=(function(){
   try{
@@ -3771,6 +3796,52 @@ function setFaerieMascotSkin(skin){
 function refreshSoulCalibrationSetting(){
   const toggle=$('settings-calibration-enabled');
   if(toggle) toggle.checked=soulCalibrationEnabled;
+}
+// --- background music --------------------------------------------------------
+function applyMusicState(){
+  const audio=$('bg-music');
+  if(!audio) return;
+  audio.volume=Math.max(0,Math.min(1,musicVolume));
+  if(musicEnabled){
+    const played=audio.play();
+    // Autoplay with sound is blocked until a user gesture; if the promise
+    // rejects, arm a one-shot listener to start on the next interaction.
+    if(played&&typeof played.catch==='function') played.catch(()=>hookMusicGesture());
+  }else{
+    audio.pause();
+  }
+}
+function hookMusicGesture(){
+  if(musicGestureHooked) return;
+  musicGestureHooked=true;
+  const start=()=>{
+    document.removeEventListener('pointerdown',start,true);
+    document.removeEventListener('keydown',start,true);
+    musicGestureHooked=false;
+    if(musicEnabled){ const a=$('bg-music'); if(a){ a.volume=musicVolume; a.play().catch(()=>{}); } }
+  };
+  document.addEventListener('pointerdown',start,true);
+  document.addEventListener('keydown',start,true);
+}
+function refreshMusicSetting(){
+  const toggle=$('settings-music-enabled');
+  if(toggle) toggle.checked=musicEnabled;
+  const slider=$('settings-music-volume');
+  if(slider) slider.value=String(Math.round(musicVolume*100));
+}
+function setMusicEnabled(enabled){
+  musicEnabled=!!enabled;
+  try{ localStorage.setItem('ffMusicEnabled',musicEnabled?'1':'0'); }catch(e){}
+  persistDurableUiPreference('music_enabled',musicEnabled);
+  applyMusicState();
+  refreshMusicSetting();
+}
+function setMusicVolume(fraction){
+  musicVolume=Math.max(0,Math.min(1,Number(fraction)||0));
+  try{ localStorage.setItem('ffMusicVolume',String(musicVolume)); }catch(e){}
+  persistDurableUiPreference('music_volume',musicVolume);
+  applyMusicState();
+  refreshMusicSetting();
 }
 function setSoulCalibrationEnabled(enabled){
   soulCalibrationEnabled=!!enabled;
@@ -3905,6 +3976,10 @@ function openGrowthNodeById(id){
   id=parseInt(id,10);
   if(!Number.isFinite(id)) return;
   selectedGoalId=id;
+  // Recenter the tree on this node when we land (map pan/zoom, or list scroll),
+  // rather than leaving the Growth tab wherever it was last. Honored by the
+  // next constellation/tree render even if the tree is still loading.
+  pendingGrowthMapFocusId=id;
   activateView('goals');
   if(typeof goalState!=='undefined'&&goalState&&goalState.tree&&goalFind(goalState.tree,id)){
     selectGrowthNode(id);
@@ -4461,6 +4536,12 @@ if($('settings-calibration-enabled')) $('settings-calibration-enabled').onchange
   }
 };
 refreshSoulCalibrationSetting();
+if($('settings-music-enabled')) $('settings-music-enabled').onchange=e=>
+  setMusicEnabled(e.target.checked);
+if($('settings-music-volume')) $('settings-music-volume').oninput=e=>
+  setMusicVolume((Number(e.target.value)||0)/100);
+refreshMusicSetting();
+applyMusicState();   // start from cached prefs now; hydrate refines it shortly
 function refreshSettingsLanguageLabel(){
   const span=$('settings-language-line'); if(!span) return;
   span.textContent=(APP_LANG==='ko')
@@ -6184,18 +6265,26 @@ function selfLevelWidgetHtml(data){
   const totalXp=Number.isFinite(globalXp)
     ? globalXp
     : snapshots.reduce((sum,c)=>sum+((c.metric_snapshot&&c.metric_snapshot.total_xp)||0),0);
-  const level=Math.max(1,Math.floor(totalXp/100)+1);
+  // Level/XP come from Python (the easy-until-100 curve) so this display and
+  // the desktop level-up toast never disagree. Fall back to the old flat math
+  // only if the computed fields are missing.
+  const cur=data.curiosity||{};
+  const level=Number.isFinite(Number(cur.soul_level))
+    ? Number(cur.soul_level) : Math.max(1,Math.floor(totalXp/100)+1);
+  const span=Number(cur.soul_level_span)>0?Number(cur.soul_level_span):100;
+  const xpIntoLevel=Number.isFinite(Number(cur.soul_xp_into_level))
+    ? Number(cur.soul_xp_into_level) : (totalXp%span||0);
   const rank=level>=50?'S-Rank':level>=35?'A-Rank':level>=25?'B-Rank':level>=12?'C-Rank':'E-Rank';
-  const xpIntoLevel=totalXp%100||0;
-  const nextXp=100-xpIntoLevel;
+  const nextXp=Math.max(0,span-xpIntoLevel);
+  const barPct=Math.max(3,Math.min(100,Math.round(xpIntoLevel/span*100)));
   return '<div class="self-id-header">'+
       '<span class="self-id-avatar"><img src="assets/icons/brand-emblem.png" alt=""><span class="dot"></span></span>'+
       '<div class="self-id-name-wrap"><div class="self-id-name">'+esc(rootTitle)+'</div>'+
       '<div class="self-id-rank">Level '+level+' · '+rank+'</div></div>'+
     '</div>'+
     '<div class="self-xp-next">To reach Level '+(level+1)+' attain '+nextXp+' XP</div>'+
-    '<div class="self-xp-bar"><i style="width:'+Math.max(3,xpIntoLevel)+'%"></i></div>'+
-    '<div class="self-xp-count">'+xpIntoLevel+' / 100 XP</div>';
+    '<div class="self-xp-bar"><i style="width:'+barPct+'%"></i></div>'+
+    '<div class="self-xp-count">'+xpIntoLevel+' / '+span+' XP</div>';
 }
 
 function selfProfileWidgetsHtml(data){
@@ -7067,6 +7156,10 @@ let goalFocusPending=null;
 let leafCoachView=null, leafCoachLeafId=null, leafCoachRetry=null;
 let leafWorkspaceRequestNonce=0, leafWorkspaceSending=false;
 let growthViewMode='map';
+// Set when arriving at Growth from an @Today / thread click so the next
+// constellation render (map) or tree render (list) recenters on that node
+// instead of holding the map's last pan/zoom. Cleared once applied.
+let pendingGrowthMapFocusId=null;
 let goalAIOverviewCache=null;
 const constellationViewState={};
 const GOAL_MAP_POS_KEY='ff-goal-map-positions-v1';
@@ -7335,7 +7428,11 @@ function renderGoalTree(){
     saveGoalCollapsed(); renderGoalTree();
   });
   const selectedRow=$('goal-tree').querySelector('.goal-tree-row.selected');
-  if(selectedRow&&growthViewMode==='list') selectedRow.scrollIntoView({block:'nearest'});
+  if(selectedRow&&growthViewMode==='list'){
+    // Center the row when we jumped here from Today; otherwise keep it nearby.
+    selectedRow.scrollIntoView({block:pendingGrowthMapFocusId!=null?'center':'nearest'});
+    if(pendingGrowthMapFocusId!=null) pendingGrowthMapFocusId=null;
+  }
   renderGoalDetail();
 }
 
@@ -10163,6 +10260,19 @@ function bindConstellationPanZoom(box,treeId,map){
     if(e.target.closest&&e.target.closest('.constellation-node')) return;
     state.scale=1; state.panX=0; state.panY=0; apply(); saveGoalMapPositions(true);
   };
+  // Arrived from an @Today / thread click: pan-and-zoom this map so the target
+  // node sits centered, instead of keeping the previous camera position.
+  if(pendingGrowthMapFocusId!=null){
+    const focusItem=nodeById[String(pendingGrowthMapFocusId)];
+    if(focusItem){
+      state.scale=Math.max(state.scale,1.6);
+      state.panX=map.width/2-focusItem.x*state.scale;
+      state.panY=map.height/2-focusItem.y*state.scale;
+      apply();
+      saveGoalMapPositions(true);
+      pendingGrowthMapFocusId=null;
+    }
+  }
 }
 
 function renderMainGrowthMap(){ renderGoalConstellation(null,'goal-map-tree'); }
@@ -11112,6 +11222,17 @@ function hydrateDurableUiPreferences(){
     }else{
       persistDurableUiPreference('soul_calibration_enabled',soulCalibrationEnabled);
     }
+    if(Object.prototype.hasOwnProperty.call(preferences,'music_enabled')){
+      musicEnabled=preferences.music_enabled===true;
+    }else{
+      persistDurableUiPreference('music_enabled',musicEnabled);
+    }
+    if(Object.prototype.hasOwnProperty.call(preferences,'music_volume')){
+      const v=Number(preferences.music_volume);
+      if(Number.isFinite(v)) musicVolume=Math.max(0,Math.min(1,v));
+    }else{
+      persistDurableUiPreference('music_volume',musicVolume);
+    }
     if(preferences.details_open&&typeof preferences.details_open==='object'){
       Object.keys(detailsOpenPref).forEach(key=>delete detailsOpenPref[key]);
       Object.assign(detailsOpenPref,preferences.details_open);
@@ -11132,9 +11253,13 @@ function hydrateDurableUiPreferences(){
     try{
       localStorage.setItem('ffFaerieMascotSkin',faerieMascotSkin);
       localStorage.setItem('ffSoulCalibrationEnabled',soulCalibrationEnabled?'1':'0');
+      localStorage.setItem('ffMusicEnabled',musicEnabled?'1':'0');
+      localStorage.setItem('ffMusicVolume',String(musicVolume));
       localStorage.setItem('ffDetailsOpen',JSON.stringify(detailsOpenPref));
       localStorage.setItem(GOAL_MAP_POS_KEY,JSON.stringify(goalMapPositions));
     }catch(e){}
+    refreshMusicSetting();
+    applyMusicState();
     refreshFaerieMascotSetting();
     refreshSoulCalibrationSetting();
     document.querySelectorAll('details[data-collapse-key]').forEach(d=>{
@@ -11482,10 +11607,14 @@ function continueCuriosity(curiosityId, button, options={}){
       return;
     }
     if(!hadOpenItems){
+      // Truly caught up — leave the answering screen for the overview so the
+      // placement/synthesis step can take over (don't loop regeneration).
+      if(curiosityMode==='session'){curiosityMode='overview';curiositySession=null;saveCuriositySession();}
       toast('No new follow-ups — classifying where this belongs now.');
       classifyCuriosity(curiosityId, null, {auto:true});
       return;
     }
+    if(curiosityMode==='session'){curiosityMode='overview';curiositySession=null;saveCuriositySession();}
     curLoopOutcomes.set(curiosityId,'caught_up');
     saveCurLoopOutcomes();
     toast('No new follow-ups yet — answer or dismiss the existing open items first.');
@@ -11493,6 +11622,8 @@ function continueCuriosity(curiosityId, button, options={}){
   }).catch(e=>{
     if(button){button.disabled=false;button.innerHTML=originalButtonHtml;}
     if(auto) pendingCuriosityLoopId=null;
+    // Don't strand the user on the in-session loading state if regeneration failed.
+    if(curiosityMode==='session'&&!(curiositySession)){curiosityMode='overview';loadCuriosity({force:true});}
     toast('Could not continue investigation: '+e, true);
   });
 }
@@ -11637,8 +11768,12 @@ function curSuggestionHtml(item){
       '<button class="yes cur-sugg" data-action="tried">Tried it</button>' +
       '<button class="kind cur-sugg" data-action="not_helpful_light">Not helpful (a little)</button>' +
       '<button class="no cur-sugg" data-action="not_helpful_heavy">Not helpful (a lot)</button>' +
-      '<button class="skip cur-sugg" data-action="dismissed">Dismiss</button>' +
-    '</div><div class="cur-overlap-review" hidden></div></div>';
+      '<button class="skip cur-sugg" data-action="dismissed" title="'+
+        curT('Too early to commit — Faerie will come back with a more refined proposal',
+             '아직 결정하기 이르다 — Faerie가 더 다듬은 제안으로 다시 올게요')+
+        '">Dismiss</button>' +
+    '</div><div class="cur-reason" hidden></div>'+
+    '<div class="cur-overlap-review" hidden></div></div>';
 }
 
 function suggestionOverlapHtml(item,data){
@@ -11846,17 +11981,45 @@ function bindCurSuggestion(item){
   if(outcome) outcome.onchange=()=>{
     outcome.nextElementSibling.textContent=outcome.value?'Uses explicit outcome evidence':'No mastery change';
   };
+  const reasonBox=el.querySelector('.cur-reason');
+  function submitSuggestion(action, reason){
+    if(!api()) return;
+    el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=true);
+    const measured=(action==='tried'&&outcome&&outcome.value)?parseFloat(outcome.value):null;
+    pywebview.api.curiosity_respond_suggestion(item.id, action, measured, reason||null).then(r=>{
+      if(r && r.ok===false){ el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=false);
+        toast(r.message||'Could not save.', true); return; }
+      toast('Noted.'); loadCuriosity();
+    }).catch(e=>{ el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=false);
+      toast('Could not save: '+e, true); });
+  }
+  // "Not helpful" always opens a why-prompt; "Dismiss" opens an optional
+  // what-would-make-it-refined note (its meaning is "too early", not "reject").
+  function askReason(action, promptText){
+    if(!reasonBox){ submitSuggestion(action, ''); return; }
+    el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=true);
+    reasonBox.hidden=false;
+    reasonBox.innerHTML='<div class="cur-sub">'+esc(promptText)+'</div>'+
+      '<textarea class="cur-reason-input" rows="2" style="width:100%;box-sizing:border-box"></textarea>'+
+      '<div class="actions"><button class="accent cur-reason-send">'+curT('Send','보내기')+'</button>'+
+      '<button class="skip cur-reason-skip">'+curT('Skip','건너뛰기')+'</button></div>';
+    const ta=reasonBox.querySelector('.cur-reason-input'); ta.focus();
+    reasonBox.querySelector('.cur-reason-send').onclick=()=>submitSuggestion(action, ta.value.trim());
+    reasonBox.querySelector('.cur-reason-skip').onclick=()=>submitSuggestion(action, '');
+  }
   el.querySelectorAll('.cur-sugg').forEach(btn=>{
     btn.onclick=()=>{
       if(!api()) return;
-      el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=true);
-      const measured=(btn.dataset.action==='tried'&&outcome&&outcome.value)?parseFloat(outcome.value):null;
-      pywebview.api.curiosity_respond_suggestion(item.id, btn.dataset.action, measured).then(r=>{
-        if(r && r.ok===false){ el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=false);
-          toast(r.message||'Could not save.', true); return; }
-        toast('Noted.'); loadCuriosity();
-      }).catch(e=>{ el.querySelectorAll('.cur-sugg').forEach(b=>b.disabled=false);
-        toast('Could not save: '+e, true); });
+      const action=btn.dataset.action;
+      if(action==='not_helpful_light'||action==='not_helpful_heavy'){
+        askReason(action, curT('What made this not useful? Faerie uses this to do better next time.',
+                               '이게 왜 도움이 안 됐나요? Faerie가 다음에 더 잘하도록 참고해요.'));
+      } else if(action==='dismissed'){
+        askReason(action, curT('Too early to commit? Tell Faerie what would make a refined version click — or skip.',
+                               '아직 결정하기 이른가요? 어떻게 다듬으면 좋을지 알려주거나 건너뛰세요.'));
+      } else {
+        submitSuggestion(action, '');
+      }
     };
   });
 }
@@ -12874,6 +13037,9 @@ function curRecommendedStep(cur){
   const suggestions=CUR_PROPOSALS_UI_ENABLED?(cur.open_suggestions||[]).length:0;
   const draft=(cur.syntheses||[]).find(item=>item.status==='draft');
   const placements=(cur.classification_proposals||[]).length;
+  // "Begin" until the user has answered their first question; "Continue" after.
+  const answeredSoFar=(cur.resolved||[]).filter(x=>x.kind==='question'&&x.status==='answered').length;
+  const fresh=answeredSoFar===0;
   if(cur.status==='paused') return {
     kind:'resume', icon:'▶', title:curT('This investigation is paused.','이 탐구는 일시정지되어 있어요.'),
     body:curT('Resume it when you want Faerie to prepare and surface new questions again.','페어리가 새 질문을 준비하고 다시 보여주도록 탐구를 재개하세요.'),
@@ -12895,7 +13061,7 @@ function curRecommendedStep(cur){
   if(questions) return {
     kind:'continue', icon:'✦', title:curT(questions+' follow-up question'+(questions===1?' is':'s are')+' ready.',questions+'개의 후속 질문이 준비됐어요.'),
     body:curT('Continue in a calm, focused session. Your place and any unfinished answer are saved automatically.','차분한 집중 세션에서 계속하세요. 현재 위치와 작성 중인 답변은 자동 저장돼요.'),
-    primary:curT('Continue investigation','탐구 계속하기')
+    primary:fresh?curT('Begin investigation','탐구 시작하기'):curT('Continue investigation','탐구 계속하기')
   };
   if(placements) return {
     kind:'details', icon:'⌖', title:curT('A Growth placement is ready to review.','성장 트리 배치를 검토할 준비가 됐어요.'),
@@ -12954,6 +13120,10 @@ function curOverviewHtml(cur){
       '<div class="cur-next-body"><div class="cur-eyebrow" style="margin:0">'+curT('Recommended next step','추천 다음 단계')+'</div>'+
       '<h3>'+esc(step.title)+'</h3><p>'+esc(step.body)+'</p><div class="cur-next-actions">'+
       '<button type="button" class="accent" data-cur-primary="'+step.kind+'">'+esc(step.primary)+' →</button>'+
+      (step.kind==='continue'?'<button type="button" data-cur-quick-pass title="'+
+        curT('Answer ~5-8 questions, then Faerie gives its best approximation.',
+             '질문 5~8개만 답하면 페어리가 최선의 해석을 바로 들려줘요.')+'">⚡ '+
+        curT('Quick pass','빠른 탐색')+'</button>':'')+
       (step.kind==='proposals'?'<button type="button" data-cur-answer-more>'+curT('Answer more questions','질문 더 답하기')+' →</button>':'')+
       '<button type="button" data-cur-review>'+curT('Review current understanding','현재 이해 검토')+'</button>'+
       '</div></div></article>'+
@@ -13075,9 +13245,12 @@ function bindCuriosityOverview(curiosities,filtered,selected){
     if(draft) openCuriosityDetails(null,'understanding');
     else synthesizeCuriosity(selected,btn);
   });
+  document.querySelectorAll('[data-cur-quick-pass]').forEach(btn=>btn.onclick=()=>{
+    curQuickMode=true; beginCuriositySession(selected,btn,{quick:true});
+  });
   document.querySelectorAll('[data-cur-primary]').forEach(btn=>btn.onclick=()=>{
     const kind=btn.dataset.curPrimary;
-    if(kind==='continue') beginCuriositySession(selected,btn);
+    if(kind==='continue'){ curQuickMode=false; beginCuriositySession(selected,btn); }
     else if(kind==='resume'){
       btn.disabled=true;
       pywebview.api.curiosity_reactivate(selected.id).then(r=>{
@@ -13157,15 +13330,21 @@ function makeCuriositySession(cur){
     // Reuse the saved batch only while it still holds an unanswered question;
     // once every question in it is answered, fall through so the session
     // completes (or starts a fresh batch from any newly generated questions).
-    if(saved.batch.some(id=>openIds.has(id))){curiositySession=saved;return saved;}
+    if(saved.batch.some(id=>openIds.has(id))){
+      // A resumed session keeps its own quick flag; sync the module state to it.
+      curQuickMode=!!saved.quick;
+      curiositySession=saved;return saved;
+    }
   }
-  curiositySession={curiosityId:Number(cur.id),batch:questions,currentIndex:0,answered:0,startedAt:new Date().toISOString()};
+  curiositySession={curiosityId:Number(cur.id),batch:questions,currentIndex:0,answered:0,
+    quick:!!curQuickMode,quickTarget:CUR_QUICK_TARGET,startedAt:new Date().toISOString()};
   saveCuriositySession();
   return curiositySession;
 }
 
-function beginCuriositySession(cur,button){
+function beginCuriositySession(cur,button,options={}){
   if(!cur) return;
+  if(options.quick!=null) curQuickMode=!!options.quick;
   if((cur.open_questions||[]).length){
     activeCuriosityId=Number(cur.id);curiosityMode='session';makeCuriositySession(cur);renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);return;
   }
@@ -13174,6 +13353,9 @@ function beginCuriositySession(cur,button){
 
 function exitCuriositySession(completed){
   const completedCuriosityId=curiositySession?Number(curiositySession.curiosityId):null;
+  // Capture the quick flag before the session is cleared below.
+  const wasQuick=!!(curiositySession&&curiositySession.quick);
+  const quickTarget=(curiositySession&&Number(curiositySession.quickTarget))||CUR_QUICK_TARGET;
   if(completed&&curiositySession){
     curLastBatchSummary={curiosityId:Number(curiositySession.curiosityId),answered:Number(curiositySession.answered)||0};
     curiositySession=null;saveCuriositySession();
@@ -13181,15 +13363,36 @@ function exitCuriositySession(completed){
       Number(candidate.id)===completedCuriosityId);
     const answeredTotal=completedRow?(completedRow.resolved||[]).filter(item=>
       item.kind==='question'&&item.status==='answered').length:0;
-    // Rapid-fire: when the batch empties and understanding is still under ~90%,
+    // Rapid-fire: when the batch empties and understanding is still under target,
     // auto-generate the next questions so the session keeps flowing instead of
     // dumping the user back to the overview. Stops once the target is reached
     // (or a synthesis already exists) so the synthesize handoff can take over.
+    // A Quick pass uses the small 5-8 target instead of the full 18.
     const hasApprovedSynthesis=!!(completedRow&&(completedRow.syntheses||[]).some(s=>s.status==='approved'));
+    const hasDraftSynthesis=!!(completedRow&&(completedRow.syntheses||[]).some(s=>s.status==='draft'));
+    const answerTarget=wasQuick?quickTarget:CUR_SYNTHESIS_ANSWER_TARGET;
+    // Quick pass reached its cap: hand over the best approximation now.
+    if(wasQuick&&completedRow&&completedRow.status==='active'&&answeredTotal>=quickTarget
+        &&!hasApprovedSynthesis&&!hasDraftSynthesis){
+      curQuickMode=false;
+      toast(curT('Quick pass complete — Faerie is drafting its best read.','빠른 탐색 완료 — 페어리가 최선의 해석을 작성 중이에요.'));
+      synthesizeAndHandoff(completedRow,null);
+      return;
+    }
     const keepAsking=completedRow&&completedRow.status==='active'&&
       !(completedRow.open_questions||[]).length&&
-      answeredTotal<CUR_SYNTHESIS_ANSWER_TARGET&&!hasApprovedSynthesis;
-    if(keepAsking) setTimeout(()=>continueCuriosity(completedCuriosityId,null,{auto:true}),0);
+      answeredTotal<answerTarget&&!hasApprovedSynthesis;
+    if(keepAsking){
+      // Stay in the answering screen: keep session mode, show the in-session
+      // "preparing next questions" state, and regenerate straight back into the
+      // session rather than flashing the overview between batches.
+      activeCuriosityId=completedCuriosityId;
+      curiosityMode='session';
+      pendingCuriosityLoopId=completedCuriosityId;
+      renderCuriosity(currentCuriosityState,backgroundImagesCache||[]);
+      setTimeout(()=>continueCuriosity(completedCuriosityId,null,{auto:true,session:true}),0);
+      return;
+    }
     if(completedCuriosityId!==null&&curQueuedIds.has(completedCuriosityId)){
       curQueuedIds.delete(completedCuriosityId);saveCuriosityQueue();
     }
@@ -13207,6 +13410,8 @@ function exitCuriositySession(completed){
       return;
     }
   }else saveCuriositySession();
+  // Leaving the session for the overview ends any Quick pass.
+  curQuickMode=false;
   curiosityMode='overview';
   // force:true — exitCuriositySession often runs from inside the render of an
   // in-flight loadCuriosity(); a plain loadCuriosity() would be short-circuited
@@ -13218,6 +13423,13 @@ function exitCuriositySession(completed){
 // Rapid-fire target: keep asking until ~90% understanding (baseline hits 90 at
 // this many answers), then offer to synthesize. The user can always continue.
 const CUR_SYNTHESIS_ANSWER_TARGET=18;
+
+// Quick pass: a bounded run that asks ~5-8 questions and then hands the user
+// its best approximation (an auto-synthesis) instead of the full 18-answer loop.
+const CUR_QUICK_TARGET=6;
+// True while the user is in a Quick pass; persisted onto the session so it
+// survives resume and the between-batch regeneration re-entry.
+let curQuickMode=false;
 
 // Investigations no longer surface proposals in the UI (they build understanding
 // and hand off to the main chat). Mirrors the backend INVESTIGATION_PROPOSALS_ENABLED
@@ -13281,6 +13493,18 @@ function curSessionStarterOptions(item){
 
 function renderCuriositySession(cur){
   const host=$('cur-session-content'); if(!host) return;
+  // Between batches Faerie regenerates the next questions. Keep the user in the
+  // answering screen with a loading state instead of dropping them back to the
+  // overview — they only leave when everything is answered or they hit Exit.
+  if(Number(pendingCuriosityLoopId)===Number(cur.id)){
+    host.innerHTML='<div class="cur-session-head"><div><div class="cur-eyebrow">✦ '+curT('Active investigation','활성 탐구')+'</div>'+
+        '<h2>'+esc(cur.label)+'</h2></div><button type="button" id="cur-session-exit">← '+curT('Exit session','세션 나가기')+'</button></div>'+
+      '<div class="cur-loop-panel"><div class="cur-sub" style="margin-top:0">'+curT('Preparing your next questions','다음 질문 준비 중')+'</div>'+
+      '<div class="hint" style="margin:0">'+curT('Faerie is writing the next batch from what you just answered…','방금 답한 내용을 바탕으로 다음 질문을 작성하고 있어요…')+'</div>'+
+      '<div class="cur-loop-load"><i></i></div></div>';
+    if($('cur-session-exit')) $('cur-session-exit').onclick=()=>{pendingCuriosityLoopId=null;exitCuriositySession(false);};
+    return;
+  }
   const session=makeCuriositySession(cur);
   while(session.currentIndex<session.batch.length && !(cur.open_questions||[]).some(q=>Number(q.id)===Number(session.batch[session.currentIndex]))) session.currentIndex++;
   if(session.currentIndex>=session.batch.length){exitCuriositySession(true);return;}
@@ -13340,7 +13564,17 @@ function renderCuriositySession(cur){
     withDbRetry(()=>pywebview.api.curiosity_answer(item.id,text,null,null,thumb?thumb.dataset.fit:null)).then(r=>{
       if(!r||r.ok===false){button.disabled=false;button.innerHTML=originalButtonHtml;toast((r&&r.message)||'Could not save answer.',true);return;}
       try{localStorage.removeItem(draftKey);}catch(e){}
-      session.answered=(Number(session.answered)||0)+1;session.currentIndex++;saveCuriositySession();loadCuriosity({force:true});
+      session.answered=(Number(session.answered)||0)+1;session.currentIndex++;saveCuriositySession();
+      // Quick pass: once ~5-8 answers are in, stop asking and hand the user
+      // Faerie's best approximation instead of advancing to more questions.
+      const quickDone=session.quick&&(Number(session.answered)||0)>=(Number(session.quickTarget)||CUR_QUICK_TARGET);
+      const noDraft=!((cur.syntheses||[]).some(s=>s.status==='draft'));
+      if(quickDone&&noDraft){
+        curQuickMode=false;curiositySession=null;saveCuriositySession();
+        toast(curT('Quick pass complete — Faerie is drafting its best read.','빠른 탐색 완료 — 페어리가 최선의 해석을 작성 중이에요.'));
+        synthesizeAndHandoff(cur,null);return;
+      }
+      loadCuriosity({force:true});
     }).catch(e=>{button.disabled=false;button.innerHTML=originalButtonHtml;toast('Could not save answer: '+e,true);});
   };
   $('cur-session-continue').onclick=submit;

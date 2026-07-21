@@ -2580,7 +2580,8 @@ class GoalStore:
                 "SELECT id FROM goal_node WHERE parent_id=?", (current,)).fetchall()
             to_visit.extend(int(r["id"]) for r in rows)
         rows = self.conn.execute(
-            f"SELECT id,status FROM goal_node WHERE id IN ({','.join('?' for _ in ids)})",
+            f"SELECT id,status,node_type,title FROM goal_node "
+            f"WHERE id IN ({','.join('?' for _ in ids)})",
             ids).fetchall()
         now = _now()
         started = False
@@ -2600,6 +2601,10 @@ class GoalStore:
             self.conn.execute(
                 f"DELETE FROM goal_project_signal WHERE goal_id IN "
                 f"({','.join('?' for _ in ids)})", ids)
+            # Tell any investigation that PROPOSED one of these Leaves that its
+            # action was archived without being completed, so its future
+            # reasoning doesn't assume the proposal was carried out.
+            self._notify_investigations_of_incomplete_archive(rows, now)
             self._mark_goal_ai_dirty(*ids, node.get("parent_id"))
             if _commit:
                 self.conn.commit()
@@ -2608,6 +2613,56 @@ class GoalStore:
                 self.conn.rollback()
             raise
         return len(ids)
+
+    def _notify_investigations_of_incomplete_archive(self, rows, now: str) -> None:
+        """When a Leaf an investigation proposed is archived without being
+        completed, drop a durable note onto that investigation so its future
+        questions/synthesis know the action didn't finish. Runs inside the
+        archive transaction on the shared memory.db connection; a no-op when
+        the curiosity tables aren't present. Never raises."""
+        try:
+            tables = {r["name"] for r in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"curiosity", "curiosity_item", "curiosity_context"}.issubset(tables):
+                return
+            columns = {c["name"] for c in self.conn.execute(
+                "PRAGMA table_info(curiosity_item)")}
+            if "implementation_goal_id" not in columns:
+                return
+            for row in rows:
+                # prior_status is what the node held BEFORE this archive pass.
+                if row["status"] == "completed":
+                    continue
+                leaf_id = int(row["id"])
+                src = self.conn.execute(
+                    "SELECT ci.curiosity_id FROM curiosity_item ci "
+                    "JOIN curiosity c ON c.id=ci.curiosity_id "
+                    "WHERE ci.implementation_goal_id=? AND c.status!='archived' "
+                    "ORDER BY ci.id DESC LIMIT 1", (leaf_id,)).fetchone()
+                if not src:
+                    continue
+                curiosity_id = int(src["curiosity_id"])
+                title = crypto.dec(row["title"]) or "an action you proposed"
+                note = (f'The Leaf you proposed — "{title}" — was archived on '
+                        f'{now[:10]} before it was completed. Treat that action as '
+                        f'not carried out when reasoning about progress, and if it '
+                        f'still matters, consider proposing a refined next step.')
+                normalized = " ".join(note.split()).casefold()
+                existing = self.conn.execute(
+                    "SELECT note FROM curiosity_context WHERE curiosity_id=? "
+                    "ORDER BY id DESC LIMIT 50", (curiosity_id,)).fetchall()
+                if any(" ".join((crypto.dec(e["note"]) or "").split()).casefold()
+                       == normalized for e in existing):
+                    continue
+                self.conn.execute(
+                    "INSERT INTO curiosity_context "
+                    "(curiosity_id,source_kind,source_ref,note,created_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (curiosity_id, "leaf_archived", f"leaf:{leaf_id}",
+                     crypto.enc(note), now))
+        except Exception:
+            # A notification failure must never block the archive itself.
+            pass
 
     def restore_subtree(self, goal_id: int) -> int:
         """Restore a soft-archived subtree to the exact statuses it had before archive."""

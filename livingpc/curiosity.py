@@ -1102,11 +1102,21 @@ class CuriosityStore:
             self._mark_linked_goal_agents_dirty(int(row["curiosity_id"]))
         self.conn.commit()
 
-    def mark_suggestion_resolved(self, item_id: int, status: str) -> None:
+    def mark_suggestion_resolved(self, item_id: int, status: str,
+                                 answer: str | None = None) -> None:
         row = self.get_item(item_id)
-        self.conn.execute(
-            "UPDATE curiosity_item SET status=?, resolved_at=? WHERE id=?",
-            (status, _now(), item_id))
+        answer = (answer or "").strip() or None
+        if answer is not None:
+            # The user's reason ("why wasn't this useful" / "what would make it
+            # more refined") rides in the same `answer` column questions use, so
+            # it shows in the resolved list and feeds future generation rounds.
+            self.conn.execute(
+                "UPDATE curiosity_item SET status=?, answer=?, resolved_at=? WHERE id=?",
+                (status, answer, _now(), item_id))
+        else:
+            self.conn.execute(
+                "UPDATE curiosity_item SET status=?, resolved_at=? WHERE id=?",
+                (status, _now(), item_id))
         if row:
             self._mark_linked_goal_agents_dirty(int(row["curiosity_id"]))
         self.conn.commit()
@@ -1425,7 +1435,14 @@ def build_curiosity_prompt(directive: str, context: CuriosityContext) -> str:
         + context.facts_block + "\n",
         "STILL WAITING ON YOUR RESPONSE (don't duplicate these):\n" + context.pending_block + "\n",
         "QUESTIONS DISMISSED without an answer (don't re-ask):\n" + context.dismissed_block + "\n",
-        "PRIOR SUGGESTIONS (status: tried / not_helpful_light / not_helpful_heavy / dismissed):\n"
+        "PRIOR SUGGESTIONS (status legend — tried: they acted on it; "
+        "not_helpful_light / not_helpful_heavy: it did not land, and any "
+        "'user's reason' explains why, so avoid that failure mode; "
+        "dismissed: they felt it was TOO EARLY or under-baked and want a MORE "
+        "REFINED, more concrete and committed proposal on the SAME underlying "
+        "idea — treat 'dismissed' as 'refine and re-propose', NOT as a rejection "
+        "of the theme, and if a 'user's reason' is given, make the refined "
+        "version address it):\n"
         + context.suggestions_block + "\n",
         "CONFIRMED BELIEFS about you (ground suggestion confidence in these):\n"
         + context.beliefs_block + "\n",
@@ -2438,7 +2455,10 @@ def _build_context(mem, inf, store: CuriosityStore, curiosity_id: int) -> Curios
             if it["status"] == "open":
                 pending_lines.append(f"  - {prefix}{it['text']}")
             else:
-                sugg_lines.append(f"  - {prefix}{it['text']} [{it['status']}]")
+                reason = (it.get("answer") or "").strip()
+                note = f" — user's reason: {reason}" if reason else ""
+                sugg_lines.append(
+                    f"  - {prefix}{it['text']} [{it['status']}]{note}")
     if store.conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_outcome'"
     ).fetchone():
@@ -3691,7 +3711,8 @@ def dismiss_item(store: CuriosityStore, item_id: int) -> None:
     store.mark_dismissed(item_id)
 
 
-def respond_suggestion(store: CuriosityStore, item_id: int, action: str) -> None:
+def respond_suggestion(store: CuriosityStore, item_id: int, action: str,
+                       reason: str | None = None) -> None:
     row = store.get_item(item_id)
     if row is None:
         raise ValueError(f"curiosity item {item_id} not found")
@@ -3700,7 +3721,9 @@ def respond_suggestion(store: CuriosityStore, item_id: int, action: str) -> None
         raise ValueError(f"item {item_id} is a question — use answer_item/dismiss_item")
     if action not in _SUGGESTION_ACTIONS:
         raise ValueError(f"unknown suggestion action: {action}")
-    store.mark_suggestion_resolved(item_id, action)
+    # A "why wasn't this useful" reason (not-helpful) or a "what would make it
+    # more refined" note (dismiss) is optional context the user can attach.
+    store.mark_suggestion_resolved(item_id, action, answer=reason)
 
 
 def set_greatest(store: CuriosityStore, curiosity_id: int, on: bool = True) -> None:

@@ -2789,60 +2789,42 @@ def test_companion_prompt_requires_voice_skill_and_bans_fabrication_in_drafts():
         c.close()
 
 
-def test_filing_offer_skips_pasted_third_party_material():
-    """Pasting a job posting is reference material for the conversation, not
-    a brain-dump — the /file nudge must not fire on it."""
+def test_filing_nudge_is_never_emitted():
+    """The proactive /file suggestion was removed by request: Faerie must never
+    nudge the user toward filing on its own, no matter how brain-dump-shaped the
+    message is. Filing still works, but only when the user explicitly asks."""
     with tempfile.TemporaryDirectory() as d:
         cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
         c = Companion(cfg=cfg, chat=ScriptedChat("Interesting posting.", "Noted."))
         posting = ("so this one sounds close: Summary. Hi! We're a digital "
                    "marketing agency looking to fold AI automation into the way "
                    "we operate. What we need done: we want to stand up an AI "
-                   "agent system connected to our CRM. Deliverables: a "
-                   "functioning automation system, documentation, and a handoff "
-                   "session for our team. We're looking for practical n8n or "
-                   "Make.com experience. How we like to work: we care about "
-                   "clear, proactive communication and our team prefers weekly "
-                   "calls. Start your message with DIGIMARK so we see you read "
-                   "this. " * 2)
-        rendered = c.reply(posting)
-        assert "worth keeping" not in rendered
-        # A long first-person brain-dump still gets the offer.
+                   "agent system connected to our CRM. " * 2)
+        assert "worth keeping" not in c.reply(posting)
+        # A long first-person brain-dump no longer gets an offer either.
         dump = ("I keep noticing that I avoid projects with teams. I think my "
                 "ideal work is bounded, async, and solo. I want to build my "
                 "filter around how much human contact something requires, and "
                 "I noticed my energy drops when a posting mentions weekly "
                 "calls. My plan is to test this on the next ten postings I "
                 "read and see how often I'm right about it. " * 3)
-        rendered = c.reply(dump)
-        assert "worth keeping" in rendered
+        assert "worth keeping" not in c.reply(dump)
         c.close()
 
 
-def test_filing_offer_skips_quoted_faerie_ui_and_never_nags_twice_per_chat():
+def test_filing_nudge_stays_gone_across_repeated_dumps():
     with tempfile.TemporaryDirectory() as d:
         cfg = Config(db_path=os.path.join(d, "e.db"), memory_db_path=os.path.join(d, "m.db"))
         c = Companion(cfg=cfg, chat=ScriptedChat("Noted.", "Noted.", "Noted."))
-        ui_paste = ("investigation said this and I think it might be the latter: "
-                    "✦ @Today Draft proposal for advisory intake automation "
-                    "Track outcomes and debrief Active Threads 1 proposal(s) "
-                    "waiting for approval 3 question(s) waiting for you "
-                    "12 questions answered · 0 syntheses · 0 queued "
-                    "Estimated understanding · 51% I want to freelance on Upwork "
-                    "as a stepping stone, but I notice I'd rather build cool "
-                    "things than just any automation work. " * 2)
-        assert "worth keeping" not in c.reply(ui_paste)
         dump = ("I think my real issue is that I want project-shaped work, not "
                 "relationship-shaped work. I want one handoff, one deliverable, "
                 "and then I'm done. I noticed my energy collapses when a posting "
                 "implies ongoing contact, and I want my filter to treat that as "
                 "an instant disqualifier no matter how interesting the work is. " * 3)
-        first = c.reply(dump)
-        assert "worth keeping" in first
-        # Second qualifying dump in the same chat: no repeat nag.
-        second = c.reply(dump + " Also I keep thinking about how I want my own "
-                                "clients to find me instead of me hunting them.")
-        assert "worth keeping" not in second
+        assert "worth keeping" not in c.reply(dump)
+        assert "worth keeping" not in c.reply(
+            dump + " Also I keep thinking about how I want my own clients to "
+                   "find me instead of me hunting them.")
         c.close()
 
 

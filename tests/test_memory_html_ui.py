@@ -277,6 +277,8 @@ def test_investigation_batch_keeps_answered_questions_so_it_does_not_end_early()
     body = _function_body(_script(), "makeCuriositySession")
     harness = (
         "let curiositySession=null;\n"
+        "let curQuickMode=false;\n"
+        "const CUR_QUICK_TARGET=6;\n"
         "function loadSavedCuriositySession(){return curiositySession;}\n"
         "function saveCuriositySession(){}\n"
         "function makeCuriositySession(cur){" + body + "}\n"
@@ -845,17 +847,22 @@ def test_today_widget_keeps_only_completions_from_the_current_local_day():
     assert "selfDashboardDate" in script and "},60000);" in script
 
 
-def test_command_center_level_bar_uses_global_xp_remainder():
+def test_command_center_level_bar_uses_python_computed_soul_level():
     html = _html()
     start = html.index("function selfLevelWidgetHtml(data)")
     end = html.index("function selfProfileWidgetsHtml(data)", start)
     render = html[start:end]
 
     assert "data.curiosity&&data.curiosity.global_xp" in render
-    assert "Math.floor(totalXp/100)+1" in render
-    assert "xpIntoLevel=totalXp%100" in render
+    # Level/XP come from Python (the easy-until-100 curve) so the dashboard and
+    # the level-up toast agree; the old flat /100 math is only a fallback.
+    assert "cur.soul_level" in render
+    assert "cur.soul_xp_into_level" in render
+    assert "cur.soul_level_span" in render
     assert "self-xp-bar" in render
-    assert "xpIntoLevel+' / 100 XP" in render
+    assert "xpIntoLevel+' / '+span+' XP" in render
+    # Fallback to the old math is retained if the fields are missing.
+    assert "Math.floor(totalXp/100)+1" in render
 
 
 def test_all_buttons_and_navigation_controls_receive_quick_hover_help():

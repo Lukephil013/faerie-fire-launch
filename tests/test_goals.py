@@ -969,6 +969,34 @@ class TestExperimentOutcomes(GoalTestCase):
         self.assertEqual(outcome["curiosity_id"], cid)
         self.assertEqual(outcome["source_item_id"], item)
 
+    def test_archiving_proposed_leaf_incomplete_notifies_its_investigation(self):
+        cid = self.curiosities.add_curiosity("understand energy", "Energy")
+        item = self.curiosities.add_item(cid, "suggestion", "Prepare the handoff")
+        over, leaf = self._leaf()
+        self.goals.conn.execute(
+            "UPDATE curiosity_item SET implementation_goal_id=? WHERE id=?", (leaf, item))
+        self.goals.conn.commit()
+        # Archive the proposed Leaf before it was ever completed.
+        self.goals.delete_subtree(leaf)
+        notes = self.curiosities.contexts(cid)
+        self.assertTrue(any("was archived" in n["note"] and "before it was completed"
+                            in n["note"] for n in notes),
+                        f"expected an archive note, got {[n['note'] for n in notes]}")
+
+    def test_archiving_completed_leaf_does_not_notify_investigation(self):
+        cid = self.curiosities.add_curiosity("understand energy", "Energy")
+        item = self.curiosities.add_item(cid, "suggestion", "Prepare the handoff")
+        over, leaf = self._leaf()
+        self.goals.conn.execute(
+            "UPDATE curiosity_item SET implementation_goal_id=? WHERE id=?", (leaf, item))
+        # A Leaf that was completed first should NOT generate an incomplete note.
+        self.goals.conn.execute(
+            "UPDATE goal_node SET status='completed' WHERE id=?", (leaf,))
+        self.goals.conn.commit()
+        self.goals.delete_subtree(leaf)
+        notes = self.curiosities.contexts(cid)
+        self.assertFalse(any("was archived" in n["note"] for n in notes))
+
     def test_failed_advice_creates_lower_confidence_synthesis_draft(self):
         cfg = Config(memory_db_path=self.db, db_path=os.path.join(self.tmp.name, "events.db"),
                      goal_ai_backend="stub", inference_backend="stub")

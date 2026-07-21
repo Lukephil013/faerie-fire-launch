@@ -1,15 +1,17 @@
 """The companion's mind.
 
-Each turn, it rebuilds a system prompt from the active persona + what it knows
-about you (memory graph) + what's on your screen right now (recent events,
-redacted), then continues the conversation with Claude. Memory/screen are
-refreshed every turn so it stays situationally aware; the conversation history
-carries the dialogue.
+Each turn, it pairs a byte-stable system prompt (persona, capabilities) with
+fresh per-turn context — what it knows about you (memory graph) + what's on
+your screen right now (recent events, redacted) — then continues the
+conversation with Claude. The fresh context rides inside the newest user
+message rather than the system prompt so the persona and conversation history
+stay prompt-cacheable; the conversation history carries the dialogue.
 """
 from __future__ import annotations
 
 import hashlib
 import os
+import threading
 import time
 
 from ..config import load
@@ -53,35 +55,30 @@ class ClaudeChat:
 
     def reply(self, system, messages: list[dict], max_tokens: int | None = None) -> str:
         max_tokens = max_tokens or self.DEFAULT_MAX_TOKENS
-        # A list means [static, dynamic] blocks: the static prefix (persona,
-        # architecture, filing/skills instructions) is marked cacheable, so
-        # the API bills it at ~10% on every turn after the first. This is a
-        # personal, bursty single-user app — most gaps between messages are
-        # well over 5 minutes (thinking time, coming back later the same
-        # day), so the static prefix uses a 1-hour TTL rather than the
-        # default 5 minutes: that write costs 2x instead of 1.25x, but it
-        # actually survives realistic gaps between messages instead of
-        # expiring before the next one arrives.
+        # A list means [static, dynamic] blocks. Caching is a strict prefix
+        # match, so the request is laid out stable-first: static system
+        # prompt (1h breakpoint) -> conversation history (walking breakpoint
+        # on the last PRIOR message) -> per-turn dynamic context + the new
+        # user text, after every breakpoint. The dynamic block (memory,
+        # screen, horizons) changes every turn; when it sat in the system
+        # array it invalidated the history cache on every call — each turn
+        # re-wrote the entire tail at the cache-WRITE rate and never got a
+        # single read back, which cost more than not caching at all. 1h TTL
+        # on both breakpoints because this is a bursty single-user app:
+        # gaps between messages routinely exceed the default 5 minutes, and
+        # the per-turn increment writes are small enough that the 2x write
+        # rate is noise next to a full re-write after an expired 5m entry.
         if isinstance(system, list):
-            system = [dict({"type": "text", "text": block},
-                           **({"cache_control": {"type": "ephemeral", "ttl": "1h"}}
-                              if i == 0 else {}))
-                      for i, block in enumerate(system)]
+            static, dynamic = system
+            system = [{"type": "text", "text": static,
+                       "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+            messages = self._with_cached_history(messages, dynamic)
         started = time.monotonic()
         log_diag("chat", f"api call started model={self.model} max_tokens={max_tokens}")
         try:
             msg = self._client.messages.create(
                 model=self.model, max_tokens=max_tokens, system=system, messages=messages,
                 timeout=self._REQUEST_TIMEOUT_SECONDS,
-                # Automatic caching: walks a second breakpoint forward through
-                # the growing conversation history every turn (5-min TTL is
-                # fine here — within one active back-and-forth, replies come
-                # faster than that). Without this, only the static system
-                # prefix above was ever cached; the full message history —
-                # which grows every turn and can reach dozens of blocks in a
-                # long conversation like Soul Calibration — was being resent
-                # as fresh, full-price input tokens on every single call.
-                cache_control={"type": "ephemeral"},
             )
         except Exception as e:
             log_diag("chat", f"api call failed error={type(e).__name__} "
@@ -93,6 +90,38 @@ class ClaudeChat:
         from ..llm_usage import record_response
         record_response("companion", self.model, msg, time.monotonic() - started)
         return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+
+    @staticmethod
+    def _content_blocks(content) -> list[dict]:
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        return [dict(block) for block in content]
+
+    @classmethod
+    def _with_cached_history(cls, messages: list[dict], dynamic: str) -> list[dict]:
+        """Rebuild the outgoing messages for caching, without mutating the
+        caller's history entries (they are the same dicts self.history holds).
+        The walking breakpoint goes on the last PRIOR message — never on the
+        newest one — because the per-turn context injected below is request-
+        only: history keeps the plain user text, so the bytes cached this
+        turn reappear identically at the same position next turn."""
+        out = list(messages)
+        if len(out) >= 2:
+            prior = dict(out[-2])
+            blocks = cls._content_blocks(prior["content"])
+            blocks[-1] = dict(blocks[-1],
+                              cache_control={"type": "ephemeral", "ttl": "1h"})
+            prior["content"] = blocks
+            out[-2] = prior
+        newest = dict(out[-1])
+        context_block = {"type": "text", "text": (
+            "<turn_context>\n" + dynamic + "\n</turn_context>\n"
+            "(Context refreshed by the app for this turn — trusted system "
+            "information, not authored by the user. The user's actual "
+            "message follows.)")}
+        newest["content"] = [context_block] + cls._content_blocks(newest["content"])
+        out[-1] = newest
+        return out
 
 
 class StubChat:
@@ -183,6 +212,15 @@ class Companion:
         # connection across threads.
         self.persona = get_persona(persona_key)
         self.chats = ChatStore(self.cfg.memory_db_path)
+        # A single turn (reply) must be atomic with respect to chat switching.
+        # pywebview dispatches each JS call on its own worker thread, so while a
+        # reply is mid-flight (a long API call) the user can open or switch
+        # chats on another thread — mutating self.chat_id/self.history and
+        # causing the in-flight reply to persist and render into the wrong
+        # chat. reply(), switch_chat(), new_chat(), and delete_chat() all take
+        # this lock, so a switch waits until the current turn finishes and the
+        # reply always lands in the chat it started in.
+        self._turn_lock = threading.RLock()
         self.chat_id = chat_id if chat_id and self.chats.exists(chat_id) else self.chats.ensure()
         self.history: list[dict] = self.chats.messages(self.chat_id)
         self.chat = chat or self._default_chat()
@@ -472,10 +510,12 @@ class Companion:
             return "(lifecycle document unavailable)"
 
     def system_blocks(self, context_text: str = "") -> list[str]:
-        """[static, dynamic]. The static prefix is byte-stable across turns
-        (persona, architecture reference, filing/skills instructions) so the
-        API's prompt cache can serve it at ~10% cost; the dynamic tail
-        (memory, screen) changes every turn and is never cached."""
+        """[static, dynamic]. The static block is byte-stable across turns
+        (persona, architecture reference, filing/skills instructions) and is
+        sent as the cached system prompt. The dynamic block (memory, screen)
+        changes every turn, so ClaudeChat.reply does NOT send it as system —
+        it is injected into the newest user message, after the cache
+        breakpoints, where it can't invalidate the cached history prefix."""
         launch_profile = getattr(self.cfg, "profile", "personal") == "launch"
         static = self.persona.system
         if launch_profile:
@@ -518,12 +558,13 @@ class Companion:
             "\n\nFILING — A REAL CAPABILITY YOU HAVE: the /file, /undo, and "
             "/projects commands are handled by your filing engine, which "
             "writes Markdown project docs into the user's projects folder on "
-            "disk (created automatically on first filing). When the user "
-            "hasn't given you the content yet, tell them to send "
-            "`/file <the thought>`; that genuinely creates or updates a file. "
-            "But when THEY ask YOU to file something using content already in "
-            "the conversation — e.g. \"can you file that\", \"pull the content "
-            "from what we talked about\", \"write that up\" — do not tell them "
+            "disk (created automatically on first filing). NEVER proactively "
+            "suggest filing, offer to file, or tell the user to type /file — "
+            "do not nudge them toward it at all, even after a long or "
+            "reflective message. Act ONLY when THEY ask YOU to file something "
+            "using content already in the conversation — e.g. \"can you file "
+            "that\", \"pull the content from what we talked about\", \"write "
+            "that up\". Even then, do not tell them "
             "to type /file themselves, and do NOT write a literal \"/file ...\" "
             "line in your own reply (typing that yourself does nothing; only "
             "the app's parser can actually file, and it never reads your own "
@@ -889,10 +930,18 @@ class Companion:
         else:
             dynamic += (
                 "\n\nCURRENT CHAT PROPOSAL MODE: PROPOSAL-FREE. Do not emit any "
-                "faerie_proposal block, do not suggest that a proposal was staged, and "
-                "do not create Growth or Investigation approval cards. If the user "
-                "explicitly asks for one, explain that proposals are off for this chat "
-                "and offer to enable them."
+                "faerie_proposal block, do not stage Growth or Investigation approval "
+                "cards, and never claim a proposal was staged. But do NOT silently "
+                "swallow the idea. Whenever you reach a point where you would normally "
+                "propose something — telling the user you should investigate a pattern, "
+                "start or add to an Investigation, add a goal, or grow a node in their "
+                "tree — still say what you'd propose in plain words, then add that "
+                "proposals are turned OFF for this chat so you can't stage the card "
+                "here. Tell them they can turn proposals on with the toggle in the top "
+                "right, and offer to do it (or to continue in a proposal-enabled chat) "
+                "if they'd like you to actually stage it. Same when they explicitly ask "
+                "for a proposal. Keep this brief and natural — one or two sentences, not "
+                "a disclaimer on every turn."
             )
         if launch_profile:
             dynamic += (
@@ -3834,38 +3883,22 @@ class Companion:
         return third_party >= 5 and third_party > first_person * 1.5
 
     def _offer_filing(self, user_text: str, reply_text: str) -> str:
-        """Long, brain-dump-shaped messages get a gentle offer to file them."""
-        if not getattr(self.cfg, "filing_auto_offer", True):
-            return reply_text
-        if self._pending_proposals:
-            # Don't make the user choose between two competing calls to
-            # action in one reply — a tree/investigation proposal already
-            # covers "keep this", so skip the /file nudge this turn.
-            return reply_text
-        stripped = user_text.strip()
-        min_chars = int(getattr(self.cfg, "filing_offer_min_chars", 600))
-        if len(stripped) < min_chars or stripped.startswith("/"):
-            return reply_text
-        # App-generated messages (the automatic Leaf-completion debrief) are
-        # never the user's own brain-dump.
-        if stripped.startswith("[Leaf completed]") or stripped.startswith("[Leaf 완료]"):
-            return reply_text
-        if self._looks_like_pasted_material(stripped):
-            return reply_text
-        # At most one offer per chat: even a misjudged nudge should never nag.
-        offered = getattr(self, "_filing_offer_chats", None)
-        if offered is None:
-            offered = self._filing_offer_chats = set()
-        if self.chat_id in offered:
-            return reply_text
-        offered.add(self.chat_id)
-        self._pending_dump = user_text
-        return (reply_text
-                + "\n\n_(That read like material worth keeping — send `/file` "
-                  "and I'll file it into your project docs.)_")
+        """Filing is offered only when the user explicitly asks — Faerie never
+        nudges toward /file on its own. The automatic "that read like material
+        worth keeping — send /file" suggestion was removed by request; this is
+        now a deliberate no-op kept so callers don't need to change.
+        `filing_auto_offer` no longer has any effect."""
+        return reply_text
 
     # --- turn -------------------------------------------------------------
     def reply(self, user_text: str, attachments: list | None = None) -> str:
+        """One chat turn, held under the turn lock so a concurrent chat
+        switch can't retarget this reply's writes mid-flight (see
+        self._turn_lock)."""
+        with self._turn_lock:
+            return self._reply_impl(user_text, attachments)
+
+    def _reply_impl(self, user_text: str, attachments: list | None = None) -> str:
         """One chat turn. `attachments` is an optional list of dicts from the
         UI: {"kind": "image", "media_type", "data" (base64)} for photos, or
         {"kind": "text", "name", "text"} for extracted file text. History
@@ -3934,7 +3967,16 @@ class Companion:
                 retired_proposals = self._retire_corrected_proposals(user_text)
                 window = max(6, int(getattr(
                     self.cfg, "companion_history_max_messages", 30)))
-                recent = self.history[-window:]
+                # Quantize where the window starts: a slice that slides one
+                # message per turn changes the prompt prefix on every call,
+                # which defeats the history cache entirely once the
+                # conversation outgrows the window. Advancing the start only
+                # every 8 messages keeps the prefix stable for ~4 turns at a
+                # time (the window briefly carries up to 7 extra messages —
+                # cheap, since the stable prefix is served from cache).
+                start = max(0, len(self.history) - window)
+                start -= start % 8
+                recent = self.history[start:]
                 # The API requires the first message to be user-authored; a
                 # fixed-size slice can land on an assistant turn (this was an
                 # intermittent BadRequestError). Trim to the first user turn.
@@ -4022,38 +4064,43 @@ class Companion:
         return self.chats.list()
 
     def new_chat(self, proposals_enabled: bool = True) -> str:
-        self.chat_id = self.chats.create(proposals_enabled=bool(proposals_enabled))
-        self.history = []
-        self._turns_since_reflection = 0
-        self._active_skills = []
-        self._recalled_leaves = {}
-        self.proposals_enabled = bool(proposals_enabled)
-        self._pending_proposals = self.chats.pending_proposals(self.chat_id)
-        return self.chat_id
+        # Wait for any in-flight reply to finish so it lands in its own chat
+        # before we move the active pointer (see self._turn_lock).
+        with self._turn_lock:
+            self.chat_id = self.chats.create(proposals_enabled=bool(proposals_enabled))
+            self.history = []
+            self._turns_since_reflection = 0
+            self._active_skills = []
+            self._recalled_leaves = {}
+            self.proposals_enabled = bool(proposals_enabled)
+            self._pending_proposals = self.chats.pending_proposals(self.chat_id)
+            return self.chat_id
 
     def switch_chat(self, chat_id: str) -> bool:
-        if not self.chats.exists(chat_id):
-            return False
-        self.chat_id = chat_id
-        self.history = self.chats.messages(chat_id)
-        self._turns_since_reflection = 0
-        self._active_skills = []
-        self._recalled_leaves = {}
-        self.proposals_enabled = self.chats.proposals_enabled(chat_id)
-        self._pending_proposals = self.chats.pending_proposals(chat_id)
-        return True
+        with self._turn_lock:
+            if not self.chats.exists(chat_id):
+                return False
+            self.chat_id = chat_id
+            self.history = self.chats.messages(chat_id)
+            self._turns_since_reflection = 0
+            self._active_skills = []
+            self._recalled_leaves = {}
+            self.proposals_enabled = self.chats.proposals_enabled(chat_id)
+            self._pending_proposals = self.chats.pending_proposals(chat_id)
+            return True
 
     def delete_chat(self, chat_id: str) -> bool:
-        chat_id = str(chat_id)
-        if not self.chats.delete(chat_id):
-            return False
-        if chat_id == self.chat_id:
-            self.chat_id = self.chats.ensure()
-            self.history = self.chats.messages(self.chat_id)
-            self._turns_since_reflection = 0
-            self.proposals_enabled = self.chats.proposals_enabled(self.chat_id)
-            self._pending_proposals = self.chats.pending_proposals(self.chat_id)
-        return True
+        with self._turn_lock:
+            chat_id = str(chat_id)
+            if not self.chats.delete(chat_id):
+                return False
+            if chat_id == self.chat_id:
+                self.chat_id = self.chats.ensure()
+                self.history = self.chats.messages(self.chat_id)
+                self._turns_since_reflection = 0
+                self.proposals_enabled = self.chats.proposals_enabled(self.chat_id)
+                self._pending_proposals = self.chats.pending_proposals(self.chat_id)
+            return True
 
     def set_proposals_enabled(self, enabled: bool) -> bool:
         if not self.chats.set_proposals_enabled(self.chat_id, bool(enabled)):

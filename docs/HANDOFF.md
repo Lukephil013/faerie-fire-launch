@@ -6,31 +6,36 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 ## Start Here
 
 - Branch: `main`
-- Parent HEAD: `b948af1`
-- Generated UTC: `2026-07-20T22:42:32+00:00`
-- Changed areas: companion, filing, review
+- Parent HEAD: `b9ab01b`
+- Generated UTC: `2026-07-21T21:15:37+00:00`
+- Changed areas: companion, filing, review, storage
 - Read the latest commit message, then run the narrow context command below.
 - Do not scan README, FEATURES, design documents, or devlogs unless the task requires history.
 
 ## Changed Files In This Commit
 
+- `gui.py`
 - `livingpc/companion/brain.py`
 - `livingpc/curiosity.py`
 - `livingpc/curiosity_metrics.py`
-- `livingpc/feedback.py`
-- `livingpc/goal_ai.py`
 - `livingpc/goals.py`
-- `livingpc/inference.py`
-- `livingpc/inference_inquiry.py`
+- `livingpc/ui/assets/audio/moss-on-the-wind.wav`
+- `livingpc/ui/memory.html`
+- `livingpc/ui_preferences.py`
+- `tests/test_companion.py`
+- `tests/test_curiosity.py`
 - `tests/test_curiosity_metrics.py`
-- `tests/test_goal_ai.py`
+- `tests/test_filing.py`
 - `tests/test_goals.py`
+- `tests/test_memory_html_ui.py`
+- `tests/test_ui_preferences.py`
 
 ## Context Commands
 
 - `python tools/project_context.py companion`
 - `python tools/project_context.py filing`
 - `python tools/project_context.py review`
+- `python tools/project_context.py storage`
 
 ## Verification
 
@@ -40,6 +45,6 @@ memory, OCR, clipboard, conversation, URL, screenshot, or window-title content.
 
 ## Recent History Before This Commit
 
+- b9ab01b Update 2026-07-20
 - b948af1 Update 2026-07-20
 - 55ef56f Update 2026-07-20
-- 731e56b Update 2026-07-19

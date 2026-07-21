@@ -7,7 +7,51 @@ from datetime import date, timedelta
 
 from livingpc.curiosity_metrics import (
     DAILY_XP_CAP, MetricStore, proposed_profile, render_dashboard,
+    level_for_xp, xp_into_level,
 )
+
+
+def test_level_curve_is_easy_until_three_digits_then_harder():
+    # Easy: 50 XP per level below level 100.
+    assert level_for_xp(0) == 1
+    assert level_for_xp(49) == 1
+    assert level_for_xp(50) == 2
+    assert level_for_xp(570) == 12          # today's real total lands at level 12
+    assert xp_into_level(570) == 20
+    # Level 100 begins at 99 * 50 = 4950 XP.
+    assert level_for_xp(4949) == 99
+    assert level_for_xp(4950) == 100
+    # Slightly harder past 100: 120 XP per level.
+    assert level_for_xp(4950 + 119) == 100
+    assert level_for_xp(4950 + 120) == 101
+
+
+def test_level_up_toast_only_fires_on_milestones_and_never_replays():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = MetricStore(os.path.join(tmp, "memory.db"))
+        fired = []
+        store._on_level_up = lambda level: fired.append(level)  # capture toasts
+        try:
+            # Climb from level 1 well past level 5 in one day (milestone events
+            # are 75 XP each; the daily cap is 300 -> level 7).
+            for i in range(6):
+                store.record_event(0, "milestone", f"m:{i}", occurred_on="2026-07-01")
+            # Crossed level 5 exactly once; level 10 not reached -> one toast.
+            assert fired == [5]
+            # A DB restore/re-run cannot replay it: reopening seeds the
+            # high-water mark and awarding more on a fresh day still only fires
+            # the NEXT unseen milestone (10), never 5 again.
+            store.close()
+            store2 = MetricStore(os.path.join(tmp, "memory.db"))
+            fired2 = []
+            store2._on_level_up = lambda level: fired2.append(level)
+            for i in range(10):
+                store2.record_event(0, "milestone", f"n:{i}", occurred_on="2026-07-02")
+            assert 5 not in fired2          # never replays a passed milestone
+            assert fired2 and min(fired2) >= 10
+            store2.close()
+        finally:
+            pass
 
 
 def curiosity(label="exercise", directive="help me exercise", curiosity_id=1):
@@ -155,7 +199,8 @@ class TestMetricScoring:
         snapshot = self.store.build_snapshot(1, "2026-07-01")
         assert snapshot.xp_delta == DAILY_XP_CAP
         assert snapshot.total_xp == DAILY_XP_CAP
-        assert snapshot.level == 4
+        # Easy curve: 50 XP/level below level 100, so 300 XP == level 7.
+        assert snapshot.level == 7
         assert snapshot.xp_into_level == 0
 
     def test_global_xp_has_one_cap_and_survives_other_investigations(self):

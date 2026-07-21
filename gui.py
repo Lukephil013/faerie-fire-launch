@@ -1245,12 +1245,20 @@ class GuiApi:
                     "threads": threads,
                 })
             archived = store.list_curiosities(status="archived")
+            from livingpc.curiosity_metrics import (
+                level_for_xp, xp_into_level, xp_for_level)
+            global_xp = metrics.global_xp()
             return {
                 "curiosities": curiosities,
                 "archived": archived,
                 "investigation_candidates": store.visible_candidates(limit=2),
                 "stats": store.stats(),
-                "global_xp": metrics.global_xp(),
+                "global_xp": global_xp,
+                # Level is derived in Python so the dashboard and the level-up
+                # notification always agree on the (easy-until-100) curve.
+                "soul_level": level_for_xp(global_xp),
+                "soul_xp_into_level": xp_into_level(global_xp),
+                "soul_level_span": xp_for_level(global_xp),
                 "checkin_hour": getattr(self.cfg, "curiosity_checkin_hour", 21),
                 "interval_minutes": getattr(self.cfg, "curiosity_interval_minutes", 720),
             }
@@ -1847,7 +1855,8 @@ class GuiApi:
         finally:
             store.close()
 
-    def curiosity_respond_suggestion(self, item_id, action, outcome_rating=None) -> dict:
+    def curiosity_respond_suggestion(self, item_id, action, outcome_rating=None,
+                                     reason=None) -> dict:
         from livingpc.curiosity import CuriosityStore, get_curiosity_model, respond_suggestion
         from livingpc.inference import InferenceStore
         mem = MemoryStore(self.cfg.memory_db_path)
@@ -1856,7 +1865,8 @@ class GuiApi:
         try:
             item = store.get_item(int(item_id))
             curiosity_id = item["curiosity_id"] if item is not None else None
-            respond_suggestion(store, int(item_id), str(action or ""))
+            respond_suggestion(store, int(item_id), str(action or ""),
+                               reason=(str(reason).strip() if reason else None))
             if curiosity_id is not None and str(action or "") == "tried":
                 from livingpc.curiosity_metrics import MetricStore
                 metrics = MetricStore(self.cfg.memory_db_path)

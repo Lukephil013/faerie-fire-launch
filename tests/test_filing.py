@@ -319,13 +319,16 @@ class TestCompanionFiling(unittest.TestCase):
             self.assertIn("inbox", c.reply("/projects"))
             c.close()
 
-    def test_long_message_gets_offer_then_bare_file_files_it(self):
+    def test_long_message_gets_no_offer_but_explicit_file_still_works(self):
+        # The proactive /file nudge was removed by request: a long brain-dump
+        # must NOT get an offer. Explicit filing with content still works.
         with tempfile.TemporaryDirectory() as tmp:
             c = self._companion(tmp, filing_offer_min_chars=50)
             long_dump = "A long meandering thought about the thing. " * 3
             out = c.reply(long_dump)
-            self.assertIn("/file", out)          # the gentle offer
-            out2 = c.reply("/file")               # bare /file takes the pending dump
+            self.assertNotIn("/file", out)
+            self.assertNotIn("worth keeping", out)
+            out2 = c.reply("/file " + long_dump)
             self.assertIn("inbox", out2.lower())
             c.close()
 

@@ -42,6 +42,32 @@ def test_visual_preferences_reject_unbounded_or_invalid_values(tmp_path):
         store.close()
 
 
+def test_music_preferences_survive_reopen_and_clamp_and_validate(tmp_path):
+    db = str(tmp_path / "memory.db")
+    store = UiPreferenceStore(db)
+    store.set("music_enabled", False)
+    store.set("music_volume", 0.65)
+    store.set("music_volume", 5)     # out of range -> clamped to 1.0
+    store.close()
+
+    reopened = UiPreferenceStore(db)
+    try:
+        got = reopened.get_all()
+        assert got["music_enabled"] is False
+        assert got["music_volume"] == 1.0
+        reopened.set("music_volume", -3)   # clamps up to 0.0
+        assert reopened.get_all()["music_volume"] == 0.0
+        for key, value in (("music_enabled", "yes"), ("music_volume", "loud")):
+            try:
+                reopened.set(key, value)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"accepted invalid preference: {key}")
+    finally:
+        reopened.close()
+
+
 def test_growth_map_layout_survives_restart_and_bounds_numeric_state(tmp_path):
     db = str(tmp_path / "memory.db")
     store = UiPreferenceStore(db)

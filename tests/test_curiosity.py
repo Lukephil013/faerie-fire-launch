@@ -284,6 +284,23 @@ class TestCuriosityStore(unittest.TestCase):
         self.store.mark_suggestion_resolved(iid, "not_helpful_light")
         self.assertEqual(self.store.get_item(iid)["status"], "not_helpful_light")
 
+    def test_suggestion_feedback_reason_is_stored_and_optional(self):
+        from livingpc.curiosity import respond_suggestion
+        cid = self.store.add_curiosity("a", "a")
+        # A "why wasn't this useful" reason lands in the answer column.
+        nh = self.store.add_item(cid, "suggestion", "try this")
+        respond_suggestion(self.store, nh, "not_helpful_heavy",
+                           reason="too generic, I already do this")
+        row = self.store.get_item(nh)
+        self.assertEqual(row["status"], "not_helpful_heavy")
+        self.assertEqual(row["answer"], "too generic, I already do this")
+        # Dismiss with no reason still works and stores no answer.
+        dm = self.store.add_item(cid, "suggestion", "try that")
+        respond_suggestion(self.store, dm, "dismissed", reason=None)
+        row = self.store.get_item(dm)
+        self.assertEqual(row["status"], "dismissed")
+        self.assertIn(row["answer"], (None, ""))
+
     def test_deduplicate_open_suggestions_repairs_an_existing_stack(self):
         cid = self.store.add_curiosity("a", "a")
         weaker = self.store.add_item(
