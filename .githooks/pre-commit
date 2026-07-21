@@ -3,5 +3,6 @@ set -e
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
+python tools/project_context.py --verify-only
 python tools/update_handoff.py --staged
 git add docs/HANDOFF.md

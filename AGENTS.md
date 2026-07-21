@@ -10,15 +10,14 @@ defines documentation authority.
 ## Runtime Map
 
 ```text
-tray.py -> livingpc/service.py -> capture -> data/living_computer.db + data/blobs/
-gui.py/run_triage.py -> aggregate/redact/retrieve -> Claude/stub -> approval
-inference_loop.py -> evidence -> claims past 80% -> gui.py Inferences review
-nightly -> triage/consolidate/backup(data/backups)
-companion.py / assistant.py -> recent screen + relevant memories -> Claude
+bats/Launch Faerie Fire.bat -> gui.py -> memory.html -> review + backup runtime
+companion.py -> bounded explicit context -> Claude/stub
+capture/triage/inference -> retained libraries; no launch daemon
 ```
 
-- `tray.py` owns capture and runs one service thread.
-- `capture.lock`, `tray.lock`, and `.capture_stop` are project-root anchored.
+- The launch tree opens `gui.py` directly; root capture, tray, triage CLI,
+  assistant, and diagnostic collector entrypoints are not shipped.
+- Retained service/scheduler modules are not started by the launcher.
 - Private data: `data/`, `diagnostics/`; launchers: `bats/`.
 - `livingpc/config.py` owns typed defaults and project/data path resolution.
 - `livingpc/memory_context.py` owns deterministic prompt-memory retrieval.
@@ -46,7 +45,6 @@ companion.py / assistant.py -> recent screen + relevant memories -> Claude
 python tools/project_context.py <area>
 python tools/project_context.py all --verify
 python -m pytest -q
-python capture_status.py
 ```
 
 Areas: capture, triage, companion, filing, review, storage, diagnostics. Reserve `all` for structural work.
@@ -59,6 +57,7 @@ Areas: capture, triage, companion, filing, review, storage, diagnostics. Reserve
 ## Handoff Discipline
 
 - Pre-commit runs and stages `tools/update_handoff.py --staged`.
+- Pre-commit first validates the context manifest so stale paths cannot silently ship.
 - Never put private payloads or secrets in the generated handoff.
 - Commit messages carry human intent; the handoff carries git metadata plus
   context and verification commands.

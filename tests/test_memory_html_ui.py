@@ -2053,6 +2053,23 @@ def test_soul_calibration_is_settings_only_and_has_a_durable_checkbox():
     assert "if(e.target.checked)" in script and "openSoulCalDrawer();" in script
 
 
+def test_music_has_a_quick_toggle_beside_refresh_and_settings():
+    html = _html()
+    script = _script()
+    refresh = _function_body(script, "refreshMusicSetting")
+    setter = _function_body(script, "setMusicEnabled")
+
+    footer_start = html.index('<div class="rail-footer">')
+    footer = html[footer_start:html.index('</div>', footer_start)]
+    assert footer.index('id="header-refresh-self"') < footer.index('id="music-quick-toggle"')
+    assert footer.index('id="music-quick-toggle"') < footer.index('id="settings-cog"')
+    assert 'aria-pressed="true"' in footer and '>♫</button>' in footer
+    assert "quick.classList.toggle('on',musicEnabled)" in refresh
+    assert "quick.setAttribute('aria-pressed',musicEnabled?'true':'false')" in refresh
+    assert "setMusicEnabled(!musicEnabled)" in script
+    assert "persistDurableUiPreference('music_enabled',musicEnabled)" in setter
+
+
 def test_soul_calibration_plain_enter_remains_multiline():
     script = _script()
     bind_calibration = _function_body(script, "bindSoulCalDrawer")

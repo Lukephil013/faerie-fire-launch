@@ -26,16 +26,16 @@ class Area:
 
 AREAS = {
     "capture": Area(
-        "tray.py opens Command Center and, in personal profile, owns one service thread; "
-        "launch profile disables capture/collectors.",
-        ("tray.py", "livingpc/service.py", "livingpc/sampler.py", "livingpc/capture/window.py",
-         "livingpc/capture/screen.py", "livingpc/capture/extras.py", "capture_status.py"),
+        "The launch tree keeps capture/service libraries for personal-profile compatibility, but "
+        "its GUI launcher does not start capture or collector threads.",
+        ("livingpc/service.py", "livingpc/sampler.py", "livingpc/capture/window.py",
+         "livingpc/capture/screen.py", "livingpc/capture/extras.py"),
         ("tests/test_sampler.py", "tests/test_collectors.py", "tests/test_storage.py"),
     ),
     "triage": Area(
         "events -> aggregate -> redact -> relevant memories + catalog -> LLM -> auto-committed facts; "
         "journal_import backfills exported journals chronologically with dated facts.",
-        ("run_triage.py", "livingpc/triage/aggregate.py", "livingpc/triage/redact.py",
+        ("livingpc/triage/aggregate.py", "livingpc/triage/redact.py",
          "livingpc/triage/pipeline.py", "livingpc/triage/llm.py", "livingpc/memory_context.py",
          "livingpc/journal_import.py", "livingpc/journal_filter.py",
          "tools/import_journal.py"),
@@ -74,9 +74,9 @@ AREAS = {
         "GoalAI agents share the approval-revalidated two-Leaf horizon with Project-only attention signals, report and harvest upward, "
         "Leaf Coach transcripts and encrypted locally extracted documents stay Leaf-local while "
         "bounded execution updates flow through ancestors, and crossover remains Soul-approved; one claimed "
-        "8 PM daily cycle runs incremental inference, curiosities, and dirty GoalAI paths before "
-        "housekeeping, while metadata-only usage accounting tracks tokens and estimated cost.",
-        ("gui.py", "agent_window.py", "run_triage.py", "livingpc/memory.py", "livingpc/triage/types.py",
+        "scheduler machinery remains available to compatible hosts, while the launch GUI starts "
+        "only backup runtime and metadata-only usage accounting tracks tokens and estimated cost.",
+        ("gui.py", "agent_window.py", "livingpc/memory.py", "livingpc/triage/types.py",
          "livingpc/inference.py", "livingpc/inference_review.py",
          "livingpc/inference_inquiry.py", "livingpc/feedback.py", "livingpc/clarify.py",
          "livingpc/curiosity.py",
@@ -86,10 +86,6 @@ AREAS = {
          "livingpc/inference_scheduler.py", "livingpc/reflection_cadence.py",
          "livingpc/notion_sync.py", "livingpc/config.py", "livingpc/docx_text.py",
          "tools/check_notion.py", "tools/notion_curiosity_status.py",
-         "assets/notion/life-hub-hero.png", "assets/notion/life-hub-focus.png",
-         "assets/notion/life-hub-footer.png", "assets/notion/curiosity-cover-journal.png",
-         "assets/notion/curiosity-cover-observatory.png",
-         "assets/notion/curiosity-cover-ripples.png",
          "livingpc/ui/__init__.py", "livingpc/ui_preferences.py", "livingpc/ui/memory.html",
          "livingpc/ui/agent_window.html"),
         ("tests/test_memory.py", "tests/test_rejections.py",
@@ -132,11 +128,10 @@ AREAS = {
          "tests/test_consolidate.py", "tests/test_forget.py"),
     ),
     "diagnostics": Area(
-        "control UI (pywebview, livingpc/ui/capture.html) invokes status/reset/collectors; "
-        "bundles expose metadata and scoped UI evidence.",
-        ("capture_control.py", "livingpc/diagnostics.py", "collect_diagnostics.py",
-         "collect_companion_diagnostics.py", "reset_capture.py", "capture_status.py",
-         "livingpc/notify.py", "livingpc/ui/capture.html", "livingpc/ui/assistant.html"),
+        "Privacy-safe diagnostic logging, scoped UI evidence, notifications, and the retained "
+        "capture-control UI; root capture-control and collector scripts are not shipped here.",
+        ("livingpc/diagnostics.py", "livingpc/notify.py", "livingpc/ui/capture.html",
+         "livingpc/ui/assistant.html"),
         ("tests/test_collectors.py", "tests/test_ui_bridges.py", "tests/test_notify.py"),
     ),
 }
@@ -323,15 +318,19 @@ def main() -> int:
     parser.add_argument("area", nargs="?", choices=[*AREAS, "all"], default="all")
     parser.add_argument("--tokens", action="store_true", help="append privacy-safe prompt estimates")
     parser.add_argument("--verify", action="store_true", help="validate every mapped file and test")
+    parser.add_argument("--verify-only", action="store_true",
+                        help="validate the context manifest without rendering a context report")
     args = parser.parse_args()
 
-    if args.verify:
+    if args.verify or args.verify_only:
         errors = validate_manifest()
         if errors:
             print("Context map validation failed:")
             print("\n".join(f"- {error}" for error in errors))
             return 1
         print("Context map validation passed.")
+        if args.verify_only:
+            return 0
     print(render_context(args.area), end="")
     if args.tokens:
         print(token_report(), end="")

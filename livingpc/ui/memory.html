@@ -293,9 +293,13 @@
   #self-rail-dashboard { display:flex; flex-direction:column; gap:4px; margin:6px 0 4px; }
   .rail-footer { display:flex; align-items:center; gap:8px; margin-top:auto;
     padding:12px 2px 16px; }
-  .rail-footer .header-refresh, .rail-footer .settings-cog { position:static; margin:0;
+  .rail-footer .header-refresh, .rail-footer .music-quick-toggle, .rail-footer .settings-cog { position:static; margin:0;
     width:32px; height:32px; padding:0; border-radius:999px;
     display:grid; place-items:center; font-size:15px; line-height:1; flex:0 0 auto; }
+  .rail-footer .music-quick-toggle { position:relative; color:var(--green); }
+  .rail-footer .music-quick-toggle:not(.on) { color:var(--muted); }
+  .rail-footer .music-quick-toggle:not(.on)::after { content:''; position:absolute;
+    width:17px; height:1.5px; border-radius:2px; background:currentColor; transform:rotate(-45deg); }
   .rail-footer .header-refresh.spinning { animation:header-refresh-spin .6s linear; }
   @keyframes header-refresh-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
   .nav-group { position:relative; }
@@ -2131,6 +2135,7 @@
 
     <div class="rail-footer">
       <button class="header-refresh" id="header-refresh-self" title="Refresh dashboard">⟳</button>
+      <button class="music-quick-toggle on" id="music-quick-toggle" type="button" title="Turn background music off" aria-label="Turn background music off" aria-pressed="true">♫</button>
       <button class="settings-cog" id="settings-cog" title="Settings and tools">⚙</button>
     </div>
   </nav>
@@ -3828,6 +3833,16 @@ function refreshMusicSetting(){
   if(toggle) toggle.checked=musicEnabled;
   const slider=$('settings-music-volume');
   if(slider) slider.value=String(Math.round(musicVolume*100));
+  const quick=$('music-quick-toggle');
+  if(quick){
+    const label=musicEnabled
+      ?(APP_LANG==='ko'?'배경 음악 끄기':'Turn background music off')
+      :(APP_LANG==='ko'?'배경 음악 켜기':'Turn background music on');
+    quick.classList.toggle('on',musicEnabled);
+    quick.setAttribute('aria-pressed',musicEnabled?'true':'false');
+    quick.setAttribute('aria-label',label);
+    quick.title=label;
+  }
 }
 function setMusicEnabled(enabled){
   musicEnabled=!!enabled;
@@ -4540,6 +4555,8 @@ if($('settings-music-enabled')) $('settings-music-enabled').onchange=e=>
   setMusicEnabled(e.target.checked);
 if($('settings-music-volume')) $('settings-music-volume').oninput=e=>
   setMusicVolume((Number(e.target.value)||0)/100);
+if($('music-quick-toggle')) $('music-quick-toggle').onclick=()=>
+  setMusicEnabled(!musicEnabled);
 refreshMusicSetting();
 applyMusicState();   // start from cached prefs now; hydrate refines it shortly
 function refreshSettingsLanguageLabel(){
