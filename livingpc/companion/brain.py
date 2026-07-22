@@ -43,7 +43,7 @@ class ClaudeChat:
     #: Proposal blocks (especially replan_project with several steps) do not
     #: fit in a small completion window; a truncated block renders as raw
     #: JSON in the chat instead of a card. Keep this comfortably large.
-    DEFAULT_MAX_TOKENS = 1200
+    DEFAULT_MAX_TOKENS = 4000
 
     def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None):
         from anthropic import Anthropic  # lazy
@@ -375,8 +375,22 @@ class Companion:
         max_items = getattr(self.cfg, "companion_inference_max_items", 10)
         return "\n".join(f"- [{b['theme']}] {b['statement']}" for b in beliefs[:max_items])
 
+    _CURIOSITY_DETAIL_MAX_CHARS = 4200
+    _CURIOSITY_INDEX_MAX_CHARS = 6000
+
     @staticmethod
-    def _select_relevant_curiosities(rows: list[dict], context_text: str,
+    def _curiosity_label_is_named(label: str, context_text: str) -> bool:
+        """Match a stated label as a phrase, not inside words like "said"."""
+        normalized_label = " ".join(str(label or "").casefold().split())
+        normalized_context = " ".join(str(context_text or "").casefold().split())
+        if not normalized_label or not normalized_context:
+            return False
+        phrase = r"\s+".join(
+            re.escape(token) for token in normalized_label.split())
+        return bool(re.search(rf"(?<!\w){phrase}(?!\w)", normalized_context))
+
+    @classmethod
+    def _select_relevant_curiosities(cls, rows: list[dict], context_text: str,
                                      max_items: int) -> list[dict]:
         """Pick which investigations the main chat loads: the ones most related
         to the live conversation, with a safety floor that always keeps the
@@ -390,17 +404,22 @@ class Companion:
         if not context:
             return rows[:max_items]
         from ..inference import concept_similarity
-        context_lower = context.lower()
         forced, scored = [], []
         for index, row in enumerate(rows):
             label = str(row.get("label") or "")
-            if bool(row.get("is_greatest")) or (label and label.lower() in context_lower):
-                forced.append(row)
+            if (bool(row.get("is_greatest"))
+                    or cls._curiosity_label_is_named(label, context)):
+                # Keep the greatest Investigation first even when callers use
+                # an ordering other than CuriosityStore.list_curiosities().
+                forced.append((0 if bool(row.get("is_greatest")) else 1, index, row))
                 continue
             text = f"{label} {row.get('directive') or ''}"
             scored.append((concept_similarity(context, text), -index, row))
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        selected = list(forced)
+        forced.sort(key=lambda item: (item[0], item[1]))
+        # Naming several Investigations used to add every forced match before
+        # checking the cap, so this block could exceed its configured limit.
+        selected = [row for _priority, _index, row in forced[:max_items]]
         for _score, _tiebreak, row in scored:
             if len(selected) >= max_items:
                 break
@@ -410,20 +429,134 @@ class Companion:
         return selected
 
     @staticmethod
-    def _curiosity_detail_line(store, row: dict) -> str:
+    def _compact_prompt_text(value, max_chars: int) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= max_chars:
+            return text
+        return text[:max(1, max_chars - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _prompt_chunks(value, max_chars: int) -> list[str]:
+        """Split a long approved note into word-safe retrieval candidates."""
+        text = " ".join(str(value or "").split())
+        if not text or max_chars <= 0:
+            return []
+        chunks = []
+        while len(text) > max_chars:
+            boundary = text.rfind(" ", max_chars // 2, max_chars + 1)
+            if boundary <= 0:
+                boundary = max_chars
+            chunks.append(text[:boundary].strip())
+            text = text[boundary:].strip()
+        if text:
+            chunks.append(text)
+        return chunks
+
+    @classmethod
+    def _curiosity_index(cls, rows: list[dict]) -> tuple[str, int]:
+        """Return a label/status-only catalog with a hard aggregate bound."""
+        lines, used = [], 0
+        content_limit = cls._CURIOSITY_INDEX_MAX_CHARS - 96
+        for row in rows:
+            tag = " (greatest)" if row.get("is_greatest") else ""
+            status = "" if row.get("status") == "active" else f" [{row.get('status')}]"
+            label = cls._compact_prompt_text(row.get("label"), 120)
+            candidate = f"- id={row.get('id')} {label}{tag}{status}"
+            proposed = len(candidate) + (1 if lines else 0)
+            if used + proposed > content_limit:
+                break
+            lines.append(candidate)
+            used += proposed
+        indexed = len(lines)
+        if indexed < len(rows):
+            lines.append(
+                f"- ... {len(rows) - indexed} additional Investigations omitted "
+                "from this turn's index by the safety limit")
+        return "\n".join(lines), indexed
+
+
+    @classmethod
+    def _curiosity_detail_line(cls, store, row: dict,
+                               context_text: str = "") -> str:
+        """Build one bounded, evidence-rich Investigation context pack.
+
+        The index keeps every Investigation discoverable. Only selected rows
+        pay for directives and history, so those rows can include the approved
+        context and prior answers that prevent the model asking from scratch.
+        """
         open_items = store.open_items(row["id"])
         question = next((i["text"] for i in open_items if i["kind"] == "question"), None)
         suggestion = next((i["text"] for i in open_items if i["kind"] == "suggestion"), None)
         tag = " (greatest)" if row["is_greatest"] else ""
         status_tag = "" if row["status"] == "active" else f" [{row['status']}]"
-        line = f"- id={row['id']} {row['label']}{tag}{status_tag}: {row['directive']}"
+        label = cls._compact_prompt_text(row.get("label"), 120)
+        directive = cls._compact_prompt_text(row.get("directive"), 500)
+        line = f"DETAIL id={row['id']} {label}{tag}{status_tag}: {directive}"
         if question:
-            line += f"\n  open question: {question}"
+            line += f"\n  open question: {cls._compact_prompt_text(question, 240)}"
         if suggestion:
-            line += f"\n  open suggestion: {suggestion}"
-        # The synthesis is what Faerie has actually learned about this
-        # investigation — the main chat must be able to reason from it directly
-        # ("based on my depletion synthesis…").
+            line += f"\n  open suggestion: {cls._compact_prompt_text(suggestion, 240)}"
+        retrieval_context = " ".join((
+            str(context_text or ""), str(row.get("label") or ""),
+            str(row.get("directive") or "")))
+
+        # Prior answers come first: the final detail bound must never remove
+        # the evidence that prevents the model from asking the same question.
+        try:
+            answered = [
+                item for item in store.items_for_curiosity(row["id"])
+                if (item.get("kind") == "question"
+                    and item.get("status") == "answered"
+                    and str(item.get("answer") or "").strip())
+            ]
+        except Exception:
+            answered = []
+        if answered:
+            answer_candidates = [{
+                "id": item["id"],
+                "category": label,
+                "attribute": item.get("text") or "",
+                "value": item.get("answer") or "",
+                "valid_from": item.get("resolved_at") or item.get("created_at") or "",
+            } for item in answered]
+            answer_selection = select_memories(
+                answer_candidates, retrieval_context, max_items=4,
+                max_chars=1450, value_max_chars=360)
+            if answer_selection.memories:
+                line += "\n  relevant answered history (do not re-ask):"
+                for item in answer_selection.memories:
+                    line += (f"\n    - Q: {item['attribute']}"
+                             f"\n      A: {item['value']}")
+
+        # Long approved seeds are chunked before relevance selection. This can
+        # surface a pertinent passage near the end instead of always clipping
+        # the note's first thousand characters.
+        try:
+            contexts = store.contexts(row["id"], limit=20)
+        except Exception:
+            contexts = []
+        if contexts:
+            context_candidates = []
+            for item in contexts:
+                for chunk_index, chunk in enumerate(
+                        cls._prompt_chunks(item.get("note"), 350)):
+                    context_candidates.append({
+                        "id": int(item["id"]) * 10000 + chunk_index,
+                        "category": label,
+                        "attribute": "approved context",
+                        "value": chunk,
+                        "valid_from": item.get("created_at") or "",
+                    })
+            context_selection = select_memories(
+                context_candidates, retrieval_context, max_items=3,
+                max_chars=1250, value_max_chars=350)
+            if context_selection.memories:
+                line += "\n  relevant approved context:"
+                for item in context_selection.memories:
+                    line += f"\n    - {item['value']}"
+
+        # Synthesis and threads are useful but lower priority than direct user
+        # answers and explicitly approved source context.
         try:
             synthesis = (store.latest_synthesis(row["id"], status="approved")
                          or store.latest_synthesis(row["id"]))
@@ -434,40 +567,60 @@ class Companion:
         if interpretation:
             confidence = round(float(payload.get("confidence") or 0) * 100)
             state = (synthesis or {}).get("status") or "draft"
-            if len(interpretation) > 900:
-                interpretation = interpretation[:900].rstrip() + "…"
+            interpretation = cls._compact_prompt_text(interpretation, 500)
             line += f"\n  synthesis [{state}, {confidence}% confidence]: {interpretation}"
-            unknowns = [u for u in (payload.get("unknowns") or []) if u][:3]
+            unknowns = [u for u in (payload.get("unknowns") or []) if u][:2]
             if unknowns:
-                line += "\n  still unknown: " + "; ".join(unknowns)
+                compact_unknowns = [cls._compact_prompt_text(value, 140)
+                                    for value in unknowns]
+                line += "\n  still unknown: " + "; ".join(compact_unknowns)
         try:
             threads = store.threads(row["id"])
         except Exception:
             threads = []
-        for thread in threads[:4]:
+        for thread in threads[:2]:
             status = "" if thread["status"] == "active" else f" [{thread['status']}]"
-            line += (f"\n  exploration thread: {thread['title']}"
-                     f"{status} — {thread['directive'][:160]}")
+            title = cls._compact_prompt_text(thread.get("title"), 120)
+            thread_directive = cls._compact_prompt_text(thread.get("directive"), 180)
+            line += (f"\n  exploration thread: {title}"
+                     f"{status} - {thread_directive}")
+        if len(line) > cls._CURIOSITY_DETAIL_MAX_CHARS:
+            return line[:cls._CURIOSITY_DETAIL_MAX_CHARS - 3].rstrip() + "..."
         return line
 
     def _curiosities_block(self, context_text: str = "") -> str:
-        """Active (and paused) curiosities — the user's stated goals — plus each
-        one's open question/suggestion and latest synthesis. When there are more
-        than the limit, the ones most related to the live conversation are
-        pulled in (see _select_relevant_curiosities)."""
+        """Index open Investigations, then richly load only relevant ones."""
         try:
             from ..curiosity import CuriosityStore
             store = CuriosityStore(self.cfg.memory_db_path)
             try:
                 rows = [r for r in store.list_curiosities() if r["status"] != "archived"]
-                max_items = getattr(self.cfg, "companion_curiosity_max_items", 8)
+                max_items = getattr(self.cfg, "companion_curiosity_max_items", 3)
                 selected = self._select_relevant_curiosities(rows, context_text, max_items)
-                lines = [self._curiosity_detail_line(store, row) for row in selected]
+                index_block, indexed_count = self._curiosity_index(rows)
+                detail_lines = [self._curiosity_detail_line(
+                    store, row, context_text) for row in selected]
             finally:
                 store.close()
         except Exception:
             return "(curiosities unavailable)"
-        return "\n".join(lines) if lines else "(no active goals/curiosities yet)"
+        if not rows:
+            return "(no active goals/curiosities yet)"
+        block = (
+            "INVESTIGATION INDEX (active/paused identities; hard safety bound):\n"
+            + index_block
+            + "\n\nSELECTED INVESTIGATION DETAIL (most relevant to this turn; "
+              "use its approved context and answered history before asking):\n"
+            + ("\n\n".join(detail_lines) if detail_lines else "(none selected)"))
+        log_diag(
+            "prompt",
+            f"surface=companion investigations={len(rows)} "
+            f"investigations_indexed={indexed_count}/{len(rows)} "
+            f"investigation_details={len(selected)} "
+            f"investigation_chars={len(block)} "
+            f"estimated_investigation_tokens={estimate_tokens(block)}",
+        )
+        return block
 
     def _screen_block(self, limit: int = 14) -> str:
         try:
@@ -676,7 +829,9 @@ class Companion:
             "Here is the current tree, so you can reference real nodes by id (bounded "
             "list, not the full tree):\n" + self._catalog_block() + "\n"
             "COMPLETED LEAF RECALL — A REAL CAPABILITY YOU HAVE: the tree list "
-            "includes completed Leaves, and you can pull any Leaf's durable "
+            "includes completed Leaves with their status, and relevant approved "
+            "outcome summaries are injected automatically below. You can still pull "
+            "any Leaf's fuller durable "
             "record (its confirmed outcome, its handoff material such as a "
             "pasted posting or drafted artifact, and a bounded tail of its "
             "workspace conversation) into this chat. Emit exactly "
@@ -905,14 +1060,21 @@ class Companion:
         )
         screen = "" if launch_profile else self._screen_block()
         memory = self._memory_block(context_text + ("\n" + screen if screen else ""))
+        completed_outcomes = self._completed_leaf_outcomes_block(
+            context_text + "\n" + memory)
         dynamic = (
             "WHAT YOU KNOW ABOUT THEM (relevant memory):\n" + memory
-            + "\n\nTHEIR CURRENT GOALS / CURIOSITIES (things they're actively "
-              "working toward, with any open question or suggestion still "
-              "sitting with them, and Faerie's latest synthesis for each — treat "
-              "that synthesis as known context you can reason and cross-reference "
-              "directly, e.g. 'based on your Chronic Depletion synthesis…'):\n"
+            + "\n\nTHEIR CURRENT GOALS / CURIOSITIES (a compact, hard-bounded "
+              "index lists active or paused identities; the selected details below "
+              "carry the selected relevant directives, open items, syntheses, "
+              "approved context, and answered-question history. Treat those details "
+              "as known context you can reason from directly (for example, 'based "
+              "on your Chronic Depletion synthesis'), and never ask a question "
+              "whose answer is already present there):\n"
             + self._curiosities_block(context_text)
+            + "\n\nRELEVANT COMPLETED LEAF OUTCOMES (later user-approved "
+              "results outrank older plans or memories when they conflict):\n"
+            + completed_outcomes
             + "\n\nACTIVE PROJECT HORIZONS (open Leaves with descriptions, plus "
               "what just finished — your live view for judging whether each "
               "plan still fits; when one of these projects comes up, check the "
@@ -1876,6 +2038,9 @@ class Companion:
         lines = []
         for node in catalog:
             details = [str(node["type"])]
+            status = str(node.get("status") or "").strip()
+            if status:
+                details.append(f"status={status.upper()}")
             role = str(node.get("semantic_role") or "").strip()
             if role:
                 # The "area" role is shown to the user as "Branch".
@@ -1884,6 +2049,78 @@ class Companion:
                 f"- id={node['id']} [{'; '.join(details)}] "
                 f"{node['path'] or node['title']}")
         return "\n".join(lines)
+
+    def _completed_leaf_outcomes_block(self, context_text: str = "") -> str:
+        """Deterministically surface a few relevant, approved Leaf debriefs.
+
+        Full workspace/artifact recall remains model-triggered, but decisions and
+        changed understanding must not depend on the model guessing that it should
+        emit a recall marker.  The already-selected memory block is included in the
+        ranking query so a stale memory mentioning an old path (for example Upwork)
+        pulls in the later Leaf outcome that corrected it.
+        """
+        try:
+            from ..goals import GoalStore
+            goals = GoalStore(self.cfg.memory_db_path)
+            try:
+                catalog = {int(item["id"]): item
+                           for item in goals.catalog(max_nodes=500)}
+                candidates = []
+                per_parent: dict[int, int] = {}
+                for outcome in goals.outcomes(limit=120):
+                    entry = catalog.get(int(outcome["goal_id"]))
+                    if (not entry or entry.get("type") != "Leaf" or
+                            entry.get("status") != "completed"):
+                        continue
+                    node = goals.get(int(outcome["goal_id"]))
+                    parent_id = int((node or {}).get("parent_id") or 0)
+                    # outcomes() is newest-first. Keep only the latest two per
+                    # project/stage so an abandoned early plan cannot crowd out
+                    # its later reflection and decision merely because its old
+                    # Leaf title has stronger keyword overlap.
+                    if per_parent.get(parent_id, 0) >= 2:
+                        continue
+                    per_parent[parent_id] = per_parent.get(parent_id, 0) + 1
+                    parts = []
+                    if outcome.get("what_happened"):
+                        parts.append("What happened: " + str(outcome["what_happened"]))
+                    if outcome.get("changed_understanding"):
+                        parts.append("Lesson: " + str(outcome["changed_understanding"]))
+                    if outcome.get("next_adjustment"):
+                        parts.append("Next adjustment: " + str(outcome["next_adjustment"]))
+                    if not parts:
+                        continue
+                    candidates.append({
+                        "id": int(outcome["id"]),
+                        "goal_id": int(outcome["goal_id"]),
+                        "category": str(entry.get("path") or entry.get("title") or ""),
+                        "attribute": "Completed Leaf decision: " +
+                                     str(entry.get("title") or ""),
+                        "value": " ".join(parts),
+                        "valid_from": str(outcome.get("created_at") or "")[:10],
+                    })
+            finally:
+                goals.close()
+        except Exception:
+            return "(completed Leaf outcomes unavailable)"
+        if not candidates:
+            return "(none yet)"
+        selection = select_memories(
+            candidates, context_text, max_items=3, max_chars=2400,
+            value_max_chars=900)
+        log_diag(
+            "prompt",
+            f"surface=companion completed_leaf_outcomes="
+            f"{len(selection.memories)}/{len(candidates)} "
+            f"outcome_chars={selection.selected_chars}",
+        )
+        lines = []
+        for outcome in selection.memories:
+            lines.append(
+                f"- leaf_id={outcome['goal_id']} outcome_id={outcome['id']} "
+                f"[status=COMPLETED] {outcome['category']}")
+            lines.append("  " + str(outcome.get("value") or ""))
+        return "\n".join(lines)[:2600]
 
     def _catalog_lookup(self, node_id) -> dict | None:
         try:

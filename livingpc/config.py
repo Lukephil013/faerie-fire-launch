@@ -86,7 +86,9 @@ class Config:
     companion_memory_max_chars: int = 6000
     companion_memory_value_max_chars: int = 500
     companion_inference_max_items: int = 10  # confirmed beliefs shown in the chat prompt
-    companion_curiosity_max_items: int = 8   # active curiosities shown in the chat prompt
+    # Every open Investigation remains visible in a compact index. This limits
+    # the richer directive/context/history packs selected for each chat turn.
+    companion_curiosity_max_items: int = 3
     companion_lifecycle_context_enabled: bool = True
     companion_lifecycle_context_max_chars: int = 16000
     companion_voice: bool = True             # speak replies aloud (TTS)

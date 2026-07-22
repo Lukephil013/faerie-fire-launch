@@ -1359,7 +1359,7 @@ def test_truncated_proposal_block_never_renders_raw_json():
 
 def test_companion_chat_default_completion_window_fits_a_replan_block():
     from livingpc.companion.brain import ClaudeChat
-    assert ClaudeChat.DEFAULT_MAX_TOKENS >= 1000
+    assert ClaudeChat.DEFAULT_MAX_TOKENS == 4000
 
 
 def test_gui_goal_catalog_bridge_lists_nodes_and_investigations():
@@ -2272,6 +2272,138 @@ def test_relevant_investigations_are_pulled_with_a_safety_floor():
 
     # At or under the limit, everything is kept.
     assert Companion._select_relevant_curiosities(rows[:2], "anything", 5) == rows[:2]
+    forced = Companion._select_relevant_curiosities(
+        rows,
+        "Chronic Depletion, League of Legends, Money & Escape, and Meaning",
+        max_items=3)
+    assert len(forced) == 3
+    assert "Meaning" in [r["label"] for r in forced]
+
+    assert not Companion._curiosity_label_is_named("Art", "I am starting pottery")
+    assert not Companion._curiosity_label_is_named("AI", "I said that already")
+    assert Companion._curiosity_label_is_named("Art", "Let's discuss Art.")
+
+    many_rows = [
+        row(index, f"Investigation {index} " + ("x" * 140), "bounded")
+        for index in range(1, 101)
+    ]
+    compact_index, indexed = Companion._curiosity_index(many_rows)
+    assert len(compact_index) <= Companion._CURIOSITY_INDEX_MAX_CHARS
+    assert indexed < len(many_rows)
+    assert "additional Investigations omitted" in compact_index
+
+
+def test_investigation_prompt_indexes_all_and_bounds_rich_context(monkeypatch):
+    from livingpc.curiosity import CuriosityStore
+
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        assert cfg.companion_curiosity_max_items == 3
+
+        store = CuriosityStore(cfg.memory_db_path)
+        greatest_id = store.add_curiosity(
+            "Keep the long-range question visible.", "Meaning")
+        target_id = store.add_curiosity(
+            "Understand coffee, work pressure, agency, and chronic depletion.",
+            "Coffee & The Cycle")
+        relevant_id = store.add_curiosity(
+            "Track job pressure, burnout, exhaustion, and recovery.",
+            "Work Depletion")
+        paused_id = store.add_curiosity(
+            "Find easy weeknight recipes.", "Cooking")
+        unselected_id = store.add_curiosity(
+            "UNSELECTED_PRIVATE_DIRECTIVE about clay glaze.", "Ceramics")
+        archived_id = store.add_curiosity(
+            "ARCHIVED_PRIVATE_DIRECTIVE", "Archived Secrets")
+        store.set_greatest(greatest_id)
+        store.set_status(paused_id, "paused")
+        store.set_status(archived_id, "archived")
+
+        for index in range(4):
+            store.add_context(
+                target_id,
+                f"TARGET_CONTEXT_{index}: coffee and job pressure baseline.")
+        store.add_context(
+            target_id,
+            ("unrelated pottery glaze " * 80)
+            + "LATE_RELEVANT_CONTEXT: PTO burnout depletion.")
+        synthesis = store.add_synthesis(target_id, {
+            "interpretation": "SYNTHESIS_SENTINEL " + ("long interpretation " * 80),
+            "confidence": 0.81,
+            "unknowns": ["One remaining uncertainty."],
+        })
+        store.decide_synthesis(synthesis["id"], "approve")
+        for index in range(5):
+            item_id = store.add_item(
+                target_id, "question",
+                f"How did the coffee and job-pressure cycle behave in observation {index}?")
+            store.mark_answered(
+                item_id,
+                f"TARGET_ANSWER_{index}: creation without work pressure felt better.",
+                None)
+        store.add_item(target_id, "question", "What genuinely remains unknown?")
+
+        store.add_context(
+            unselected_id, "UNSELECTED_PRIVATE_CONTEXT should stay out of detail.")
+        private_item = store.add_item(
+            unselected_id, "question", "UNSELECTED_PRIVATE_QUESTION?")
+        store.mark_answered(
+            private_item, "UNSELECTED_PRIVATE_ANSWER should stay out.", None)
+        store.close()
+
+        diagnostics = []
+        monkeypatch.setattr(
+            "livingpc.companion.brain.log_diag",
+            lambda area, message: diagnostics.append((area, message)))
+        companion = Companion(cfg=cfg, chat=StubChat())
+        block = companion._curiosities_block(
+            "Coffee & The Cycle: PTO, burnout, and depletion")
+
+        index, detail = block.split("\n\nSELECTED INVESTIGATION DETAIL", 1)
+        for curiosity_id, label in [
+                (greatest_id, "Meaning"),
+                (target_id, "Coffee & The Cycle"),
+                (relevant_id, "Work Depletion"),
+                (paused_id, "Cooking"),
+                (unselected_id, "Ceramics")]:
+            assert f"- id={curiosity_id} {label}" in index
+        assert f"- id={paused_id} Cooking [paused]" in index
+        assert "Archived Secrets" not in block
+        assert block.count("DETAIL id=") == 3
+
+        assert f"DETAIL id={target_id} Coffee & The Cycle" in detail
+        target_detail = (
+            f"DETAIL id={target_id}"
+            + detail.split(f"DETAIL id={target_id}", 1)[1]
+        ).split("\n\nDETAIL id=", 1)[0]
+        approved_section = target_detail.split(
+            "relevant approved context:", 1)[1].split("\n  synthesis", 1)[0]
+        assert "LATE_RELEVANT_CONTEXT" in approved_section
+        assert "TARGET_CONTEXT_3" in approved_section
+        assert "TARGET_CONTEXT_0" not in approved_section
+        assert approved_section.count("\n    - ") <= 3
+        for index in range(1, 5):
+            assert f"TARGET_ANSWER_{index}" in target_detail
+        assert "TARGET_ANSWER_0" not in target_detail
+        assert "What genuinely remains unknown?" in target_detail
+        assert (target_detail.index("relevant answered history")
+                < target_detail.index("relevant approved context")
+                < target_detail.index("synthesis ["))
+        assert len(target_detail) <= Companion._CURIOSITY_DETAIL_MAX_CHARS
+
+        assert "UNSELECTED_PRIVATE_DIRECTIVE" not in block
+        assert "UNSELECTED_PRIVATE_CONTEXT" not in block
+        assert "UNSELECTED_PRIVATE_ANSWER" not in block
+        assert any("investigation_details=3" in message
+                   for _area, message in diagnostics)
+        assert all("TARGET_CONTEXT" not in message
+                   and "TARGET_ANSWER" not in message
+                   and "UNSELECTED_PRIVATE" not in message
+                   and "LATE_RELEVANT_CONTEXT" not in message
+                   and "SYNTHESIS_SENTINEL" not in message
+                   for _area, message in diagnostics)
+        companion.close()
 
 
 def test_replan_can_mark_finished_work_complete():
@@ -2741,6 +2873,62 @@ def test_leaf_recall_pulls_completed_leaf_record_into_the_chat():
         assert posting in second_dynamic
         # The record persists for follow-up turns in this chat.
         assert companion._recalled_leaves
+        companion.close()
+
+
+def test_prompt_surfaces_later_leaf_decision_over_stale_retrieved_memory():
+    """A completed decision is deterministic prompt context, not dependent on
+    Claude deciding to emit a Leaf-recall marker first."""
+    with tempfile.TemporaryDirectory() as directory:
+        from livingpc.curiosity import CuriosityStore
+        from livingpc.goals import GoalStore
+        from livingpc.memory import MemoryStore
+
+        cfg = Config(db_path=os.path.join(directory, "e.db"),
+                     memory_db_path=os.path.join(directory, "m.db"))
+        memories = MemoryStore(cfg.memory_db_path)
+        memories.add(
+            "Getting to know Faerie Fire", "automation tools portability",
+            "Automating my job might become an Upwork freelancing path.")
+        memories.close()
+        CuriosityStore(cfg.memory_db_path).close()
+        goals = GoalStore(cfg.memory_db_path)
+        try:
+            root = goals.create("overgoal", "Money & Resources")
+            project = goals.create("subgoal", "Find independent income", parent_id=root)
+            old_leaf = goals.create("task", "Draft Upwork profile", parent_id=project)
+            goals.add_outcome(
+                old_leaf, "completed", "A profile draft was completed.",
+                changed_understanding="The first Upwork contract should be concrete.")
+            leaf = goals.create("task", "Reflect on the Upwork micro-test", parent_id=project)
+            goals.add_outcome(
+                leaf, "completed",
+                "The Upwork test confirmed that client management and obligation loops "
+                "recreate the pressure I want to escape.",
+                changed_understanding=(
+                    "Upwork is not an active plan; current-job automation is harm "
+                    "reduction and restored agency, not freelance preparation."))
+            later_leaf = goals.create(
+                "task", "Map inventions and income", parent_id=project)
+            goals.add_outcome(
+                later_leaf, "completed",
+                "The next path is testing inventions and whether making explanatory "
+                "videos feels sustainable.",
+                changed_understanding=(
+                    "Real demand tests, not more freelance-profile work, decide the "
+                    "next move."))
+        finally:
+            goals.close()
+
+        companion = Companion(cfg=cfg, chat=StubChat())
+        user_text = ("Automating my current job is reducing daily suffering and "
+                     "leaving me with more weekend energy.")
+        dynamic = companion.system_blocks(user_text)[1]
+        assert "RELEVANT COMPLETED LEAF OUTCOMES" in dynamic
+        assert "Upwork is not an active plan" in dynamic
+        assert "The first Upwork contract should be concrete" not in dynamic
+        assert "status=COMPLETED" in dynamic
+        assert len(companion._completed_leaf_outcomes_block(user_text)) <= 2600
         companion.close()
 
 
