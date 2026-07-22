@@ -439,6 +439,38 @@ class TestGeneration(unittest.TestCase):
         self.store.close()
         self.tmp.cleanup()
 
+    def test_generation_context_carries_a_clock_for_time_sensitive_questions(self):
+        # Reproduces the "day 1 taper question" bug: a follow-up about a trend was
+        # asked with only one datapoint because the generator had no sense of time.
+        # The fix stamps each answer with its date and adds a TIMELINE block, plus
+        # a system-prompt rule to hold premature time-sensitive questions.
+        from datetime import datetime
+        from livingpc.curiosity import (
+            _build_context, build_curiosity_prompt, CURIOSITY_SYSTEM)
+        today = datetime.now().astimezone().date().isoformat()
+
+        cid = self.store.add_curiosity("Coffee & The Cycle", "symptom cycle")
+        q = self.store.add_item(
+            cid, "question", "Rate your symptoms today (0-10).", confidence=0.9,
+            metric_event_type="assessment", metric_dimension_slug="symptoms",
+            response_type="rating")
+        self.store.mark_answered(q, "7.5", None)
+
+        context = _build_context(self.mem, self.inf, self.store, cid)
+        # The lone datapoint now carries its date, so the model can see it is one.
+        self.assertIn("7.5", context.qa_block)
+        self.assertIn("answered", context.qa_block)
+        self.assertIn(today, context.qa_block)
+        # A dedicated timeline anchors "today" and the count of dated answers.
+        self.assertIn(today, context.timeline_block)
+        self.assertIn("Dated answers on record: 1", context.timeline_block)
+        # The assembled prompt surfaces the timeline; the system prompt tells the
+        # generator to hold premature trend/taper questions.
+        prompt = build_curiosity_prompt("symptom cycle", context)
+        self.assertIn("TIMELINE", prompt)
+        self.assertIn(today, prompt)
+        self.assertIn("TIME AWARENESS", CURIOSITY_SYSTEM)
+
     def test_stale_open_questions_are_retired_by_review(self):
         cid = self.store.add_curiosity("work tension", "Agency")
         stale = self.store.add_item(cid, "question",
